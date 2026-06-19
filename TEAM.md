@@ -111,6 +111,7 @@ M0 / Slice 1a. Before "start," the team only plans, grooms, and designs — neve
 ## Board (GitHub Projects)
 
 Columns map to handoffs: **Backlog → Ready → In Progress → In Review → QA → Done.**
+- **Operate the board with the `github-project-board` skill** (`gh pm list` / `move <#> --status <col>` / `intake`); per-project config in `.gh-pm.yml`. Don't hand-roll `gh`/GraphQL for board ops.
 - PO grooms Backlog → Ready (issues with acceptance criteria).
 - Devs pull from Ready → In Progress, open PRs → In Review.
 - QA moves In Review → QA → Done (or back with a bug issue).

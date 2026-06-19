@@ -1,0 +1,22 @@
+# gh-pm config — user-owned GitHub Project (board #1).
+# NOTE: `gh pm init` auto-detects an `org`, which is wrong for user-owned projects
+# (github.com/users/jonvez/projects/1) and breaks metadata fetch. Omit `org`, set
+# `number`, and map status values by hand to the board's real Status options.
+# (This board has no Priority field, so none is configured.)
+project:
+    name: "Dinner & Groceries"
+    number: 1
+repositories:
+    - jonvez/dinner-and-groceries
+defaults:
+    status: backlog
+fields:
+    status:
+        field: Status
+        values:
+            backlog: Backlog
+            ready: Ready
+            in_progress: In Progress
+            in_review: In Review
+            qa: QA
+            done: Done
