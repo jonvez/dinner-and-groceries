@@ -11,6 +11,7 @@
       "Bash(gh pr:*)",
       "Bash(gh project:*)",
       "Bash(gh pm:*)",
+      "Bash(ghpm:*)",
       "Bash(gh api:*)",
       "Bash(gh repo view:*)",
       "Bash(node:*)",
