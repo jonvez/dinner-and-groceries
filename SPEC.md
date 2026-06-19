@@ -95,8 +95,9 @@ keeps the codebase small and legible — which matters for building it *with* th
 
 | Table | Key columns | Purpose |
 |-------|-------------|---------|
-| `households` | id, name, owner_id, created_at | The family unit; everything scopes to this |
+| `households` | id, name, owner_id, timezone, week_start_day, created_at | The family unit; everything scopes to this. `timezone` + `week_start_day` define week boundaries |
 | `members` | id, household_id, user_id, display_name, role (`owner`/`member`), avatar | Links Supabase auth users to a household |
+| `invites` | id, household_id, token, created_by, expires_at, consumed_at, consumed_by | Single-use, expiring invite links/short codes for joining a household |
 | `dishes` | id, household_id, title, description, source_url, image_url, tags[], prep_minutes, cook_minutes, total_minutes, created_by | Reusable **dish library** — one preparable component (spaghetti, salad, sauce) |
 | `ingredients` | id, dish_id, name, quantity, unit, raw_text | Ingredients belonging to a dish |
 | `weeks` | id, household_id, start_date | A planning week |
