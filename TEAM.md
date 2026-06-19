@@ -13,11 +13,16 @@ through a persistent board, working as independently as the harness reliably all
 | Async tracking | **GitHub Projects** (Issues + Kanban). Agents read/write via `gh`; visible from any browser/phone. |
 | Scope authority | **Product Owner agent decides within guardrails**; every call logged as an ADR for later review/override. |
 | Parallelism | Up to **2 developer agents** in parallel, isolated via git worktrees. |
+| Security | **Review gate**, not a standing persona: `security-review` skill at PR/merge run by a **non-author** agent; security baked into ADRs + Definition of Done. Formalize a dedicated Security Reviewer only if the surface grows. |
+| Reuse | **Global persona agents now** (`~/.claude/agents/`). Extract a reusable `build-team` skill only **after** this project *and* the parallel project yield learnings — discover, then extract. |
+| Learnings | Keep a **running retro log** during the build + an **agent-run retro** at the end. Feeds the eventual skill extraction and is shareable across both projects. |
 
 ## Personas
 
-Each persona is a custom subagent in `.claude/agents/<name>.md` with its **own tool allowlist**
-(front-loaded). Tools are scoped to least-privilege per role.
+Each persona is a custom subagent with its **own tool allowlist** (front-loaded), scoped to
+least-privilege per role. Personas live **globally** in `~/.claude/agents/<name>.md` so the
+parallel project can use the same team; project-specific tweaks (if any) can override locally
+in `.claude/agents/`.
 
 | Persona | Responsibility | Tool scope (allowlist) |
 |---------|----------------|------------------------|
@@ -51,10 +56,29 @@ Anything hitting a guardrail escalates to Jon.
 - One file per decision: `docs/decisions/NNNN-short-title.md` (context → decision → consequences → who decided).
 - Reviewable and overridable by Jon at any time. This is the durable record of "why."
 
+### Security gate
+
+- Security is a **gate, not a teammate**. At PR/merge, the `security-review` skill runs over the
+  pending changes, executed by an agent that is **not the author** (independent scrutiny).
+- Security requirements live in the architect's ADRs and the Definition of Done: RLS tested,
+  secrets in env (never in code), input validation on the URL fetcher / recipe ingestion.
+- Escalate a dedicated **Security Reviewer** persona only if the surface grows (multi-household,
+  marketplace, payments).
+
 ### Definition of Done (per issue)
 
 - Acceptance criteria met; tests written first and passing; lint/typecheck clean;
-  PR linked to the issue; QA verified; PO accepted.
+  PR linked to the issue; QA verified; **`security-review` passed (non-author) for
+  security-relevant changes**; PO accepted.
+
+### Retro & learnings log
+
+- A **running record** at `docs/retro/log.md`: anyone (agent or Jon) appends retro-worthy
+  observations *as they happen* — friction, surprises, what the process got right/wrong.
+- An **agent-run retro** after each build milestone synthesizes the log into concrete
+  process changes.
+- This log is the **input to the eventual `build-team` skill** and is comparable across this
+  project and the parallel one.
 
 ## Board (GitHub Projects)
 
@@ -84,8 +108,9 @@ Subagents are **session-scoped workers, not daemons**; durable state is **git + 
 ## Setup checklist (one-time, before build)
 
 - [ ] GitHub repo created + pushed; GitHub Project board with the 6 columns
-- [ ] `.claude/agents/*.md` for the 6 personas with scoped tool allowlists
+- [ ] `~/.claude/agents/*.md` (global) for the 6 personas with scoped tool allowlists
 - [ ] `.claude/settings.json` permission allowlist (front-loaded)
 - [ ] `docs/decisions/` ADR directory + `0001` recording these process decisions
+- [ ] `docs/retro/log.md` started (running learnings record)
 - [ ] Scoping gate run: open-questions list → Jon's batch answers → ADRs
 - [ ] `SPEC.md` decomposed into Ready issues with acceptance criteria
