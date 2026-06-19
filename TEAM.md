@@ -16,6 +16,9 @@ through a persistent board, working as independently as the harness reliably all
 | Security | **Review gate**, not a standing persona: `security-review` skill at PR/merge run by a **non-author** agent; security baked into ADRs + Definition of Done. Formalize a dedicated Security Reviewer only if the surface grows. |
 | Reuse | **Global persona agents now** (`~/.claude/agents/`). Extract a reusable `build-team` skill only **after** this project *and* the parallel project yield learnings — discover, then extract. |
 | Learnings | Keep a **running retro log** during the build + an **agent-run retro** at the end. Feeds the eventual skill extraction and is shareable across both projects. |
+| TDD | **Test-first discipline.** Strict test-first for domain/logic/server-action code; UI may take a thin exploratory spike but ships with tests. Enforced in the Definition of Done; uses the `test-driven-development` skill. |
+| Analytics | **Events-table-only** (Supabase), no GA4/third-party. Pseudonymous `member_id`. Usage + participation events from day one; **simple PO-only dashboard** in MVP. Never a kid-facing scorecard. |
+| Kickoff | A formal **Kickoff Gate**: nothing builds feature code until Jon explicitly says **"start"** (recorded as an ADR). Separates planning from execution. |
 
 ## Personas
 
@@ -65,9 +68,18 @@ Anything hitting a guardrail escalates to Jon.
 - Escalate a dedicated **Security Reviewer** persona only if the surface grows (multi-household,
   marketplace, payments).
 
+### Test-Driven Development
+
+- **Strict test-first** for domain logic, data-access/server actions, and the riskiest code
+  (ingredient parsing, roll-up/dedupe, RLS household-scoping, week-boundary math): write a
+  failing test that encodes the acceptance criteria, watch it fail, implement, refactor.
+- **UI** may take a thin exploratory spike before the test lands, but ships *with* tests.
+- Developers use the `test-driven-development` skill. No implementation is "done" without
+  tests written first and passing — verified by QA, not asserted.
+
 ### Definition of Done (per issue)
 
-- Acceptance criteria met; tests written first and passing; lint/typecheck clean;
+- Acceptance criteria met; **tests written first (TDD)** and passing; lint/typecheck clean;
   PR linked to the issue; QA verified; **`security-review` passed (non-author) for
   security-relevant changes**; PO accepted.
 
@@ -79,6 +91,22 @@ Anything hitting a guardrail escalates to Jon.
   process changes.
 - This log is the **input to the eventual `build-team` skill** and is comparable across this
   project and the parallel one.
+
+## Kickoff Gate (the formal "start")
+
+A project has a single, explicit moment that flips it from **planning** to **execution**.
+No agent writes feature code before it.
+
+**Pre-flight (all must be green):**
+- [ ] Setup complete (repo, board, agents, settings, ADRs, retro log)
+- [ ] Scoping gate closed (open questions resolved; decisions in ADRs)
+- [ ] Jon's outstanding scope/process/logistics questions answered
+- [ ] Session restarted so the real persona agents are dispatchable
+
+**The ceremony:** Jon raises any final questions (scope, process, restarts, anything). When
+satisfied, Jon says **"start."** That declaration is recorded as a kickoff ADR
+(`docs/decisions/NNNN-kickoff.md`) and is the *only* trigger that lets the orchestrator begin
+M0 / Slice 1a. Before "start," the team only plans, grooms, and designs — never implements features.
 
 ## Board (GitHub Projects)
 

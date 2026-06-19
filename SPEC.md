@@ -48,11 +48,14 @@ multi-device. The grocery list flows *out of* the agreed menu.
   deduped, with a "we already have it" toggle and live check-off at the store
 - **Light, neutral health tags** on meals (protein-forward, veg-forward, low-sodium, etc.) —
   informative, never scored
+- **Outcome instrumentation + simple PO dashboard**: append-only events (usage *and*
+  participation), attributed to a pseudonymous `member_id`; a **you-only** dashboard, never a
+  kid-facing scorecard (see Analytics & Outcome Tracking)
 
 ### Explicitly out of scope (post-MVP)
 
 - Cost tracking / price data / spending dashboards
-- Outcome dashboards ("tracking against desired outcomes")
+- *Rich/advanced* outcome dashboards & trend analysis (a **simple PO-only dashboard** is in MVP — see Analytics & Outcome Tracking)
 - **Private health/"how did I feel?" log** (high-value, opt-in, son-controlled) — flagged as
   the top post-MVP candidate
 - **Leftovers** (likely a carry-forward slot type referencing a prior meal without re-buying)
@@ -108,6 +111,7 @@ keeps the codebase small and legible — which matters for building it *with* th
 | `comments` | id, proposal_id, member_id, body, created_at | Discussion on a proposal |
 | `catalog_items` | id, household_id, name, default_unit, category, last_added_at, added_count | Reusable purchasables independent of dishes (kombucha, staples) |
 | `grocery_items` | id, week_id, name, quantity, unit, ingredient_id (nullable), catalog_item_id (nullable), have_it (bool), checked (bool), sort_order | The week's list |
+| `events` | id, household_id, member_id (nullable), event_type, payload (jsonb), created_at | Append-only usage + participation instrumentation; powers the PO dashboard |
 
 ### Deliberate modeling choices
 
@@ -226,6 +230,26 @@ small and legible, one thing at a time. The small-files / clear-boundaries desig
 partly *for this* — so a 13- and 16-year-old can read a piece and see how it works. Stack
 kept approachable (one app, TypeScript, no exotic infra) so "I want a spicy 🌶️ tag on meals"
 is genuinely a 20-minute thing to do together.
+
+## Analytics & Outcome Tracking
+
+Instrumentation that tells *Jon* whether the desired outcomes are happening — adoption,
+shopping together, deciding meals — without ever becoming a kid-facing scorecard.
+
+- **Single source:** an append-only Supabase `events` table (no third-party analytics, no GA4).
+  For a 4-person invite-only app, GA4's strengths (traffic, acquisition, scale) don't apply;
+  one queryable, privacy-contained, legible table covers everything that matters.
+- **Pseudonymous:** events attribute to the app's `member_id`, never to Google identity/PII.
+- **Event taxonomy spans usage AND participation** (so the adoption signal isn't lost by
+  skipping GA4):
+  - *Usage:* `app_open`/`session_start`, `screen_view`, `sign_in` → DAU/WAU, retention, engagement.
+  - *Participation (outcomes):* `proposal_created`, `reaction_added`, `comment_added`,
+    `slot_filled`, `grocery_list_built`, `trip_completed`, `recipe_ingested`.
+  - *Design-gravity (aggregate only):* health-tag distribution of slotted dishes — never per-child.
+- **Simple PO-only dashboard (MVP):** a you-only view reading the events table — adoption,
+  per-member participation, trips, tag mix. Rich trend analysis is post-MVP.
+- **Boundary:** no kid-facing metrics or scorecards; participation stays low-key and yours.
+  Per the north star, the kids' experience never surfaces judgment.
 
 ## Tech Stack Summary
 

@@ -27,6 +27,8 @@ never a scorecard. Full product design in `SPEC.md`; build process in `TEAM.md`.
 - **Slice 1b — Social loop (the validation slice):** weeks/slots/slot_dishes/dishes/proposals/reactions/comments + RLS; week board (lazy current week); manual dish proposals; emoji reactions; comments; Realtime; manual + nudge slotting (tap-to-slot). **Stop and validate the loop with the family here.**
 - **Slice 1c — Recipes (free):** structured JSON-LD ingestion + manual dish/ingredient editor; ingredient normalization (`lib/`, TDD); SSRF-guarded URL fetch.
 - **Slice 1d — Grocery list:** catalog_items + grocery_items + RLS; roll-up/dedupe (riskiest logic, TDD hard); catalog reuse + ad-hoc items + have-it toggle; complete-trip + promotion.
+- **Cross-cutting — analytics:** `events` table + RLS; emit usage + participation events as each feature lands (events-table-only, pseudonymous `member_id`, no GA4).
+- **Slice 1e — PO dashboard:** simple you-only dashboard reading the events table (adoption, per-member participation, trips, tag mix).
 
 ### M2 — AI fallback + polish
 - AI recipe fallback (Anthropic `claude-haiku-4-5-20251001`, tool-use + Zod contract, $10/mo cap).
@@ -39,9 +41,10 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 ## Active Context
 
 ### Current Focus
-Setup complete (repo, board #1, global persona agents, ADRs 0001–0003, settings allowlist).
-Scoping gate done; Jon's batch decisions recorded in ADR 0002. **Next: PO files M1 issues to
-the board (Backlog), moves Slice 1a to Ready; then M0 scaffold + Slice 1a begin.**
+Setup complete (repo, board #1, global persona agents, ADRs 0001–0004, settings allowlist).
+Scoping gate done; decisions in ADRs 0002 (human) / 0003 (agent defaults) / 0004 (TDD, kickoff,
+analytics). **At the Kickoff Gate** (see TEAM.md): awaiting Jon's session restart + explicit
+"start." After "start": PO files M1 issues (Backlog), moves Slice 1a to Ready; M0 scaffold + 1a begin.
 
 ### Blockers
 - None. (Anthropic key/budget only needed at M2.)
