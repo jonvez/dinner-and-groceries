@@ -52,10 +52,10 @@ postcss advisory bundled transitively inside Next); (3) merge #1 → **fan out 2
 + #3 (CI); Slice 1a (#4–#6) follows once Supabase lands.
 
 ### Blockers
-- **Accept the auto-mode opt-in** this restart to activate `permissions.defaultMode: "auto"` (set in `.claude/settings.json` — kills the compound-command permission prompts).
 - gh-pm scoped-PAT hardening pending (optional; board works on the keyring token now) — steps in `~/.claude/third-party-inventory.md`.
 
 ### Notes
+- **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is silently ignored (a repo can't self-grant auto). Removed it from settings. To use auto mode here, manually `Shift+Tab` into it each session (per-session, ephemeral; first time shows the opt-in prompt) or launch with `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json` (global). The `allow` list in `.claude/settings.json` is still honored.
 - Persona agents are global + dispatchable. Board = GitHub Projects #1 (native 6-column Status field; no Stage field). Things not used for this project.
 - Board ops go through the `ghpm` wrapper / `github-project-board` skill — never hand-roll `gh`/GraphQL. Mind command hygiene (no `cd`-compounds → `git -C`; explicit `git add` paths).
 
