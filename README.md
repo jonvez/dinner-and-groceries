@@ -74,20 +74,83 @@ npm run db:types      # writes lib/database.types.ts (check this file in)
 it runs as the **signed-in user** (Bearer token), never the service role
 (ADR 0003). There is no service-role key in M0/M1.
 
+## Authentication (Google OAuth + `@supabase/ssr`)
+
+Each family member signs in as themselves via **Google OAuth** (the only
+provider; Apple is post-MVP). Sessions are cookie-based via `@supabase/ssr` and
+refreshed by Next.js middleware, so server-side data access always runs with the
+user's access token and RLS stays in force (ADR 0003).
+
+How the pieces fit:
+
+| File | Role |
+| ---- | ---- |
+| [`middleware.ts`](./middleware.ts) | Next.js entry; runs on every matched route. |
+| [`lib/supabase/middleware.ts`](./lib/supabase/middleware.ts) | `updateSession()` — refreshes the cookie session (`getUser()`, **verified**), looks up household membership, applies the routing decision. |
+| [`lib/auth/routing.ts`](./lib/auth/routing.ts) | Pure auth-boundary decision: gate protected routes, route a **no-member** user to `/join`, bounce signed-in users off `/login`. Unit-tested. |
+| [`lib/auth/redirect.ts`](./lib/auth/redirect.ts) | `safeRedirectPath()` — validates the OAuth `next` param (same-origin only) to prevent open redirects. Unit-tested. |
+| [`lib/supabase/cookie-options.ts`](./lib/supabase/cookie-options.ts) | Cookie security policy: `httpOnly`, `sameSite=lax`, `secure` in prod, `path=/`. Unit-tested. |
+| [`lib/supabase/server-component.ts`](./lib/supabase/server-component.ts) | `createServerComponentClient()` — RLS client wired to the request cookies, for Server Components / Actions / Route Handlers. |
+| [`lib/supabase/browser.ts`](./lib/supabase/browser.ts) | Browser client used only to start the Google OAuth redirect. |
+| [`app/login/`](./app/login) | Sign-in page + Google button. |
+| [`app/auth/callback/route.ts`](./app/auth/callback/route.ts) | OAuth callback: exchanges the code for a session, redirects to the **validated** `next`. |
+| [`app/auth/signout/route.ts`](./app/auth/signout/route.ts) | POST-only sign-out: clears the session cookies. |
+
+The access/refresh tokens live in **httpOnly** cookies — they are never exposed
+to the client JS bundle. No service-role key appears anywhere on this path.
+
+### Google OAuth setup (one-time, human config)
+
+A live Google round-trip needs a real **Google Cloud OAuth client** plus the
+Supabase Google provider config. Local sign-in cannot complete without these.
+
+1. **Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID**
+   (application type **Web application**).
+2. Set the **Authorized redirect URI** to the Supabase Auth callback (NOT the
+   app's own route — Supabase redirects to the app afterward):
+   - Local: `http://127.0.0.1:54321/auth/v1/callback`
+   - Prod: `https://<project-ref>.supabase.co/auth/v1/callback`
+3. Copy the **Client ID** and **Client secret** into `.env.local`:
+   ```bash
+   SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+   SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
+   ```
+   These names are wired into `supabase/config.toml`'s `[auth.external.google]`
+   via `env()` (see [`.env.example`](./.env.example)). They are read by the
+   Supabase Auth server, **not** the Next.js bundle.
+4. Restart the stack so the CLI picks them up: `npm run db:stop && npm run db:start`.
+
+**Prod:** put the same two values in **GCP Secret Manager** and bind them to the
+hosted Supabase project; never commit real secrets.
+
 ## Repo layout
 
 ```
+middleware.ts        # Next.js middleware entry -> updateSession() (auth gate)
 app/                 # Next.js App Router — routes, layouts, server actions
   layout.tsx
-  page.tsx
+  page.tsx           # protected home (RLS read of the member's profile)
   globals.css        # Tailwind v4 entry + shadcn theme tokens
+  login/             # sign-in page + Google OAuth button
+  join/              # no-member join placeholder (#6 fills the screen)
+  auth/
+    callback/route.ts # OAuth callback — code exchange + validated redirect
+    signout/route.ts  # POST sign-out — clears session cookies
 lib/                 # Framework-free domain logic (heavily unit-tested)
   utils.ts           # cn() class-name helper
   database.types.ts  # generated Supabase row types (npm run db:types)
+  auth/              # framework-free auth-boundary logic (TDD)
+    redirect.ts      # safeRedirectPath() — open-redirect defense
+    routing.ts       # resolveAuthRoute() — session/no-member gating decision
   supabase/          # RLS-scoped client helpers
     env.ts           # validated NEXT_PUBLIC_SUPABASE_* env reader
     client-options.ts # pure user-scoped (Bearer) client options
+    cookie-options.ts # auth-cookie security policy (httpOnly/sameSite/secure)
     server.ts        # createUserClient() — typed, RLS-enforced server client
+    server-component.ts # createServerComponentClient() — cookie-session client
+    browser.ts       # createClient() — browser client (starts OAuth)
+    middleware.ts    # updateSession() — refresh session + apply routing
+    membership.ts    # userHasMember() — no-member boundary lookup
 components/          # React UI
   ui/                # shadcn/ui primitives (generated; e.g. button.tsx)
 supabase/            # Supabase CLI config + migrations (sole DDL source)
