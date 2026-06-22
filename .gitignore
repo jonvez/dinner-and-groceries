@@ -6,6 +6,10 @@ build/
 next-env.d.ts
 *.tsbuildinfo
 coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 .env*
 !.env.example
 .DS_Store
