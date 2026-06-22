@@ -79,6 +79,16 @@ describe("resolveAuthRoute", () => {
     ).toEqual({ action: "next" });
   });
 
+  it("lets a no-member user land on an invite link /join/<token> (token preserved)", () => {
+    expect(
+      resolveAuthRoute({
+        isAuthenticated: true,
+        hasMember: false,
+        pathname: "/join/abc123",
+      }),
+    ).toEqual({ action: "next" });
+  });
+
   it("sends a signed-in no-member user away from /login to /join", () => {
     expect(
       resolveAuthRoute({
@@ -128,6 +138,18 @@ describe("resolveAuthRoute", () => {
         isAuthenticated: true,
         hasMember: true,
         pathname: "/join",
+      }),
+    ).toEqual({ action: "redirect", to: "/" });
+  });
+
+  it("sends a signed-in member away from an invite link /join/<token> to home", () => {
+    // They already belong to a household; the single-household invariant means
+    // an invite link is a no-op for them — bounce home rather than show join UI.
+    expect(
+      resolveAuthRoute({
+        isAuthenticated: true,
+        hasMember: true,
+        pathname: "/join/abc123",
       }),
     ).toEqual({ action: "redirect", to: "/" });
   });

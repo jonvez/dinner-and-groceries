@@ -47,7 +47,11 @@ export type AuthRouteDecision =
 export function resolveAuthRoute(input: AuthRouteInput): AuthRouteDecision {
   const { isAuthenticated, hasMember, pathname } = input;
   const onLogin = pathname === LOGIN_PATH;
-  const onJoin = pathname === JOIN_PATH;
+  // The whole `/join` subtree is the join flow: bare `/join` plus invite links
+  // `/join/<token>`. A member-less user must be able to land on an invite link
+  // WITHOUT the middleware bouncing them to bare `/join` (which would drop the
+  // token), and a member must be bounced off any of them.
+  const onJoin = pathname === JOIN_PATH || pathname.startsWith(`${JOIN_PATH}/`);
   const isAuthEndpoint = pathname.startsWith("/auth/");
 
   // ---- signed-out --------------------------------------------------------
