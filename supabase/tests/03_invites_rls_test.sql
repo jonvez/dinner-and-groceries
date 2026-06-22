@@ -1,6 +1,6 @@
 -- RLS: invites — allow-same/deny-cross + owner-only insert/delete.
 begin;
-select plan(7);
+select plan(8);
 
 create schema if not exists tests;
 
@@ -38,6 +38,10 @@ grant execute on all functions in schema tests to authenticated;
 select is(
   (select relrowsecurity from pg_class where oid = 'public.invites'::regclass),
   true, 'invites has RLS enabled'
+);
+select is(
+  (select relforcerowsecurity from pg_class where oid = 'public.invites'::regclass),
+  true, 'invites has RLS FORCEd (owner not exempt)'
 );
 
 -- ---- role: owner CAN create an invite for their household ----

@@ -42,7 +42,18 @@ create table public.households (
 );
 
 -- Links Supabase auth users to a household. (household_id, user_id) is unique:
--- a given user appears at most once per household.
+-- a given user belongs to exactly one household.
+--
+-- MVP single-household invariant: `unique (user_id)` enforces that a user is a
+-- member of at most ONE household. This makes the single-household assumption
+-- baked into current_household_id() / is_household_owner() (which resolve the
+-- caller's household with `limit 1` / a role check, not by household_id) an
+-- ENFORCED invariant rather than a latent one — the data layer cannot drift
+-- into a state where a user spans two households and the helpers silently pick
+-- one. Multi-household is a deliberate post-MVP migration: drop this constraint
+-- and re-scope the helpers (and every policy) by an explicit household_id /
+-- active-household selector. It also subsumes the old (household_id, user_id)
+-- uniqueness (a user appearing once globally appears at most once per household).
 create table public.members (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households (id) on delete cascade,
@@ -51,11 +62,10 @@ create table public.members (
   role         public.member_role not null default 'member',
   avatar       text,
   created_at   timestamptz not null default now(),
-  unique (household_id, user_id)
+  unique (user_id)
 );
 
 create index members_household_id_idx on public.members (household_id);
-create index members_user_id_idx on public.members (user_id);
 
 -- Single-use, expiring invite links/short codes for joining a household.
 create table public.invites (

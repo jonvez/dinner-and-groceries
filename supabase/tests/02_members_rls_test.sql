@@ -1,6 +1,6 @@
 -- RLS: members — allow-same, deny-cross, owner-only remove (role enforcement).
 begin;
-select plan(10);
+select plan(11);
 
 create schema if not exists tests;
 
@@ -39,6 +39,10 @@ grant execute on all functions in schema tests to authenticated;
 select is(
   (select relrowsecurity from pg_class where oid = 'public.members'::regclass),
   true, 'members has RLS enabled'
+);
+select is(
+  (select relforcerowsecurity from pg_class where oid = 'public.members'::regclass),
+  true, 'members has RLS FORCEd (owner not exempt)'
 );
 
 -- ---- allow-same: H member sees both H members ----

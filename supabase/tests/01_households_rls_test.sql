@@ -4,7 +4,7 @@
 -- seeds below never persist. Fixtures are inlined (not \i-included) so each
 -- test file is fully self-contained and isolated.
 begin;
-select plan(7);
+select plan(8);
 
 -- ---- fixtures: two households (H, K), each owner + member; one outsider ----
 create schema if not exists tests;
@@ -49,11 +49,18 @@ select is(
   'current_household_id() is SECURITY DEFINER (breaks RLS recursion)'
 );
 
--- ---- RLS enabled on households ----
+-- ---- RLS enabled AND forced on households ----
+-- FORCE matters: without it the table owner bypasses RLS. Assert both so a
+-- future migration that drops FORCE fails loudly instead of silently.
 select is(
   (select relrowsecurity from pg_class where oid = 'public.households'::regclass),
   true,
   'households has RLS enabled'
+);
+select is(
+  (select relforcerowsecurity from pg_class where oid = 'public.households'::regclass),
+  true,
+  'households has RLS FORCEd (owner not exempt)'
 );
 
 -- ---- allow-same: H owner reads their own household ----
