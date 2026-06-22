@@ -41,17 +41,23 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 ## Active Context
 
 ### Current Focus
-Setup complete (repo, board #1, global persona agents, ADRs 0001–0004, settings allowlist).
-Scoping gate done; decisions in ADRs 0002 (human) / 0003 (agent defaults) / 0004 (TDD, kickoff,
-analytics). **At the Kickoff Gate** (see TEAM.md): awaiting Jon's session restart + explicit
-"start." After "start": PO files M1 issues (Backlog), moves Slice 1a to Ready; M0 scaffold + 1a begin.
+**Kickoff done** (ADR 0006). PO groomed SPEC/PLAN → 17 issues on board #1 (ADR 0007): Ready =
+M0 scaffold #1–#3 + Slice 1a Identity #4–#6; #7–#17 in Backlog. See the board via the
+`github-project-board` skill (`ghpm list`).
+
+**Resume here →** PR #18 (M0 #1, Next.js scaffold) is **In Review** — built clean (7 tests green;
+lint/typecheck/build pass) on a deliberately bleeding-edge stack (**Next 16 / React 19 / Tailwind 4**).
+Next: (1) Jon's call on that stack; (2) QA (non-author) + `security-review` (one open item: a moderate
+postcss advisory bundled transitively inside Next); (3) merge #1 → **fan out 2 devs** on #2 (Supabase)
++ #3 (CI); Slice 1a (#4–#6) follows once Supabase lands.
 
 ### Blockers
-- None. (Anthropic key/budget only needed at M2.)
+- **Accept the auto-mode opt-in** this restart to activate `permissions.defaultMode: "auto"` (set in `.claude/settings.json` — kills the compound-command permission prompts).
+- gh-pm scoped-PAT hardening pending (optional; board works on the keyring token now) — steps in `~/.claude/third-party-inventory.md`.
 
 ### Notes
-- Custom persona agents load at next session start (written this session, not yet dispatchable here).
-- Local-only family app; GitHub Projects is the team board (Things not used for this project).
+- Persona agents are global + dispatchable. Board = GitHub Projects #1 (native 6-column Status field; no Stage field). Things not used for this project.
+- Board ops go through the `ghpm` wrapper / `github-project-board` skill — never hand-roll `gh`/GraphQL. Mind command hygiene (no `cd`-compounds → `git -C`; explicit `git add` paths).
 
 ---
 
@@ -64,3 +70,9 @@ analytics). **At the Kickoff Gate** (see TEAM.md): awaiting Jon's session restar
 - Ran scoping gate (PO + Architect); recorded ADRs 0001 (baseline), 0002 (human decisions), 0003 (agent defaults).
 - Updated SPEC.md data model (households.timezone/week_start_day, invites table).
 - Wrote PLAN.md + milestone roadmap.
+
+### 2026-06-22
+- **Kickoff** (ADR 0006); PO groomed SPEC/PLAN → 17 issues (ADR 0007). Ready = M0 #1–3 + Slice 1a #4–6.
+- Dev delivered **PR #18** (M0 #1 — Next.js scaffold; Next 16 / React 19 / Tailwind 4; 7 tests green) → In Review.
+- Stood up shared tooling (cross-project w/ delivery-simulator): adopted `gh-pm` + `ghpm` wrapper + `github-project-board` skill (ADR 0005); global third-party security rule + `third-party-security-review` skill + inventory (gh-pm verdict MEDIUM, scoped-PAT pending); `things` skill + allowlist; **auto mode** enabled per-project (permission-prompt fix); command-hygiene → MemPalace (rig/feedback).
+- Board #1 migrated to native 6-column Status field (dropped the redundant Stage field).
