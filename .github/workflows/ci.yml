@@ -72,6 +72,19 @@ jobs:
       - name: Apply migrations (clean reset)
         run: npx supabase db reset --local
 
+      # `supabase test db` pulls pg_prove from public.ecr.aws on demand; that pull
+      # occasionally times out and would fail this (required) check on a transient
+      # registry hiccup. Warm the image with retries first so the test step finds it
+      # cached. Best-effort: if all retries fail (sustained outage), the test step's
+      # own pull is the final arbiter and fails the job legitimately.
+      - name: Pre-pull pgTAP image (resilient to transient registry hiccups)
+        run: |
+          for i in 1 2 3; do
+            if docker pull public.ecr.aws/supabase/pg_prove:3.36; then break; fi
+            echo "pg_prove image pull attempt $i failed; retrying in 10s..."
+            sleep 10
+          done
+
       - name: Run pgTAP RLS tests
         run: npx supabase test db --local
 
