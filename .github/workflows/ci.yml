@@ -44,6 +44,42 @@ jobs:
         run: npm test
 
   # ---------------------------------------------------------------------------
+  # PR gate: RLS (pgTAP) against a real ephemeral Supabase Postgres.
+  # The identity household-scoping RLS (and every later slice's RLS that builds
+  # on it) is the security bedrock — it can only be verified against a live
+  # Postgres with multiple authenticated user contexts, which the unit `verify`
+  # job (jsdom, no Docker) cannot do. This job boots the local stack and runs
+  # `supabase test db` (pgTAP allow-same / deny-cross / role / invite-integrity
+  # tests in supabase/tests/). Skips cleanly until migrations exist.
+  # ---------------------------------------------------------------------------
+  rls:
+    name: RLS pgTAP (Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start local Supabase stack
+        run: npx supabase start
+
+      - name: Apply migrations (clean reset)
+        run: npx supabase db reset --local
+
+      - name: Run pgTAP RLS tests
+        run: npx supabase test db --local
+
+      - name: Stop local Supabase stack
+        if: ${{ always() }}
+        run: npx supabase stop --no-backup
+
+  # ---------------------------------------------------------------------------
   # PR gate: Playwright smoke E2E against the production standalone server.
   # Runs today WITHOUT Supabase; the Supabase spin-up step is guarded and
   # activates once #2 lands supabase/config.toml.

@@ -34,16 +34,123 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      households: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          timezone: string
+          week_start_day: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          timezone?: string
+          week_start_day?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          timezone?: string
+          week_start_day?: number
+        }
+        Relationships: []
+      }
+      invites: {
+        Row: {
+          consumed_at: string | null
+          consumed_by: string | null
+          created_at: string
+          created_by: string
+          expires_at: string
+          household_id: string
+          id: string
+          token: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          created_by: string
+          expires_at?: string
+          household_id: string
+          id?: string
+          token: string
+        }
+        Update: {
+          consumed_at?: string | null
+          consumed_by?: string | null
+          created_at?: string
+          created_by?: string
+          expires_at?: string
+          household_id?: string
+          id?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invites_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      members: {
+        Row: {
+          avatar: string | null
+          created_at: string
+          display_name: string
+          household_id: string
+          id: string
+          role: Database["public"]["Enums"]["member_role"]
+          user_id: string
+        }
+        Insert: {
+          avatar?: string | null
+          created_at?: string
+          display_name: string
+          household_id: string
+          id?: string
+          role?: Database["public"]["Enums"]["member_role"]
+          user_id: string
+        }
+        Update: {
+          avatar?: string | null
+          created_at?: string
+          display_name?: string
+          household_id?: string
+          id?: string
+          role?: Database["public"]["Enums"]["member_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "members_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      consume_invite: { Args: { p_token: string }; Returns: string }
+      current_household_id: { Args: never; Returns: string }
+      is_household_owner: { Args: never; Returns: boolean }
     }
     Enums: {
-      [_ in never]: never
+      member_role: "owner" | "member"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -173,7 +280,9 @@ export const Constants = {
     Enums: {},
   },
   public: {
-    Enums: {},
+    Enums: {
+      member_role: ["owner", "member"],
+    },
   },
 } as const
 
