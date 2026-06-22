@@ -1,0 +1,56 @@
+/**
+ * Open-redirect defense for the OAuth callback `next` parameter.
+ *
+ * After a Google OAuth round-trip the callback route redirects the user to
+ * wherever they were headed (`?next=…`). That value is fully attacker-
+ * controllable (it rides in the URL), so it must be treated as untrusted: an
+ * unvalidated redirect lets an attacker craft a link that lands on our domain
+ * and then bounces the victim to a phishing host (CWE-601, "Open Redirect").
+ *
+ * The single safe shape is a **same-origin, root-relative path** — it begins
+ * with exactly one `/`, is not protocol-relative (`//host`), contains no
+ * scheme, and is not the login route itself (which would loop). Anything else
+ * collapses to the supplied default. This is framework-free so it is unit-
+ * tested in isolation and reused by the callback route and middleware.
+ */
+
+const DEFAULT_PATH = "/";
+const LOGIN_PATH = "/login";
+
+// Control characters (NUL..US): CR/LF/TAB and friends are used to smuggle a
+// scheme/host past naive prefix checks and to split headers. Written with
+// escaped hex (\x00-\x1f) so the intent survives formatters/editors/copy-paste
+// and the source stays plain text — a literal control byte here would be
+// fragile and invisible in diffs.
+const CONTROL_CHARS = /[\x00-\x1f]/;
+
+export function safeRedirectPath(
+  next: string | null | undefined,
+  fallback: string = DEFAULT_PATH,
+): string {
+  if (typeof next !== "string") return fallback;
+
+  const candidate = next.trim();
+  if (candidate === "") return fallback;
+
+  // Must be a root-relative path: exactly one leading slash.
+  if (!candidate.startsWith("/")) return fallback;
+
+  // Reject protocol-relative URLs ("//evil.com") and the backslash variants
+  // browsers normalize to them ("/\evil.com", "\\/evil.com" → "//evil.com").
+  // We already required a leading "/", so just guard the second character.
+  if (candidate[1] === "/" || candidate[1] === "\\") return fallback;
+
+  // Reject embedded control characters.
+  if (CONTROL_CHARS.test(candidate)) return fallback;
+
+  // Reject an embedded scheme before the first slash segment (defense in
+  // depth; a same-origin path never contains one).
+  if (/^\/[^/]*:/.test(candidate)) return fallback;
+
+  // Never bounce back to the login route — that just loops the visitor.
+  const pathOnly = candidate.split(/[?#]/, 1)[0];
+  if (pathOnly === LOGIN_PATH) return fallback;
+
+  return candidate;
+}

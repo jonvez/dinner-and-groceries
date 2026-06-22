@@ -319,6 +319,26 @@ max_frequency = "5s"
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
+
+# Google OAuth — the ONLY sign-in provider for the MVP (issue #5). Apple is
+# explicitly post-MVP and intentionally left disabled below.
+#
+# Secrets are NEVER committed: client_id/secret come from a Google Cloud OAuth
+# 2.0 Client and are injected via env() (see .env.example for the names and the
+# README "Google OAuth setup" section for how to create the client + the exact
+# redirect URIs). Locally, populate these in .env.local (gitignored); the
+# Supabase CLI reads env() from that file on `npm run db:start`.
+[auth.external.google]
+enabled = true
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+# DO NOT commit your OAuth provider secret to git. Use environment variable substitution instead:
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+# Overrides the default auth callback URL derived from auth.external_url.
+redirect_uri = ""
+url = ""
+# Local sign-in with Google requires skipping the nonce check.
+skip_nonce_check = true
+
 [auth.external.apple]
 enabled = false
 client_id = ""
