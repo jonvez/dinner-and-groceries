@@ -45,23 +45,25 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 M0 scaffold #1–#3 + Slice 1a Identity #4–#6; #7–#17 in Backlog. See the board via the
 `github-project-board` skill (`ghpm list`).
 
-**Resume here → M0 COMPLETE.** All three scaffold issues merged + Done:
-- **#1** Next.js scaffold (squash `f9646a8`) — stable **Next 15.5.19** (pulled back from 16; React 19 / Tailwind 4; ESLint via `FlatCompat`).
-- **#2** Supabase local stack + migrations + typed rows (squash `f696928`) — RLS-only client, no service-role (ADR 0003); `db:*` npm scripts.
-- **#3** CI (squash `b474d7c`) — GH Actions gating every PR (lint/typecheck/Vitest + Playwright smoke E2E), main-only Cloud Run deploy stub (keyless WIF), non-root Dockerfile.
+**M0 COMPLETE** (#1 Next 15 scaffold `f9646a8` · #2 Supabase local stack `f696928` · #3 CI `b474d7c`).
+PO grooming pass applied user-story framing to M1 issues #4–#17 (personas from SPEC).
 
-Each passed the full gate (independent **QA-PASS + SECURITY-PASS**, non-author). **Branch protection now ON**
-for `main`: requires checks **"Lint, typecheck, unit tests"** + **"Playwright smoke E2E"**, strict (up-to-date),
-`enforce_admins: true`, force-push/deletion blocked. (No required *review* — single GitHub identity makes it
-unsatisfiable; see retro 6-22 "single identity" + the bot/App upgrade path.)
+**Resume here → Slice 1a Identity, in progress:**
+- **#4** identity schema (households/members/invites) + RLS — **DONE** (squash `7bcefef`-era PR #27). The security bedrock:
+  FORCE RLS on all 3 tables, `SECURITY DEFINER` household-lookup chokepoint (`search_path=''`), owner/member roles
+  with column-scoped grants (no role self-escalation), single-use expiring invites via atomic `consume_invite()`.
+  Enforces **single-household-per-user** (`unique(user_id)`) for MVP — multi-household is a real future need (Jon's kids
+  span two homes; mom may adopt the tool) tracked as epic **#28**. Gated by a new **`RLS pgTAP (Supabase)`** CI job (34 assertions).
+- **#5** Google OAuth + `@supabase/ssr` session — **IN PROGRESS** (dev on `feat/5-google-oauth`). Likely human-config
+  dependency incoming: a **Google OAuth client** (GCP) for live sign-in verification — secrets via `.env.example` placeholders / Secret Manager.
+- **#6** household create + invite/join — next. Carries the invite-token-entropy note (use a CSPRNG when minting tokens — from #27 review) and L-1 (**#29**, owner-gate households UPDATE).
 
-**Next → Slice 1a Identity (#4–#6)**, now unblocked (Supabase + CI in place). Sequence: #4 identity schema
-+ RLS → #5 Google OAuth + `@supabase/ssr` → #6 household create + invite/join. Same gate + the now-enforced CI.
-**Before pulling #4, do the PO grooming pass** to add user-story framing to the M1 feature issues (retro 6-22).
+**Branch protection on `main`:** required checks **"Lint, typecheck, unit tests" + "Playwright smoke E2E" + "RLS pgTAP (Supabase)"**,
+strict, `enforce_admins: true`, force-push/deletion blocked. No required *review* (single GitHub identity makes it unsatisfiable —
+retro 6-22 "single identity" + bot/App upgrade path). Consequence: **all changes route through PRs**, including these docs.
 
-**Tracked follow-ups (filed, in Backlog):** #19 — re-check Next's vendored postcss advisory (clears upstream);
-#20 — CSP/security headers in M1; #23 — SHA-pin CI actions + digest-pin Docker base image; #24 — fully wire
-ephemeral Supabase into the Playwright E2E (currently a guarded TODO(#2) no-op), do it when Slice 1b needs a DB-backed E2E.
+**Tracked follow-ups (Backlog):** #19 postcss re-check · #20 CSP/headers (M1) · #23 SHA/digest pinning · #24 ephemeral-Supabase
+E2E wiring (Slice 1b) · #28 multi-household (`post-mvp` epic) · #29 households owner-gating (with #6).
 
 ### Blockers
 - gh-pm scoped-PAT hardening pending (optional; board works on the keyring token now) — steps in `~/.claude/third-party-inventory.md`.
