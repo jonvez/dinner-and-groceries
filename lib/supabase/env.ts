@@ -33,7 +33,7 @@ export function readSupabaseEnv(source: EnvSource = process.env): SupabaseEnv {
   if (missing.length > 0) {
     throw new Error(
       `Missing required Supabase env var(s): ${missing.join(", ")}. ` +
-        "See .env.example and run `npm run db:env` to print local values.",
+        "See .env.example and run `npm run db:status` to print local values.",
     );
   }
 
