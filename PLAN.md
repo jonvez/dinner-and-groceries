@@ -45,20 +45,23 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 M0 scaffold #1–#3 + Slice 1a Identity #4–#6; #7–#17 in Backlog. See the board via the
 `github-project-board` skill (`ghpm list`).
 
-**Resume here →** **M0 #1 MERGED** (PR #18, squash `f9646a8`). Stack decision: Jon pulled it back
-from Next 16 → **stable Next 15.5.19** (React 19 / Tailwind 4 kept; ESLint bridged via `FlatCompat`).
-Passed independent **QA-PASS + SECURITY-PASS**. `.gitignore` broadened to `.env*`.
+**Resume here → M0 COMPLETE.** All three scaffold issues merged + Done:
+- **#1** Next.js scaffold (squash `f9646a8`) — stable **Next 15.5.19** (pulled back from 16; React 19 / Tailwind 4; ESLint via `FlatCompat`).
+- **#2** Supabase local stack + migrations + typed rows (squash `f696928`) — RLS-only client, no service-role (ADR 0003); `db:*` npm scripts.
+- **#3** CI (squash `b474d7c`) — GH Actions gating every PR (lint/typecheck/Vitest + Playwright smoke E2E), main-only Cloud Run deploy stub (keyless WIF), non-root Dockerfile.
 
-**Now in flight → 2 devs fanned out in parallel** (isolated worktrees, both In Progress on board):
-- **#2** Supabase local stack + migration tooling + typed rows (branch `feat/2-supabase-local-stack`).
-- **#3** CI (lint/typecheck/Vitest per PR + Playwright wiring + Cloud Run deploy stub) (branch `feat/3-ci-pipeline`).
-  Soft dependency: #3's Playwright-vs-ephemeral-Supabase is guarded on `supabase/config.toml` until #2 merges.
+Each passed the full gate (independent **QA-PASS + SECURITY-PASS**, non-author). **Branch protection now ON**
+for `main`: requires checks **"Lint, typecheck, unit tests"** + **"Playwright smoke E2E"**, strict (up-to-date),
+`enforce_admins: true`, force-push/deletion blocked. (No required *review* — single GitHub identity makes it
+unsatisfiable; see retro 6-22 "single identity" + the bot/App upgrade path.)
 
-Each PR needs the same gate as #1: QA (non-author) + security-review → PO accept → squash-merge.
-Slice 1a Identity (#4–#6) follows once Supabase (#2) lands.
+**Next → Slice 1a Identity (#4–#6)**, now unblocked (Supabase + CI in place). Sequence: #4 identity schema
++ RLS → #5 Google OAuth + `@supabase/ssr` → #6 household create + invite/join. Same gate + the now-enforced CI.
+**Before pulling #4, do the PO grooming pass** to add user-story framing to the M1 feature issues (retro 6-22).
 
-**Tracked follow-ups from #1 gate (filed, in Backlog):** #19 — re-check Next's vendored postcss
-advisory at next audit (clears upstream); #20 — add CSP/security headers in M1 once real routes/user input exist.
+**Tracked follow-ups (filed, in Backlog):** #19 — re-check Next's vendored postcss advisory (clears upstream);
+#20 — CSP/security headers in M1; #23 — SHA-pin CI actions + digest-pin Docker base image; #24 — fully wire
+ephemeral Supabase into the Playwright E2E (currently a guarded TODO(#2) no-op), do it when Slice 1b needs a DB-backed E2E.
 
 ### Blockers
 - gh-pm scoped-PAT hardening pending (optional; board works on the keyring token now) — steps in `~/.claude/third-party-inventory.md`.
@@ -85,3 +88,12 @@ advisory at next audit (clears upstream); #20 — add CSP/security headers in M1
 - Dev delivered **PR #18** (M0 #1 — Next.js scaffold; Next 16 / React 19 / Tailwind 4; 7 tests green) → In Review.
 - Stood up shared tooling (cross-project w/ delivery-simulator): adopted `gh-pm` + `ghpm` wrapper + `github-project-board` skill (ADR 0005); global third-party security rule + `third-party-security-review` skill + inventory (gh-pm verdict MEDIUM, scoped-PAT pending); `things` skill + allowlist; **auto mode** enabled per-project (permission-prompt fix); command-hygiene → MemPalace (rig/feedback).
 - Board #1 migrated to native 6-column Status field (dropped the redundant Stage field).
+
+### 2026-06-22 (cont. — M0 shipped)
+- **Auto mode corrected:** project-level `defaultMode: "auto"` is silently ignored (CC v2.1.142+); removed the dead setting; activated auto mode this session via `Shift+Tab`. The classifier proved itself (blocked unrequested `gh issue create`). Retro logged.
+- **#1 stack decision:** Jon pulled Next 16 → stable **15.5.19**; dev reworked PR #18, re-gated (QA + security PASS), squash-merged (`f9646a8`).
+- **Fanned out 2 devs in parallel** → #2 Supabase (`f696928`) + #3 CI (`b474d7c`). Each independently QA-PASS + SECURITY-PASS; #21 hit a post-#22 merge conflict (package.json/lock/.gitignore), dev resolved as union + lockfile regen.
+- **Branch protection ON** for `main` (required checks: verify + e2e; strict; enforce_admins). Closed QA-1 (the "blocks merge" gap). Required *review* not viable on a single GitHub identity — retro'd the bot/App upgrade path.
+- **Follow-ups filed + boarded:** #19 (postcss re-check), #20 (CSP/headers M1), #23 (SHA/digest pinning), #24 (ephemeral-Supabase E2E wiring).
+- **Retro:** added 3 entries — auto-mode activation reality, M1 issues lack user-story format (PO to fix at grooming), single-identity review constraint.
+- **M0 done.** Next: PO grooming pass (user-story framing) → Slice 1a Identity #4–#6.
