@@ -45,11 +45,20 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 M0 scaffold #1–#3 + Slice 1a Identity #4–#6; #7–#17 in Backlog. See the board via the
 `github-project-board` skill (`ghpm list`).
 
-**Resume here →** PR #18 (M0 #1, Next.js scaffold) is **In Review** — built clean (7 tests green;
-lint/typecheck/build pass) on a deliberately bleeding-edge stack (**Next 16 / React 19 / Tailwind 4**).
-Next: (1) Jon's call on that stack; (2) QA (non-author) + `security-review` (one open item: a moderate
-postcss advisory bundled transitively inside Next); (3) merge #1 → **fan out 2 devs** on #2 (Supabase)
-+ #3 (CI); Slice 1a (#4–#6) follows once Supabase lands.
+**Resume here →** **M0 #1 MERGED** (PR #18, squash `f9646a8`). Stack decision: Jon pulled it back
+from Next 16 → **stable Next 15.5.19** (React 19 / Tailwind 4 kept; ESLint bridged via `FlatCompat`).
+Passed independent **QA-PASS + SECURITY-PASS**. `.gitignore` broadened to `.env*`.
+
+**Now in flight → 2 devs fanned out in parallel** (isolated worktrees, both In Progress on board):
+- **#2** Supabase local stack + migration tooling + typed rows (branch `feat/2-supabase-local-stack`).
+- **#3** CI (lint/typecheck/Vitest per PR + Playwright wiring + Cloud Run deploy stub) (branch `feat/3-ci-pipeline`).
+  Soft dependency: #3's Playwright-vs-ephemeral-Supabase is guarded on `supabase/config.toml` until #2 merges.
+
+Each PR needs the same gate as #1: QA (non-author) + security-review → PO accept → squash-merge.
+Slice 1a Identity (#4–#6) follows once Supabase (#2) lands.
+
+**Tracked follow-ups from #1 gate (filed, in Backlog):** #19 — re-check Next's vendored postcss
+advisory at next audit (clears upstream); #20 — add CSP/security headers in M1 once real routes/user input exist.
 
 ### Blockers
 - gh-pm scoped-PAT hardening pending (optional; board works on the keyring token now) — steps in `~/.claude/third-party-inventory.md`.

@@ -9,7 +9,8 @@ list flowing from the agreed menu. See [`SPEC.md`](./SPEC.md) for the product de
 - **Next.js** (App Router, TypeScript) — single app, no separate API service
 - **Tailwind CSS v4** (CSS-first config) + **shadcn/ui** (new-york style, neutral base)
 - **Vitest** + React Testing Library for unit/component tests (TDD)
-- Supabase (Postgres/Auth/Realtime/RLS) — _added in a later M0 issue_
+- **Supabase** (Postgres/Auth/Realtime/RLS) via the Supabase CLI — local
+  Docker stack for dev/CI; one hosted project is prod (ADR 0002)
 - Deploy: GCP Cloud Run + hosted Supabase — _later milestone_
 
 ## Getting started
@@ -30,6 +31,48 @@ npm run dev        # http://localhost:3000
 | `npm run typecheck` | `tsc --noEmit` (strict mode)              |
 | `npm run test`      | Run the Vitest suite once                 |
 | `npm run test:watch`| Vitest in watch mode                      |
+| `npm run db:start`  | Start the local Supabase stack (Docker)   |
+| `npm run db:stop`   | Stop the local Supabase stack             |
+| `npm run db:status` | Print local Supabase URLs + keys          |
+| `npm run db:reset`  | Recreate the DB and re-apply all migrations |
+| `npm run db:migration` | Scaffold a new migration (`-- <name>`) |
+| `npm run db:types`  | Regenerate `lib/database.types.ts` from the local DB |
+
+## Supabase (local dev stack)
+
+Local Supabase runs in Docker via the Supabase CLI (pinned as a devDependency).
+The hosted Supabase project is **prod only** — no dev/test data goes there
+(ADR 0002). All DDL lives in `supabase/migrations/*.sql`; **never edit schema
+in the dashboard** (ADR 0003).
+
+**Prereqs:** Docker running locally.
+
+```bash
+npm install               # installs the pinned supabase CLI
+npm run db:start          # boots Postgres, Auth, Studio, ... (first run pulls images)
+npm run db:status         # prints the local URL + anon key
+cp .env.example .env.local   # then paste the values from db:status
+```
+
+**Migrations** (sole source of DDL):
+
+```bash
+npm run db:migration -- add_households   # scaffold supabase/migrations/<ts>_add_households.sql
+# write your DDL, then:
+npm run db:reset                         # drops + recreates + replays every migration
+```
+
+**Regenerate typed rows** after any schema change:
+
+```bash
+npm run db:reset      # apply latest migrations
+npm run db:types      # writes lib/database.types.ts (check this file in)
+```
+
+**Data access is always RLS-scoped.** Build server-side queries through
+`createUserClient(accessToken)` in [`lib/supabase/server.ts`](./lib/supabase/server.ts):
+it runs as the **signed-in user** (Bearer token), never the service role
+(ADR 0003). There is no service-role key in M0/M1.
 
 ## Repo layout
 
@@ -40,8 +83,16 @@ app/                 # Next.js App Router — routes, layouts, server actions
   globals.css        # Tailwind v4 entry + shadcn theme tokens
 lib/                 # Framework-free domain logic (heavily unit-tested)
   utils.ts           # cn() class-name helper
+  database.types.ts  # generated Supabase row types (npm run db:types)
+  supabase/          # RLS-scoped client helpers
+    env.ts           # validated NEXT_PUBLIC_SUPABASE_* env reader
+    client-options.ts # pure user-scoped (Bearer) client options
+    server.ts        # createUserClient() — typed, RLS-enforced server client
 components/          # React UI
   ui/                # shadcn/ui primitives (generated; e.g. button.tsx)
+supabase/            # Supabase CLI config + migrations (sole DDL source)
+  config.toml        # local stack config (project_id, ports, auth, ...)
+  migrations/        # *.sql — the ONLY place schema is defined (ADR 0003)
 docs/                # ADRs (docs/decisions), retro log, design notes
 ```
 
