@@ -1,0 +1,168 @@
+name: CI
+
+# PR checks gate merges (lint + typecheck + Vitest, plus a Playwright smoke E2E).
+# On merge to main, a guarded Cloud Run deploy stub runs (no-op until GCP wiring
+# secrets exist). See docs: docs/ci.md.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # PR gate: lint + typecheck + unit tests. Any non-zero exit blocks merge.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (Vitest)
+        run: npm test
+
+  # ---------------------------------------------------------------------------
+  # PR gate: Playwright smoke E2E against the production standalone server.
+  # Runs today WITHOUT Supabase; the Supabase spin-up step is guarded and
+  # activates once #2 lands supabase/config.toml.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: Playwright smoke E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (standalone)
+        run: npm run build
+
+      # TODO(#2): wire ephemeral Supabase once supabase/ lands. This step is a
+      # no-op until supabase/config.toml exists, so it never blocks PRs today.
+      # When #2 merges, the CLI is installed and `supabase start` boots an
+      # ephemeral local stack; export its URL/anon key into the E2E env below.
+      - name: Start ephemeral Supabase (guarded on #2)
+        if: ${{ hashFiles('supabase/config.toml') != '' }}
+        run: |
+          echo "supabase/config.toml detected — booting ephemeral Supabase."
+          # TODO(#2): replace with `supabase/setup-cli` + `supabase start`, then
+          # export NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY from `supabase status`
+          # into $GITHUB_ENV so the build/start and Playwright pick them up.
+          echo "::warning::Supabase E2E wiring is a TODO(#2) placeholder; no-op."
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke E2E
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Deploy STUB (M0): Docker build -> Artifact Registry -> Cloud Run.
+  # Guarded to merges on main. No-op until the GCP wiring secrets/vars are set,
+  # so it never runs on PRs and commits no real GCP credentials.
+  # Real auth is via Workload Identity Federation (no long-lived keys) +
+  # secrets bound to the Cloud Run service from GCP Secret Manager.
+  # See docs/ci.md for the variables/secrets this expects.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Cloud Run (stub)
+    needs: [verify, e2e]
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation
+    steps:
+      - name: Gate on GCP wiring
+        id: gate
+        run: |
+          if [ -z "${{ vars.GCP_PROJECT_ID }}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GCP not wired yet (vars.GCP_PROJECT_ID unset) — deploy is a no-op stub."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+
+      # Keyless auth via Workload Identity Federation — no JSON keys in the repo.
+      - name: Authenticate to Google Cloud
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+
+      - name: Build & push image to Artifact Registry
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/dinner-and-groceries:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: dinner-and-groceries
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/dinner-and-groceries:${{ github.sha }}
+          # Secrets are bound from GCP Secret Manager at deploy time — never
+          # committed here. Names are placeholders documented in docs/ci.md.
+          # TODO: align secret names once Supabase env is finalized (#2).
+          secrets: |
+            NEXT_PUBLIC_SUPABASE_URL=NEXT_PUBLIC_SUPABASE_URL:latest
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest
+
+      - name: Stub notice (GCP not wired)
+        if: ${{ steps.gate.outputs.enabled != 'true' }}
+        run: |
+          echo "Deploy stub: pipeline shape present; wire vars.GCP_* + WIF to activate."
