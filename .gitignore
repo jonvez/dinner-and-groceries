@@ -6,8 +6,7 @@ build/
 next-env.d.ts
 *.tsbuildinfo
 coverage/
-.env
-.env.local
-.env*.local
+.env*
+!.env.example
 .DS_Store
 .vercel
