@@ -1,6 +1,6 @@
 -- RLS: members — allow-same, deny-cross, owner-only remove (role enforcement).
 begin;
-select plan(8);
+select plan(10);
 
 create schema if not exists tests;
 
@@ -94,6 +94,20 @@ select tests.clear_auth();
 select is(
   (select display_name from public.members where id = 'b0000002-0000-0000-0000-000000000002'),
   'K Member', 'deny-cross: H owner cannot update a K member (row unchanged)'
+);
+
+-- ---- role: a non-owner member CANNOT self-promote to owner ----
+-- (privilege escalation guard — UPDATE on members.role is not granted to the
+-- authenticated role, so writing role is denied even on one's own row.)
+select tests.authenticate_as('44444444-4444-4444-4444-444444444444');
+select throws_ok(
+  $$update public.members set role = 'owner' where user_id = '44444444-4444-4444-4444-444444444444'$$,
+  '42501', null, 'role: a non-owner member cannot self-promote to owner'
+);
+select tests.clear_auth();
+select is(
+  (select role::text from public.members where user_id = '44444444-4444-4444-4444-444444444444'),
+  'member', 'role: the would-be self-promoter is still a member'
 );
 
 select * from finish();

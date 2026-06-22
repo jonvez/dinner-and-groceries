@@ -192,7 +192,14 @@ grant execute on function public.consume_invite(text) to authenticated;
 -- functions, so we keep the surface minimal (SELECT + owner-gated INSERT/DELETE
 -- via policy still require the grant below).
 grant select, insert, update, delete on public.households to authenticated;
-grant select, insert, update, delete on public.members to authenticated;
+-- members: UPDATE is column-scoped — clients may edit profile fields but NOT
+-- `role` (no self-promotion to owner), nor the identity/scoping columns
+-- (`id`, `household_id`, `user_id`). Role changes are reserved for a future
+-- owner-driven SECURITY DEFINER path; this closes a privilege-escalation hole
+-- in the bedrock. INSERT is granted for the membership-bootstrap path
+-- (household create / invite accept, gated by policy in the auth slice).
+grant select, insert, delete on public.members to authenticated;
+grant update (display_name, avatar) on public.members to authenticated;
 grant select, insert, delete on public.invites to authenticated;
 
 -- ===========================================================================
