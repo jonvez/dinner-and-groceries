@@ -145,7 +145,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_invite: {
+        Args: { p_display_name: string; p_token: string }
+        Returns: string
+      }
       consume_invite: { Args: { p_token: string }; Returns: string }
+      create_household: {
+        Args: { p_display_name: string; p_name: string }
+        Returns: string
+      }
       current_household_id: { Args: never; Returns: string }
       is_household_owner: { Args: never; Returns: boolean }
     }
