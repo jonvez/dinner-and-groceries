@@ -20,6 +20,15 @@ npm install
 npm run dev        # http://localhost:3000
 ```
 
+### Working in git worktrees (parallel dev)
+
+Each worktree must have its **own** `node_modules` — run `npm install` inside
+it. **Do NOT symlink `node_modules` to the primary checkout:** `git worktree
+remove --force` follows the symlink and deletes/corrupts the primary install.
+After removing a worktree, reinstall in the primary checkout (`npm install`) if
+anything shared was touched. (The local Supabase Docker stack is a single shared
+project — only one worktree should drive `db:start`/`db:reset` at a time.)
+
 ## Scripts
 
 | Script              | What it does                              |
@@ -106,19 +115,53 @@ Supabase Google provider config. Local sign-in cannot complete without these.
 
 1. **Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID**
    (application type **Web application**).
-2. Set the **Authorized redirect URI** to the Supabase Auth callback (NOT the
-   app's own route — Supabase redirects to the app afterward):
-   - Local: `http://127.0.0.1:54321/auth/v1/callback`
-   - Prod: `https://<project-ref>.supabase.co/auth/v1/callback`
-3. Copy the **Client ID** and **Client secret** into `.env.local`:
+2. Fill in the two URL fields — they are **different things**:
+   - **Authorized redirect URIs** — where Google sends the browser *after*
+     consent. This must be the **Supabase Auth callback**, NOT the app's own
+     `/auth/callback` route (Supabase handles Google's redirect, then forwards
+     the browser to the app):
+     - Local: `http://127.0.0.1:54321/auth/v1/callback`
+     - Prod: `https://<project-ref>.supabase.co/auth/v1/callback`
+   - **Authorized JavaScript origins** — the origin the OAuth flow is *started*
+     from (the app). Add the app origin you actually use:
+     - Local: `http://localhost:3000` (and/or `http://127.0.0.1:3000`)
+     - Prod: your deployed app origin.
+3. Copy the **Client ID** and **Client secret** into `.env.local` (gitignored):
    ```bash
    SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...apps.googleusercontent.com
    SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...
    ```
    These names are wired into `supabase/config.toml`'s `[auth.external.google]`
    via `env()` (see [`.env.example`](./.env.example)). They are read by the
-   Supabase Auth server, **not** the Next.js bundle.
-4. Restart the stack so the CLI picks them up: `npm run db:stop && npm run db:start`.
+   Supabase **Auth server**, NOT the Next.js bundle.
+4. **How the creds actually reach the CLI.** The Supabase CLI reads the
+   **process environment**, not `.env.local` directly — putting values in
+   `.env.local` is *not* enough on its own. The `db:*` npm scripts run through
+   [`scripts/supabase.sh`](./scripts/supabase.sh), which **sources `.env.local`
+   into the process env** (when present) before invoking the CLI, so `env()`
+   substitution gets the Google creds. So just:
+   ```bash
+   npm run db:stop && npm run db:start   # loads .env.local, boots with Google enabled
+   ```
+   If you bypass the script and run `npx supabase start` by hand, you must
+   export the vars yourself first:
+   ```bash
+   set -a; . ./.env.local; set +a; npx supabase start
+   ```
+   (Without the creds in the process env the Google provider boots **disabled** —
+   `authorize` returns a 400 "provider is not enabled".)
+
+> **Host consistency (localhost vs 127.0.0.1).** The app origin, the
+> `site_url`/`additional_redirect_urls` in `supabase/config.toml`, and the
+> Google client's JavaScript origin must all **agree on host**. `localhost` and
+> `127.0.0.1` are *different origins* to the browser; mixing them drops the
+> session cookie or fails the redirect allow-list. This repo standardizes on
+> **`http://localhost:3000`** (matching `npm run dev`).
+
+> **Google "Testing" publishing status.** A new OAuth client is in **Testing**
+> mode by default — only Google accounts added under **OAuth consent screen →
+> Test users** can sign in; everyone else gets `access_denied`. Add your own
+> Google account as a test user before trying to sign in locally.
 
 **Prod:** put the same two values in **GCP Secret Manager** and bind them to the
 hosted Supabase project; never commit real secrets.

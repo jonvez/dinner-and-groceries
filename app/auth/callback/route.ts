@@ -10,11 +10,18 @@
  *     `safeRedirectPath` (same-origin path only) to prevent an open redirect.
  *   - We redirect to a relative path on the *request* origin; we never trust a
  *     host from the query string.
+ *
+ * Cookie propagation (the local-auth blocker, bug A): on a successful exchange
+ * the SSR client emits the session cookies through `setAll`. Those cookies MUST
+ * land on the SAME response object we return, or the browser never receives
+ * them and the next request is bounced to /login. We therefore build the
+ * success redirect response FIRST and have `setAll` write onto it — never onto
+ * the `next/headers` store (whose writes do not propagate to a freshly
+ * constructed `NextResponse.redirect()`).
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 
 import type { Database } from "@/lib/database.types";
 
@@ -34,17 +41,21 @@ export async function GET(request: NextRequest) {
   }
 
   const env = readSupabaseEnv();
-  const cookieStore = await cookies();
   const cookieSecurity = authCookieOptions();
+
+  // The response we hand back on success. `setAll` writes the session cookies
+  // directly onto THIS object so they reach the browser as Set-Cookie headers.
+  // `next` is already validated to be a same-origin relative path.
+  const response = NextResponse.redirect(`${origin}${next}`);
 
   const supabase = createServerClient<Database>(env.url, env.anonKey, {
     cookies: {
       getAll() {
-        return cookieStore.getAll();
+        return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
-          cookieStore.set(name, value, { ...options, ...cookieSecurity });
+          response.cookies.set(name, value, { ...options, ...cookieSecurity });
         });
       },
     },
@@ -56,6 +67,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login?error=oauth`);
   }
 
-  // `next` is already validated to be a same-origin relative path.
-  return NextResponse.redirect(`${origin}${next}`);
+  return response;
 }
