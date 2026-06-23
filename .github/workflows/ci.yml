@@ -121,6 +121,14 @@ jobs:
 
       - name: Build (standalone)
         run: npm run build
+        # NEXT_PUBLIC_* are inlined into the CLIENT bundle at BUILD time, so the
+        # well-known non-secret local Supabase defaults must be present HERE — not
+        # only at runtime via playwright.config.ts's webServer.env. Without these,
+        # the browser Supabase client (sign-in button) has no env and throws.
+        # Values match playwright.config.ts / .env.example (public CLI demo key).
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
 
       # TODO(#2): wire ephemeral Supabase once supabase/ lands. This step is a
       # no-op until supabase/config.toml exists, so it never blocks PRs today.

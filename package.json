@@ -12,12 +12,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "db:start": "supabase start",
-    "db:stop": "supabase stop",
-    "db:status": "supabase status",
-    "db:reset": "supabase db reset",
-    "db:migration": "supabase migration new",
-    "db:types": "supabase gen types typescript --local > lib/database.types.ts"
+    "db:start": "sh scripts/supabase.sh start",
+    "db:stop": "sh scripts/supabase.sh stop",
+    "db:status": "sh scripts/supabase.sh status",
+    "db:reset": "sh scripts/supabase.sh db reset",
+    "db:migration": "sh scripts/supabase.sh migration new",
+    "db:types": "sh scripts/supabase.sh gen types typescript --local > lib/database.types.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.0",
