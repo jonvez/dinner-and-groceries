@@ -31,3 +31,27 @@ test("a signed-out visitor is routed to the Google sign-in page", async ({
   // Only Google OAuth is wired — Apple is post-MVP.
   await expect(page.getByRole("button", { name: /apple/i })).toHaveCount(0);
 });
+
+/**
+ * Regression guard: the browser Supabase client must get its NEXT_PUBLIC_* env
+ * INLINED into the client bundle. A dynamic `process.env` access (aliasing it to
+ * a variable) is not statically replaced by Next, so the client throws
+ * "Missing required Supabase env var(s)" the moment the sign-in button runs —
+ * a bug that unit tests (which inject a fake env source) cannot catch.
+ *
+ * We capture uncaught page errors and click the button: with the env correctly
+ * inlined there is no throw (the click then initiates the OAuth redirect). This
+ * is independent of whether Supabase/Google is reachable, so it's CI-stable.
+ */
+test("clicking Google sign-in does not throw a missing-env error (client env is inlined)", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err.message));
+
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await page.waitForTimeout(500);
+
+  expect(pageErrors.join("\n")).not.toContain("Missing required Supabase env");
+});

@@ -15,6 +15,14 @@ import type { Database } from "@/lib/database.types";
 import { readSupabaseEnv } from "./env";
 
 export function createClient() {
-  const env = readSupabaseEnv();
+  // Read the public env vars as *static* `process.env.NEXT_PUBLIC_*` member
+  // expressions so Next.js inlines them into the client bundle at build time.
+  // Passing them explicitly (rather than letting readSupabaseEnv default to the
+  // aliased `process.env`) is required — a dynamic `source.NEXT_PUBLIC_X` access
+  // is NOT statically replaced, so it would be undefined in the browser.
+  const env = readSupabaseEnv({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  });
   return createBrowserClient<Database>(env.url, env.anonKey);
 }
