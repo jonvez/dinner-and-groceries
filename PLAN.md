@@ -48,15 +48,25 @@ M0 scaffold #1–#3 + Slice 1a Identity #4–#6; #7–#17 in Backlog. See the bo
 **M0 COMPLETE** (#1 Next 15 scaffold `f9646a8` · #2 Supabase local stack `f696928` · #3 CI `b474d7c`).
 PO grooming pass applied user-story framing to M1 issues #4–#17 (personas from SPEC).
 
-**Resume here → Slice 1a Identity, in progress:**
-- **#4** identity schema (households/members/invites) + RLS — **DONE** (squash `7bcefef`-era PR #27). The security bedrock:
-  FORCE RLS on all 3 tables, `SECURITY DEFINER` household-lookup chokepoint (`search_path=''`), owner/member roles
-  with column-scoped grants (no role self-escalation), single-use expiring invites via atomic `consume_invite()`.
-  Enforces **single-household-per-user** (`unique(user_id)`) for MVP — multi-household is a real future need (Jon's kids
-  span two homes; mom may adopt the tool) tracked as epic **#28**. Gated by a new **`RLS pgTAP (Supabase)`** CI job (34 assertions).
-- **#5** Google OAuth + `@supabase/ssr` session — **IN PROGRESS** (dev on `feat/5-google-oauth`). Likely human-config
-  dependency incoming: a **Google OAuth client** (GCP) for live sign-in verification — secrets via `.env.example` placeholders / Secret Manager.
-- **#6** household create + invite/join — next. Carries the invite-token-entropy note (use a CSPRNG when minting tokens — from #27 review) and L-1 (**#29**, owner-gate households UPDATE).
+**Slice 1a Identity — COMPLETE.** The full loop (sign in → create/join household → shared space) works, verified live end-to-end:
+- **#4** identity schema + RLS (PR #27) — security bedrock: FORCE RLS on all 3 tables, `SECURITY DEFINER` chokepoint
+  (`search_path=''`), owner/member roles (no self-escalation), single-use expiring invites. Single-household-per-user
+  (`unique(user_id)`) for MVP; multi-household is epic **#28**. `RLS pgTAP` CI job (34 → now 59 assertions).
+- **#5** Google OAuth + `@supabase/ssr` session (PR #32) — verified-identity gating (`getUser`), allowlist open-redirect
+  validation, httpOnly/lax cookies, fail-closed membership, no service-role.
+- **#6** household create + invite/join + "join your family" (PR #33) — `SECURITY DEFINER` bootstrap (identity from
+  `auth.uid()`), 192-bit CSPRNG invite tokens, atomic `consume_invite()` join.
+- **Auth fixes #34/#35** — local Google sign-in had a chain of integration bugs (browser-bundle env inlining, CI build
+  env, supabase `.env.local` loading, redirect-URL allowlist, callback cookie propagation) that only surfaced in the live
+  round-trip. All fixed + regression-tested; **Jon verified real Google sign-in → signed-in `/join`** on 6-23. See retro 6-23.
+
+**Local dev (Google sign-in):** start the stack with creds via `npm run db:start` (now sources `.env.local` via
+`scripts/supabase.sh`); needs a Google OAuth client (Authorized redirect URI `http://127.0.0.1:54321/auth/v1/callback`,
+test-users added) + `.env.local` with `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID/_SECRET`. README "Google OAuth" has the full setup.
+
+**Resume here → Slice 1b (the validation slice):** #7 social/board schema + RLS → #8 week board + proposals → #9 reactions/
+comments/Realtime → #10 slotting. **Stop and validate the loop with the family after 1b.** (#24 — wire ephemeral Supabase
+into the E2E — becomes relevant here for DB-backed E2E.)
 
 **Branch protection on `main`:** required checks **"Lint, typecheck, unit tests" + "Playwright smoke E2E" + "RLS pgTAP (Supabase)"**,
 strict, `enforce_admins: true`, force-push/deletion blocked. No required *review* (single GitHub identity makes it unsatisfiable —
