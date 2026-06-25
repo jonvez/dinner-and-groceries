@@ -10,7 +10,7 @@ import {
 import { formatWeekRange } from "@/lib/week/labels";
 
 import { getOrCreateWeek } from "./actions-core";
-import { BoardGrid } from "./board-grid";
+import { BoardGrid, type SlottedDishView } from "./board-grid";
 import {
   ProposalPool,
   type CommentRow,
@@ -82,7 +82,7 @@ export default async function BoardPage({
     const { data } = await supabase
       .from("proposals")
       .select(
-        "id, note, dish:dishes(title, source_url), proposer:members(display_name)",
+        "id, dish_id, created_at, note, dish:dishes(title, source_url), proposer:members(display_name)",
       )
       .eq("week_id", weekId)
       .order("created_at", { ascending: true });
@@ -92,11 +92,38 @@ export default async function BoardPage({
       const proposer = row.proposer as { display_name: string } | null;
       return {
         id: row.id,
+        dishId: row.dish_id,
+        createdAt: row.created_at,
         title: dish?.title ?? "Untitled dish",
         note: row.note,
         sourceUrl: dish?.source_url ?? null,
         proposerName: proposer?.display_name ?? null,
       };
+    });
+  }
+
+  // The week's slotted dishes (issue #10): every slot_dishes row in this week's
+  // slots, with its day+meal target and dish title. RLS scopes both tables to the
+  // household. Rendered into the grid cells (with tap-to-unslot).
+  let slotted: SlottedDishView[] = [];
+  if (weekId) {
+    const { data: slotRows } = await supabase
+      .from("slots")
+      .select("day_of_week, meal_type, slot_dishes(id, dish_id, dish:dishes(title))")
+      .eq("week_id", weekId);
+
+    slotted = (slotRows ?? []).flatMap((slot) => {
+      const rows =
+        (slot.slot_dishes as
+          | { id: string; dish_id: string; dish: { title: string } | null }[]
+          | null) ?? [];
+      return rows.map((sd) => ({
+        slotDishId: sd.id,
+        dishId: sd.dish_id,
+        title: sd.dish?.title ?? "Untitled dish",
+        dayOfWeek: slot.day_of_week,
+        mealType: slot.meal_type,
+      }));
     });
   }
 
@@ -198,10 +225,16 @@ export default async function BoardPage({
 
       {weekId ? (
         <>
-          <BoardGrid weekStart={weekStart} weekStartDay={weekStartDay} />
+          <BoardGrid
+            weekStart={weekStart}
+            weekStartDay={weekStartDay}
+            slotted={slotted}
+          />
           <ProposalPool
             householdId={householdId ?? ""}
             currentMemberId={currentMemberId}
+            weekStart={weekStart}
+            weekStartDay={weekStartDay}
             proposals={proposals}
             initialReactions={reactions}
             initialComments={comments}

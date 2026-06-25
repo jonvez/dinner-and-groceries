@@ -1,26 +1,46 @@
 /**
- * The weekly board's day x meal-type SLOT GRID (dinner-focused). Presentational +
- * framework-pure (no client state) so it renders on the server and is unit-tested
- * with RTL.
+ * The weekly board's day x meal-type SLOT GRID (dinner-focused). The grid itself
+ * is presentational + server-rendered; the dishes slotted into each cell carry a
+ * small client-side tap-to-unslot control (`SlottedDishChip`).
  *
- * Scope guard: the grid cells are EMPTY placeholders. Assigning dishes into a slot
- * (tap-to-slot) is issue #10. The week's proposal POOL — with its reactions and
- * comments (issue #9) — is rendered separately by `ProposalPool`.
+ * Slotting (issue #10): a member deliberately slots proposed dishes onto a day +
+ * meal-type from the pool (`ProposalPool`), and a slot can hold MANY dishes
+ * (spaghetti + salad). The grid never auto-places anything — it just renders what
+ * was slotted, plus the affordance to remove it. The proposal POOL with its
+ * reactions/comments (issue #9) is rendered separately by `ProposalPool`.
  */
 
 import {
   DAY_SHORT_NAMES,
   MEAL_TYPES,
   mealTypeLabel,
+  type MealType,
 } from "@/lib/week/labels";
 import { orderedDayOfWeek, weekDates } from "@/lib/week/boundary";
+
+import { SlottedDishChip } from "./slotted-dish";
+
+/** A dish slotted into a specific (day_of_week, meal_type) cell of the week. */
+export type SlottedDishView = {
+  slotDishId: string;
+  dishId: string;
+  title: string;
+  dayOfWeek: number;
+  mealType: MealType;
+};
 
 export type BoardGridProps = {
   weekStart: string;
   weekStartDay: number;
+  /** Dishes already slotted this week, rendered into their day+meal cells. */
+  slotted?: SlottedDishView[];
 };
 
-export function BoardGrid({ weekStart, weekStartDay }: BoardGridProps) {
+export function BoardGrid({
+  weekStart,
+  weekStartDay,
+  slotted = [],
+}: BoardGridProps) {
   const days = orderedDayOfWeek(weekStartDay);
   const dates = weekDates(weekStart);
   // Map each ordered day-of-week to its civil date for the column header.
@@ -67,16 +87,33 @@ export function BoardGrid({ weekStart, weekStartDay }: BoardGridProps) {
                   >
                     {mealTypeLabel(mealType)}
                   </th>
-                  {days.map((dow) => (
-                    <td
-                      key={`${mealType}-${dow}`}
-                      className="border-border h-16 border p-1 text-center align-middle"
-                    >
-                      <span className="text-muted-foreground/50 text-xs">
-                        —
-                      </span>
-                    </td>
-                  ))}
+                  {days.map((dow) => {
+                    const dishesHere = slotted.filter(
+                      (s) => s.dayOfWeek === dow && s.mealType === mealType,
+                    );
+                    return (
+                      <td
+                        key={`${mealType}-${dow}`}
+                        className="border-border h-16 border p-1 align-top"
+                      >
+                        {dishesHere.length === 0 ? (
+                          <span className="text-muted-foreground/50 text-xs">
+                            —
+                          </span>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {dishesHere.map((d) => (
+                              <SlottedDishChip
+                                key={d.slotDishId}
+                                slotDishId={d.slotDishId}
+                                title={d.title}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
