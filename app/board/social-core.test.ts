@@ -147,6 +147,26 @@ describe("toggleReaction", () => {
     const result = await toggleReaction(client, REACT_INPUT);
     expect(result.ok).toBe(false);
   });
+
+  it("fails closed when the existing-reaction lookup errors (no blind write)", async () => {
+    const { client, calls } = makeClient({
+      existing: { data: null, error: { message: "boom" } },
+    });
+    const result = await toggleReaction(client, REACT_INPUT);
+    expect(result.ok).toBe(false);
+    // A failed lookup must NOT fall through to an insert (would risk a dup).
+    expect(calls.inserts).toEqual([]);
+    expect(calls.deletes).toEqual([]);
+  });
+
+  it("fails closed when the delete (toggle off) errors", async () => {
+    const { client } = makeClient({
+      existing: { data: { id: "r1" }, error: null },
+      deleteError: { message: "boom" },
+    });
+    const result = await toggleReaction(client, REACT_INPUT);
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("addComment", () => {

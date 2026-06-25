@@ -82,7 +82,11 @@ describe("reconcileByPk — authoritative snapshot merge on (re)connect", () => 
       { id: "b", v: 2 },
       { id: "a", v: 99 },
     );
-    expect(reconcileByPk(snapshot)).toEqual([
+    const out = reconcileByPk(snapshot);
+    // EXPLICIT assumption: the FIRST occurrence wins (v:1), the later dup (v:99)
+    // is dropped — the snapshot's stable ordering is preserved.
+    expect(out.find((r) => r.id === "a")?.v).toBe(1);
+    expect(out).toEqual([
       { id: "a", v: 1 },
       { id: "b", v: 2 },
     ]);

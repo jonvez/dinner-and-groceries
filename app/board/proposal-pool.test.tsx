@@ -229,6 +229,32 @@ describe("ProposalPool — Realtime subscription", () => {
     await waitFor(() => expect(btn).toHaveTextContent("2"));
   });
 
+  it("flips the current member's own 'mine' state when their reaction arrives live", async () => {
+    // e.g. the same member acting from a second device: the live echo must mark
+    // the pill pressed, not just bump an anonymous count.
+    renderPool({ proposals: [proposals[0]], initialReactions: [] });
+    const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
+    expect(btn).toHaveAttribute("aria-pressed", "false");
+
+    act(() => {
+      rt.handlers.reactions({
+        eventType: "INSERT",
+        new: { id: "mine1", proposal_id: "p1", member_id: "me", kind: THUMBS },
+        old: {},
+      });
+    });
+
+    await waitFor(() => expect(btn).toHaveAttribute("aria-pressed", "true"));
+    expect(btn).toHaveTextContent("1");
+  });
+
+  it("removes its channel on unmount (no leaked subscription)", () => {
+    const { unmount } = renderPool({ proposals: [proposals[0]] });
+    expect(rt.removeChannel).not.toHaveBeenCalled();
+    unmount();
+    expect(rt.removeChannel).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores an incoming reaction for a proposal NOT in this week (week scope)", async () => {
     renderPool({ proposals: [proposals[0]], initialReactions: [] });
     act(() => {

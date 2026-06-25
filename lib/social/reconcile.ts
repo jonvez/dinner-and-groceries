@@ -47,6 +47,12 @@ export function mergeChange<T extends Identified>(
 }
 
 export function reconcileByPk<T extends Identified>(snapshot: readonly T[]): T[] {
+  // De-dup assumption (explicit): on a duplicate PK we KEEP THE FIRST occurrence
+  // and drop later ones. A fetched snapshot is ordered (created_at asc) and a PK
+  // is unique in the DB, so duplicates only arise from a defensive paranoia path
+  // (e.g. concatenating overlapping pages); keeping the first preserves the
+  // snapshot's stable ordering. Callers must not rely on a later duplicate
+  // "winning" — the row content for a given PK is identical anyway.
   const seen = new Set<string>();
   const out: T[] = [];
   for (const row of snapshot) {
