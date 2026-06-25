@@ -81,11 +81,17 @@ select throws_ok(
   '23505', null, 'constraint: a duplicate (household_id, start_date) week is rejected'
 );
 
--- ---- constraint: the SAME start_date in a DIFFERENT household is allowed ----
--- (the uniqueness is scoped per household, not global.)
-insert into public.weeks (household_id, start_date)
-values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', date '2026-07-06');
-select ok(true, 'constraint: distinct start_date in same household inserts fine');
+-- ---- constraint: the SAME start_date in a DIFFERENT household IS allowed ----
+-- Uniqueness is scoped per household, not global. H and K were BOTH seeded a
+-- week on 2026-06-22; if the constraint were global the second seed would have
+-- failed. Verify under the privileged role (clear_auth) so we can see across
+-- households, then re-authenticate as the H member for the final check.
+select tests.clear_auth();
+select is(
+  (select count(*)::int from public.weeks where start_date = date '2026-06-22'),
+  2, 'constraint: the same start_date coexists across two households (per-household uniqueness)'
+);
+select tests.authenticate_as('22222222-2222-2222-2222-222222222222');
 
 -- ---- deny-cross: H member cannot open a week in K ----
 select throws_ok(

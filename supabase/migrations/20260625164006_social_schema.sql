@@ -65,8 +65,14 @@ create table public.dishes (
   cook_minutes  integer check (cook_minutes  is null or cook_minutes  >= 0),
   total_minutes integer check (total_minutes is null or total_minutes >= 0),
   -- Who added it. Members can come and go; keep the dish if they leave.
-  created_by    uuid references public.members (id) on delete set null,
+  created_by    uuid,
   created_at    timestamptz not null default now(),
+  -- Composite attribution FK: the creator must be in the SAME household as the
+  -- dish (parity with reactions.member_id). On member delete, null ONLY
+  -- created_by (PG15+ column-list SET NULL) so the NOT NULL household_id and
+  -- the dish itself survive.
+  foreign key (created_by, household_id)
+    references public.members (id, household_id) on delete set null (created_by),
   -- Enables the composite (id, household_id) FK references from children.
   unique (id, household_id)
 );
@@ -145,13 +151,17 @@ create table public.proposals (
   week_id      uuid not null,
   dish_id      uuid not null,
   -- Who proposed it. Keep the proposal if the member leaves.
-  proposed_by  uuid references public.members (id) on delete set null,
+  proposed_by  uuid,
   note         text,
   created_at   timestamptz not null default now(),
   foreign key (week_id, household_id)
     references public.weeks (id, household_id) on delete cascade,
   foreign key (dish_id, household_id)
     references public.dishes (id, household_id) on delete cascade,
+  -- Composite attribution FK: the proposer must be in the SAME household. On
+  -- member delete, null ONLY proposed_by so the proposal + household_id survive.
+  foreign key (proposed_by, household_id)
+    references public.members (id, household_id) on delete set null (proposed_by),
   -- Enables the composite (id, household_id) FK references from reactions/comments.
   unique (id, household_id)
 );
@@ -193,11 +203,15 @@ create table public.comments (
   id           uuid primary key default gen_random_uuid(),
   household_id uuid not null,
   proposal_id  uuid not null,
-  member_id    uuid references public.members (id) on delete set null,
+  member_id    uuid,
   body         text not null check (length(trim(body)) > 0),
   created_at   timestamptz not null default now(),
   foreign key (proposal_id, household_id)
-    references public.proposals (id, household_id) on delete cascade
+    references public.proposals (id, household_id) on delete cascade,
+  -- Composite attribution FK: the author must be in the SAME household. On
+  -- member delete, null ONLY member_id so the comment + household_id survive.
+  foreign key (member_id, household_id)
+    references public.members (id, household_id) on delete set null (member_id)
 );
 
 create index comments_household_id_idx on public.comments (household_id);

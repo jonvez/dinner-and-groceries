@@ -61,11 +61,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "comments_member_id_fkey"
-            columns: ["member_id"]
+            foreignKeyName: "comments_member_id_household_id_fkey"
+            columns: ["member_id", "household_id"]
             isOneToOne: false
             referencedRelation: "members"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "comments_proposal_id_household_id_fkey"
@@ -121,11 +121,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "dishes_created_by_fkey"
-            columns: ["created_by"]
+            foreignKeyName: "dishes_created_by_household_id_fkey"
+            columns: ["created_by", "household_id"]
             isOneToOne: false
             referencedRelation: "members"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "dishes_household_id_fkey"
@@ -279,11 +279,11 @@ export type Database = {
             referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "proposals_proposed_by_fkey"
-            columns: ["proposed_by"]
+            foreignKeyName: "proposals_proposed_by_household_id_fkey"
+            columns: ["proposed_by", "household_id"]
             isOneToOne: false
             referencedRelation: "members"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "proposals_week_id_household_id_fkey"

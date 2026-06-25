@@ -76,9 +76,13 @@ select is(
 );
 
 -- ---- allow-same: H member can add a proposal in H ----
+-- H starts with 1 seeded proposal; after the insert there should be 2.
 insert into public.proposals (household_id, week_id, dish_id, proposed_by, note)
 values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', '0d000001-0000-0000-0000-000000000001', 'a0000002-0000-0000-0000-000000000002', 'me too');
-select ok(true, 'allow-same: H member can add a proposal in H');
+select is(
+  (select count(*)::int from public.proposals where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  2, 'allow-same: H member can add a proposal in H (H now has 2)'
+);
 
 -- ---- modeling: recycle a dish = a NEW proposal pointing at the SAME dish in a
 -- DIFFERENT week (dishes and proposals are distinct). ----
