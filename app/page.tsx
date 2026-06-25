@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { InvitePanel } from "./invite-panel";
@@ -40,6 +42,13 @@ export default async function Home() {
             : "Plan the family menu together, then let the grocery list flow from it."}
         </p>
       </div>
+
+      <Link
+        href="/board"
+        className="bg-primary text-primary-foreground rounded-md px-5 py-2.5 text-sm font-medium"
+      >
+        Plan this week
+      </Link>
 
       {isOwner ? <InvitePanel /> : null}
 
