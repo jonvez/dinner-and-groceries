@@ -35,6 +35,11 @@ export function mealTypeLabel(mealType: MealType): string {
   return mealType.charAt(0).toUpperCase() + mealType.slice(1);
 }
 
+// STUB (red): real guard lands in the green commit.
+export function isMealType(_value: string): _value is MealType {
+  return false;
+}
+
 /**
  * A human week range like "Jun 22 – Jun 28, 2026". Formatted in UTC so a civil
  * `YYYY-MM-DD` never shifts a day under the server's local timezone.

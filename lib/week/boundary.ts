@@ -113,3 +113,8 @@ export function isValidIsoDate(value: string): boolean {
   const date = parseCivilDateUTC(value);
   return formatCivilDateUTC(date) === value;
 }
+
+// STUB (red): real guard lands in the green commit.
+export function isValidDayOfWeek(_value: number): boolean {
+  return false;
+}

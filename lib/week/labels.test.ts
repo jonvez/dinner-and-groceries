@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DAY_SHORT_NAMES,
   formatWeekRange,
+  isMealType,
   MEAL_TYPES,
 } from "./labels";
 
@@ -19,6 +20,21 @@ describe("MEAL_TYPES", () => {
   it("lists the meal occasions with dinner present (dinner-focused, model supports the rest)", () => {
     expect(MEAL_TYPES).toContain("dinner");
     expect(MEAL_TYPES).toEqual(["breakfast", "lunch", "dinner", "snack"]);
+  });
+});
+
+describe("isMealType (server-side guard for an untrusted client value)", () => {
+  it("accepts every meal type in the enum", () => {
+    for (const mealType of MEAL_TYPES) {
+      expect(isMealType(mealType)).toBe(true);
+    }
+  });
+
+  it("rejects anything outside the enum", () => {
+    expect(isMealType("brunch")).toBe(false);
+    expect(isMealType("")).toBe(false);
+    expect(isMealType("DINNER")).toBe(false);
+    expect(isMealType("dinner; drop table")).toBe(false);
   });
 });
 

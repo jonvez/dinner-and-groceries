@@ -12,6 +12,13 @@ export const REACTION_PALETTE = ["👍", "❤️", "😋", "🔥", "🎉", "🤔
 
 export type ReactionKind = (typeof REACTION_PALETTE)[number];
 
+// STUB (red): real positive subset + guard land in the green commit.
+export const POSITIVE_REACTIONS = [] as const;
+
+export function isPositiveReaction(_kind: string): boolean {
+  return false;
+}
+
 /**
  * Server-side guard: is `kind` one of the palette emoji? The reaction `kind`
  * arrives from the client, so it is untrusted — this constrains it to the palette
