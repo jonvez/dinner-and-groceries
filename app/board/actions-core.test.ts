@@ -138,6 +138,54 @@ describe("proposeNewDish", () => {
     expect(calls.proposalsInsert[0]).toMatchObject({ note: null });
   });
 
+  it("rejects a javascript: recipe URL before any DB call (stored-XSS guard)", async () => {
+    const { client, calls } = makeClient({});
+    const result = await proposeNewDish(client, {
+      householdId: "hh-1",
+      weekId: "w1",
+      proposedBy: "m1",
+      title: "Sneaky",
+      sourceUrl: "javascript:alert(document.cookie)",
+      note: "",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/http|link/i);
+    expect(calls.fromTables).toEqual([]);
+  });
+
+  it("rejects a data: recipe URL before any DB call", async () => {
+    const { client, calls } = makeClient({});
+    const result = await proposeNewDish(client, {
+      householdId: "hh-1",
+      weekId: "w1",
+      proposedBy: "m1",
+      title: "Sneaky",
+      sourceUrl: "data:text/html,<script>alert(1)</script>",
+      note: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(calls.fromTables).toEqual([]);
+  });
+
+  it("accepts an http(s) recipe URL", async () => {
+    const { client, calls } = makeClient({
+      dishes: { data: { id: "d1" }, error: null },
+      proposals: { data: { id: "p1" }, error: null },
+    });
+    const result = await proposeNewDish(client, {
+      householdId: "hh-1",
+      weekId: "w1",
+      proposedBy: "m1",
+      title: "Tacos",
+      sourceUrl: "https://example.com/tacos",
+      note: "",
+    });
+    expect(result.ok).toBe(true);
+    expect(calls.dishesInsert[0]).toMatchObject({
+      source_url: "https://example.com/tacos",
+    });
+  });
+
   it("rejects a blank title before any DB call", async () => {
     const { client, calls } = makeClient({});
     const result = await proposeNewDish(client, {

@@ -16,75 +16,11 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerComponentClient } from "@/lib/supabase/server-component";
-import { isValidIsoDate, weekStartForDate } from "@/lib/week/boundary";
 
-import {
-  getOrCreateWeek,
-  proposeExistingDish,
-  proposeNewDish,
-} from "./actions-core";
+import { proposeExistingDish, proposeNewDish } from "./actions-core";
+import { GENERIC_ERROR, resolveActor, resolveWeekId } from "./actor";
 
 export type ProposeState = { error: string } | { added: true } | null;
-
-const GENERIC_ERROR = "Something went wrong. Reload and try again.";
-
-type Actor = {
-  householdId: string;
-  memberId: string;
-  weekStartDay: number;
-};
-
-/**
- * Resolve the signed-in member's household + member id + week-start preference.
- * Returns null if the session/household can't be established (the middleware
- * normally prevents reaching here without a membership).
- */
-async function resolveActor(
-  supabase: Awaited<ReturnType<typeof createServerComponentClient>>,
-): Promise<Actor | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
-
-  const { data: householdId } = await supabase.rpc("current_household_id");
-  if (!householdId) return null;
-
-  const { data: member } = await supabase
-    .from("members")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!member) return null;
-
-  const { data: household } = await supabase
-    .from("households")
-    .select("week_start_day")
-    .maybeSingle();
-
-  return {
-    householdId,
-    memberId: member.id,
-    weekStartDay: household?.week_start_day ?? 1,
-  };
-}
-
-/** Validate + normalize the untrusted weekStart, then lazily open the week. */
-async function resolveWeekId(
-  supabase: Awaited<ReturnType<typeof createServerComponentClient>>,
-  actor: Actor,
-  rawWeekStart: string,
-): Promise<{ weekId: string } | { error: string }> {
-  if (!isValidIsoDate(rawWeekStart)) return { error: GENERIC_ERROR };
-  const startDate = weekStartForDate(rawWeekStart, actor.weekStartDay);
-
-  const week = await getOrCreateWeek(supabase, {
-    householdId: actor.householdId,
-    startDate,
-  });
-  if (!week.ok) return { error: week.error };
-  return { weekId: week.weekId };
-}
 
 export async function proposeNewDishAction(
   _prev: ProposeState,

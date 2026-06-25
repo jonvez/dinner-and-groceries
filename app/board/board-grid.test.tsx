@@ -69,6 +69,23 @@ describe("BoardGrid — proposal pool", () => {
     expect(link).toHaveAttribute("href", "https://example.com/carnitas");
   });
 
+  it("does not render a link for an unsafe (javascript:) URL (defense in depth)", () => {
+    renderBoard({
+      proposals: [
+        {
+          id: "evil",
+          title: "Sneaky",
+          note: null,
+          sourceUrl: "javascript:alert(document.cookie)",
+          proposerName: null,
+        },
+      ],
+    });
+    expect(
+      screen.queryByRole("link", { name: /recipe/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an empty-state when there are no proposals yet", () => {
     renderBoard({ proposals: [] });
     const pool = screen.getByRole("region", { name: /idea/i });

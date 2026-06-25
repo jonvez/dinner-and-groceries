@@ -14,6 +14,7 @@ import {
   mealTypeLabel,
 } from "@/lib/week/labels";
 import { orderedDayOfWeek, weekDates } from "@/lib/week/boundary";
+import { safeHttpUrl } from "@/lib/web/safe-url";
 
 export type ProposalView = {
   id: string;
@@ -102,34 +103,43 @@ export function BoardGrid({ weekStart, weekStartDay, proposals }: BoardGridProps
           </p>
         ) : (
           <ul className="space-y-2">
-            {proposals.map((p) => (
-              <li
-                key={p.id}
-                className="border-border rounded-lg border p-3 text-left"
-              >
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium">{p.title}</span>
-                  {p.proposerName ? (
-                    <span className="text-muted-foreground text-xs">
-                      proposed by {p.proposerName}
-                    </span>
+            {proposals.map((p) => {
+              // Defense in depth: even though the write boundary already rejects
+              // unsafe schemes, re-validate before rendering an href so a row
+              // that predates the guard (or arrived another way) can never
+              // render a `javascript:` link.
+              const href = safeHttpUrl(p.sourceUrl);
+              return (
+                <li
+                  key={p.id}
+                  className="border-border rounded-lg border p-3 text-left"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-medium">{p.title}</span>
+                    {p.proposerName ? (
+                      <span className="text-muted-foreground text-xs">
+                        proposed by {p.proposerName}
+                      </span>
+                    ) : null}
+                  </div>
+                  {p.note ? (
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      {p.note}
+                    </p>
                   ) : null}
-                </div>
-                {p.note ? (
-                  <p className="text-muted-foreground mt-1 text-sm">{p.note}</p>
-                ) : null}
-                {p.sourceUrl ? (
-                  <a
-                    href={p.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary mt-1 inline-block text-xs underline underline-offset-4"
-                  >
-                    View recipe
-                  </a>
-                ) : null}
-              </li>
-            ))}
+                  {href ? (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary mt-1 inline-block text-xs underline underline-offset-4"
+                    >
+                      View recipe
+                    </a>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

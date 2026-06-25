@@ -20,6 +20,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
+import { safeHttpUrl } from "@/lib/web/safe-url";
 
 type DbClient = SupabaseClient<Database>;
 
@@ -80,14 +81,39 @@ export async function proposeNewDish(
     return { ok: false, error: "Give the dish a title." };
   }
 
+  // Validate the recipe URL's scheme SERVER-SIDE before persisting: a stored
+  // `javascript:`/`data:` URL is stored XSS once rendered into an <a href>
+  // (React 19 does not block dangerous href schemes, and the input's
+  // `type="url"` is a client-only hint). Empty is allowed (optional field);
+  // present-but-unsafe is rejected with a user-facing error rather than
+  // silently dropped, so the proposer knows their link didn't stick.
+  const rawUrl = input.sourceUrl.trim();
+  let sourceUrl: string | null = null;
+  if (rawUrl !== "") {
+    sourceUrl = safeHttpUrl(rawUrl);
+    if (sourceUrl === null) {
+      return {
+        ok: false,
+        error: "Enter a valid http(s) recipe link, or leave it blank.",
+      };
+    }
+  }
+
   // 1) The reusable library dish. `source_url` is just a stored string here —
   //    no fetching/parsing (that's slice 1c).
+  //
+  // NB (accepted MVP behavior): the dish insert and the proposal insert below
+  // are NOT one transaction. If the proposal insert fails after the dish is
+  // created, a dangling library dish remains. This is benign (an unused, fully
+  // valid library entry the user can re-propose or ignore) and recoverable, so
+  // we accept it for MVP. TODO(#24-adjacent): fold both writes into a single
+  // SECURITY DEFINER RPC (or a transaction) so propose-new is atomic.
   const { data: dish, error: dishError } = await supabase
     .from("dishes")
     .insert({
       household_id: input.householdId,
       title,
-      source_url: nullableText(input.sourceUrl),
+      source_url: sourceUrl,
       created_by: input.proposedBy,
     })
     .select("id")

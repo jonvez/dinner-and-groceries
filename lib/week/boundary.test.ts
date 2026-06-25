@@ -80,6 +80,19 @@ describe("currentWeekStart (instant -> local week start)", () => {
     const instant = new Date("2026-03-08T18:00:00Z"); // Sunday in LA
     expect(currentWeekStart(instant, LA, 1)).toBe("2026-03-02");
   });
+
+  it("is correct within a DST-transition week (LA fall-back 2026-11-01)", () => {
+    // 2026-11-01 02:00 is the fall-back; 2026-11-01 is a Sunday, so the week's
+    // Monday is 2026-10-26. 20:00Z is 12:00 PST (after the change) -> Sunday.
+    const instant = new Date("2026-11-01T20:00:00Z");
+    expect(currentWeekStart(instant, LA, 1)).toBe("2026-10-26");
+  });
+
+  it("resolves the current week for a Sunday-start household", () => {
+    // 2026-06-24T12:00Z is Wednesday 05:00 in LA; Sunday-start week is 2026-06-21.
+    const instant = new Date("2026-06-24T12:00:00Z");
+    expect(currentWeekStart(instant, LA, 0)).toBe("2026-06-21");
+  });
 });
 
 describe("addWeeks", () => {
