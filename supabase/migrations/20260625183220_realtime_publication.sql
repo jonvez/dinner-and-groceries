@@ -1,0 +1,24 @@
+-- Migration: realtime_publication (slice 1b, issue #9)
+--
+-- Enable Supabase Realtime (Postgres Changes) DELIVERY for the social tables. The
+-- `reactions`/`comments` table schema is unchanged (#7) — this only adds them to
+-- the `supabase_realtime` logical-replication publication so INSERT/UPDATE/DELETE
+-- events are actually emitted to subscribed clients. Without this, the board's
+-- live push is a no-op (the client subscribes successfully but never receives a
+-- change), which is exactly the gap this closes.
+--
+-- Security (per the non-author security review of #9):
+--   * Both tables have RLS ENABLED + FORCED (#7). Realtime authorizes Postgres
+--     Changes against those same RLS policies via the user's token, so a client
+--     only ever receives rows for its own household — adding them to the
+--     publication does NOT widen exposure beyond what SELECT already allows.
+--   * DELIBERATELY keep DEFAULT replica identity (primary key only). DELETE
+--     payloads then carry just the PK in `old`, which is all reconcile-by-PK
+--     needs. We do NOT set `replica identity full`: that would stream the entire
+--     old row on every UPDATE/DELETE over the realtime channel, needlessly
+--     widening what's exposed. PK-only is the safe, sufficient choice.
+--
+-- `supabase_realtime` is created by the Supabase platform/local stack; add the
+-- two tables to it. Idempotent across a clean `supabase db reset` (the
+-- publication starts empty of these tables, so the ADD is a one-time effect).
+alter publication supabase_realtime add table public.reactions, public.comments;
