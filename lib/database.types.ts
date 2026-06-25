@@ -34,6 +34,108 @@ export type Database = {
   }
   public: {
     Tables: {
+      comments: {
+        Row: {
+          body: string
+          created_at: string
+          household_id: string
+          id: string
+          member_id: string | null
+          proposal_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          household_id: string
+          id?: string
+          member_id?: string | null
+          proposal_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          household_id?: string
+          id?: string
+          member_id?: string | null
+          proposal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comments_member_id_household_id_fkey"
+            columns: ["member_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "comments_proposal_id_household_id_fkey"
+            columns: ["proposal_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      dishes: {
+        Row: {
+          cook_minutes: number | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          household_id: string
+          id: string
+          image_url: string | null
+          prep_minutes: number | null
+          source_url: string | null
+          tags: string[]
+          title: string
+          total_minutes: number | null
+        }
+        Insert: {
+          cook_minutes?: number | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          household_id: string
+          id?: string
+          image_url?: string | null
+          prep_minutes?: number | null
+          source_url?: string | null
+          tags?: string[]
+          title: string
+          total_minutes?: number | null
+        }
+        Update: {
+          cook_minutes?: number | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          household_id?: string
+          id?: string
+          image_url?: string | null
+          prep_minutes?: number | null
+          source_url?: string | null
+          tags?: string[]
+          title?: string
+          total_minutes?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dishes_created_by_household_id_fkey"
+            columns: ["created_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "dishes_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       households: {
         Row: {
           created_at: string
@@ -140,6 +242,212 @@ export type Database = {
           },
         ]
       }
+      proposals: {
+        Row: {
+          created_at: string
+          dish_id: string
+          household_id: string
+          id: string
+          note: string | null
+          proposed_by: string | null
+          week_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          household_id: string
+          id?: string
+          note?: string | null
+          proposed_by?: string | null
+          week_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          household_id?: string
+          id?: string
+          note?: string | null
+          proposed_by?: string | null
+          week_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposals_dish_id_household_id_fkey"
+            columns: ["dish_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "proposals_proposed_by_household_id_fkey"
+            columns: ["proposed_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "proposals_week_id_household_id_fkey"
+            columns: ["week_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "weeks"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      reactions: {
+        Row: {
+          created_at: string
+          household_id: string
+          id: string
+          kind: string
+          member_id: string
+          proposal_id: string
+        }
+        Insert: {
+          created_at?: string
+          household_id: string
+          id?: string
+          kind: string
+          member_id: string
+          proposal_id: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string
+          id?: string
+          kind?: string
+          member_id?: string
+          proposal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reactions_member_id_household_id_fkey"
+            columns: ["member_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "reactions_proposal_id_household_id_fkey"
+            columns: ["proposal_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      slot_dishes: {
+        Row: {
+          created_at: string
+          dish_id: string
+          household_id: string
+          id: string
+          position: number
+          prep_minutes_override: number | null
+          slot_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          household_id: string
+          id?: string
+          position?: number
+          prep_minutes_override?: number | null
+          slot_id: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          household_id?: string
+          id?: string
+          position?: number
+          prep_minutes_override?: number | null
+          slot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "slot_dishes_dish_id_household_id_fkey"
+            columns: ["dish_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "slot_dishes_slot_id_household_id_fkey"
+            columns: ["slot_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "slots"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      slots: {
+        Row: {
+          created_at: string
+          day_of_week: number
+          household_id: string
+          id: string
+          meal_type: Database["public"]["Enums"]["meal_type"]
+          position: number
+          week_id: string
+        }
+        Insert: {
+          created_at?: string
+          day_of_week: number
+          household_id: string
+          id?: string
+          meal_type: Database["public"]["Enums"]["meal_type"]
+          position?: number
+          week_id: string
+        }
+        Update: {
+          created_at?: string
+          day_of_week?: number
+          household_id?: string
+          id?: string
+          meal_type?: Database["public"]["Enums"]["meal_type"]
+          position?: number
+          week_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "slots_week_id_household_id_fkey"
+            columns: ["week_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "weeks"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      weeks: {
+        Row: {
+          created_at: string
+          household_id: string
+          id: string
+          start_date: string
+        }
+        Insert: {
+          created_at?: string
+          household_id: string
+          id?: string
+          start_date: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string
+          id?: string
+          start_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "weeks_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -158,6 +466,7 @@ export type Database = {
       is_household_owner: { Args: never; Returns: boolean }
     }
     Enums: {
+      meal_type: "breakfast" | "lunch" | "dinner" | "snack"
       member_role: "owner" | "member"
     }
     CompositeTypes: {
@@ -289,6 +598,7 @@ export const Constants = {
   },
   public: {
     Enums: {
+      meal_type: ["breakfast", "lunch", "dinner", "snack"],
       member_role: ["owner", "member"],
     },
   },
