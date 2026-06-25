@@ -12,11 +12,21 @@ export const REACTION_PALETTE = ["👍", "❤️", "😋", "🔥", "🎉", "🤔
 
 export type ReactionKind = (typeof REACTION_PALETTE)[number];
 
-// STUB (red): real positive subset + guard land in the green commit.
-export const POSITIVE_REACTIONS = [] as const;
+/**
+ * The POSITIVE subset of the palette — the emoji that count as enthusiasm for
+ * the nudge sort and the ready-to-slot badge (ADR 0003: "sort by positive-reaction
+ * count … badge at >=2 positive reactions from distinct members"). Deliberately a
+ * STRICT subset: 🤔 ("thinking") is neutral and must NOT lift or badge a proposal.
+ * Add an emoji to the palette above and it stays non-positive until listed here —
+ * so a new reaction can never silently start nudging the plan.
+ */
+export const POSITIVE_REACTIONS = ["👍", "❤️", "😋", "🔥", "🎉"] as const;
 
-export function isPositiveReaction(_kind: string): boolean {
-  return false;
+export type PositiveReactionKind = (typeof POSITIVE_REACTIONS)[number];
+
+/** Is `kind` a positive reaction (counts toward nudge sort + the badge)? */
+export function isPositiveReaction(kind: string): kind is PositiveReactionKind {
+  return (POSITIVE_REACTIONS as readonly string[]).includes(kind);
 }
 
 /**

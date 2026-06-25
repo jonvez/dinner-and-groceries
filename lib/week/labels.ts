@@ -35,9 +35,12 @@ export function mealTypeLabel(mealType: MealType): string {
   return mealType.charAt(0).toUpperCase() + mealType.slice(1);
 }
 
-// STUB (red): real guard lands in the green commit.
-export function isMealType(_value: string): _value is MealType {
-  return false;
+/**
+ * Server-side guard for an untrusted `meal_type` slot target: an exact membership
+ * check against the enum (no case-folding/fuzzing) before any slot write.
+ */
+export function isMealType(value: string): value is MealType {
+  return (MEAL_TYPES as readonly string[]).includes(value);
 }
 
 /**
