@@ -25,6 +25,7 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/browser";
+import { isReadyToSlot, nudgeSort } from "@/lib/social/nudge";
 import { tallyReactions } from "@/lib/social/reactions";
 import {
   mergeChange,
@@ -32,6 +33,8 @@ import {
   type RealtimeChange,
 } from "@/lib/social/reconcile";
 import { safeHttpUrl } from "@/lib/web/safe-url";
+import { orderedDayOfWeek } from "@/lib/week/boundary";
+import { DAY_SHORT_NAMES, MEAL_TYPES, mealTypeLabel } from "@/lib/week/labels";
 
 import {
   addCommentAction,
@@ -39,9 +42,14 @@ import {
   type CommentState,
   type ReactState,
 } from "./social-actions";
+import { slotDishAction, type SlotState } from "./slot-actions";
 
 export type ProposalView = {
   id: string;
+  /** The library dish this proposal points at — the thing that gets slotted. */
+  dishId: string;
+  /** ISO timestamp; the nudge-sort tiebreaker (most-recent first). */
+  createdAt: string;
   title: string;
   note: string | null;
   sourceUrl: string | null;
@@ -66,6 +74,10 @@ export type CommentRow = {
 export type ProposalPoolProps = {
   householdId: string;
   currentMemberId: string;
+  /** The viewed week's start (YYYY-MM-DD) — the slot target for tap-to-slot. */
+  weekStart: string;
+  /** Household week-start day, for ordering the day picker (Monday=1 default). */
+  weekStartDay?: number;
   proposals: ProposalView[];
   initialReactions: ReactionRow[];
   initialComments: CommentRow[];
@@ -86,6 +98,8 @@ function commentsSig(rows: CommentRow[]): string {
 export function ProposalPool({
   householdId,
   currentMemberId,
+  weekStart,
+  weekStartDay = 1,
   proposals,
   initialReactions,
   initialComments,
@@ -104,6 +118,19 @@ export function ProposalPool({
     [proposals],
   );
   const proposalIdList = useMemo(() => proposals.map((p) => p.id), [proposals]);
+
+  // Nudge sort: attach each proposal's CURRENT reactions (server snapshot +
+  // any live merges) and order by positive-reaction count desc, tiebreak
+  // most-recent. This only re-orders the pool to GUIDE attention — it never
+  // auto-slots anything (a human still taps to slot). Recomputed when reactions
+  // change so a fresh thumbs-up can float a dish up live.
+  const ordered = useMemo(() => {
+    const withReactions = proposals.map((p) => ({
+      ...p,
+      reactions: reactions.filter((r) => r.proposal_id === p.id),
+    }));
+    return nudgeSort(withReactions);
+  }, [proposals, reactions]);
 
   // Reconcile to the server snapshot whenever it changes (post-revalidate). The
   // snapshot is authoritative; Realtime-applied local rows that are also in the
@@ -207,18 +234,20 @@ export function ProposalPool({
         </span>
       </div>
 
-      {proposals.length === 0 ? (
+      {ordered.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           No ideas yet — be the first to propose a dish for this week.
         </p>
       ) : (
         <ul className="space-y-2">
-          {proposals.map((p) => (
+          {ordered.map((p) => (
             <ProposalCard
               key={p.id}
               proposal={p}
               currentMemberId={currentMemberId}
-              reactions={reactions.filter((r) => r.proposal_id === p.id)}
+              weekStart={weekStart}
+              weekStartDay={weekStartDay}
+              reactions={p.reactions}
               comments={comments.filter((c) => c.proposal_id === p.id)}
               memberNames={memberNames}
             />
@@ -257,12 +286,16 @@ function toChange<T extends { id: string }>(
 function ProposalCard({
   proposal: p,
   currentMemberId,
+  weekStart,
+  weekStartDay,
   reactions,
   comments,
   memberNames,
 }: {
   proposal: ProposalView;
   currentMemberId: string;
+  weekStart: string;
+  weekStartDay: number;
   reactions: ReactionRow[];
   comments: CommentRow[];
   memberNames: Record<string, string>;
@@ -270,17 +303,27 @@ function ProposalCard({
   // Defense in depth: re-validate the stored recipe URL before rendering an href
   // (React does not block dangerous schemes; a pre-guard row could exist).
   const href = safeHttpUrl(p.sourceUrl);
+  // The badge is a derived NUDGE only: it tells a human this dish has broad
+  // support (>=2 distinct positive reactors). It never slots anything itself.
+  const ready = isReadyToSlot(reactions);
 
   return (
     <li className="border-border space-y-3 rounded-lg border p-3 text-left">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-medium">{p.title}</span>
+        <span className="font-medium" data-testid="proposal-title">
+          {p.title}
+        </span>
         {p.proposerName ? (
           <span className="text-muted-foreground text-xs">
             proposed by {p.proposerName}
           </span>
         ) : null}
       </div>
+      {ready ? (
+        <span className="bg-primary/10 text-primary inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-medium">
+          Ready to slot
+        </span>
+      ) : null}
       {p.note ? (
         <p className="text-muted-foreground text-sm">{p.note}</p>
       ) : null}
@@ -300,9 +343,95 @@ function ProposalCard({
         reactions={reactions}
         currentMemberId={currentMemberId}
       />
+      <SlotControl
+        dishId={p.dishId}
+        proposalId={p.id}
+        weekStart={weekStart}
+        weekStartDay={weekStartDay}
+      />
       <CommentThread comments={comments} memberNames={memberNames} />
       <CommentForm proposalId={p.id} />
     </li>
+  );
+}
+
+/**
+ * Tap-to-slot affordance: pick a day + meal-type and slot this proposal's dish
+ * onto the board. A deliberate human action — the badge/sort only guide it. The
+ * day + meal-type are validated server-side (untrusted); identity + week come
+ * from the verified session in the action. No drag-and-drop (post-MVP).
+ */
+function SlotControl({
+  dishId,
+  proposalId,
+  weekStart,
+  weekStartDay,
+}: {
+  dishId: string;
+  proposalId: string;
+  weekStart: string;
+  weekStartDay: number;
+}) {
+  const [state, action, pending] = useActionState<SlotState, FormData>(
+    slotDishAction,
+    null,
+  );
+  const dayIds = orderedDayOfWeek(weekStartDay);
+
+  return (
+    <form action={action} className="flex flex-wrap items-end gap-2">
+      <input type="hidden" name="dishId" value={dishId} readOnly />
+      <input type="hidden" name="weekStart" value={weekStart} readOnly />
+
+      <label className="sr-only" htmlFor={`slot-day-${proposalId}`}>
+        Day
+      </label>
+      <select
+        id={`slot-day-${proposalId}`}
+        name="dayOfWeek"
+        defaultValue=""
+        className="border-input bg-background rounded-md border px-2 py-1 text-sm"
+      >
+        <option value="" disabled>
+          Day…
+        </option>
+        {dayIds.map((dow) => (
+          <option key={dow} value={dow}>
+            {DAY_SHORT_NAMES[dow]}
+          </option>
+        ))}
+      </select>
+
+      <label className="sr-only" htmlFor={`slot-meal-${proposalId}`}>
+        Meal
+      </label>
+      <select
+        id={`slot-meal-${proposalId}`}
+        name="mealType"
+        defaultValue="dinner"
+        className="border-input bg-background rounded-md border px-2 py-1 text-sm"
+      >
+        {MEAL_TYPES.map((mealType) => (
+          <option key={mealType} value={mealType}>
+            {mealTypeLabel(mealType)}
+          </option>
+        ))}
+      </select>
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="border-input rounded-md border px-3 py-1 text-sm font-medium disabled:opacity-60"
+      >
+        {pending ? "Slotting…" : "Slot it"}
+      </button>
+
+      {state && "error" in state ? (
+        <p role="alert" className="text-destructive w-full text-xs">
+          {state.error}
+        </p>
+      ) : null}
+    </form>
   );
 }
 

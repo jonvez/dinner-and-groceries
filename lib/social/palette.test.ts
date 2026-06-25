@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { REACTION_PALETTE, isReactionKind } from "./palette";
+import {
+  POSITIVE_REACTIONS,
+  REACTION_PALETTE,
+  isPositiveReaction,
+  isReactionKind,
+} from "./palette";
 
 /**
  * The reaction palette is the SINGLE editable source of truth for which emoji a
@@ -37,5 +42,39 @@ describe("isReactionKind", () => {
 
   it("rejects a palette emoji padded with whitespace (no fuzzy match)", () => {
     expect(isReactionKind(`${REACTION_PALETTE[0]} `)).toBe(false);
+  });
+});
+
+/**
+ * The POSITIVE subset drives the nudge sort + ready-to-slot badge (ADR 0003 —
+ * "positive-reaction count"). It is a strict subset of the palette so adding an
+ * emoji to the palette never silently makes it count as a positive signal.
+ */
+describe("POSITIVE_REACTIONS", () => {
+  it("is a non-empty, strict subset of the palette", () => {
+    expect(POSITIVE_REACTIONS.length).toBeGreaterThan(0);
+    for (const kind of POSITIVE_REACTIONS) {
+      expect(REACTION_PALETTE).toContain(kind);
+    }
+    // Strict subset: the neutral 🤔 is in the palette but NOT positive.
+    expect(POSITIVE_REACTIONS.length).toBeLessThan(REACTION_PALETTE.length);
+  });
+
+  it("does not include the neutral 🤔 reaction", () => {
+    expect((POSITIVE_REACTIONS as readonly string[]).includes("🤔")).toBe(false);
+  });
+});
+
+describe("isPositiveReaction", () => {
+  it("accepts every positive emoji", () => {
+    for (const kind of POSITIVE_REACTIONS) {
+      expect(isPositiveReaction(kind)).toBe(true);
+    }
+  });
+
+  it("rejects the neutral 🤔 and off-palette kinds", () => {
+    expect(isPositiveReaction("🤔")).toBe(false);
+    expect(isPositiveReaction("💩")).toBe(false);
+    expect(isPositiveReaction("")).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   addWeeks,
   currentWeekStart,
+  isValidDayOfWeek,
   isValidIsoDate,
   orderedDayOfWeek,
   weekDates,
@@ -152,5 +153,22 @@ describe("isValidIsoDate (untrusted URL param guard)", () => {
   it("rejects impossible calendar dates", () => {
     expect(isValidIsoDate("2026-13-01")).toBe(false);
     expect(isValidIsoDate("2026-02-30")).toBe(false);
+  });
+});
+
+describe("isValidDayOfWeek (untrusted slot-target guard)", () => {
+  it("accepts each integer 0..6", () => {
+    for (let d = 0; d <= 6; d++) expect(isValidDayOfWeek(d)).toBe(true);
+  });
+
+  it("rejects out-of-range numbers", () => {
+    expect(isValidDayOfWeek(-1)).toBe(false);
+    expect(isValidDayOfWeek(7)).toBe(false);
+  });
+
+  it("rejects non-integers and non-finite values", () => {
+    expect(isValidDayOfWeek(2.5)).toBe(false);
+    expect(isValidDayOfWeek(NaN)).toBe(false);
+    expect(isValidDayOfWeek(Infinity)).toBe(false);
   });
 });

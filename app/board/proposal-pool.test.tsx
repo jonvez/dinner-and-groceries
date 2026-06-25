@@ -78,6 +78,12 @@ vi.mock("./social-actions", () => ({
   addCommentAction: async () => null,
 }));
 
+// Slotting is a server action too; stub it. The slot orchestration itself is
+// covered by slot-core.test.ts — here we only assert the affordance renders.
+vi.mock("./slot-actions", () => ({
+  slotDishAction: async () => null,
+}));
+
 beforeEach(() => {
   rt.handlers = {};
   rt.filters = {};
@@ -90,6 +96,8 @@ beforeEach(() => {
 const proposals: ProposalView[] = [
   {
     id: "p1",
+    dishId: "d1",
+    createdAt: "2026-06-22T10:00:00.000Z",
     title: "Carnitas Tacos",
     note: "family favorite",
     sourceUrl: "https://example.com/carnitas",
@@ -97,6 +105,8 @@ const proposals: ProposalView[] = [
   },
   {
     id: "p2",
+    dishId: "d2",
+    createdAt: "2026-06-23T10:00:00.000Z",
     title: "Caesar Salad",
     note: null,
     sourceUrl: null,
@@ -111,6 +121,7 @@ function renderPool(overrides: Partial<Parameters<typeof ProposalPool>[0]> = {})
     <ProposalPool
       householdId="hh-1"
       currentMemberId="me"
+      weekStart="2026-06-22"
       proposals={proposals}
       initialReactions={[]}
       initialComments={[]}
@@ -150,6 +161,8 @@ describe("ProposalPool — rendering", () => {
       proposals: [
         {
           id: "evil",
+          dishId: "d-evil",
+          createdAt: "2026-06-22T10:00:00.000Z",
           title: "Sneaky",
           note: null,
           sourceUrl: "javascript:alert(document.cookie)",
@@ -181,6 +194,98 @@ describe("ProposalPool — reactions tally", () => {
     const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
     expect(btn).toHaveTextContent("2");
     expect(btn).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("ProposalPool — nudge sort (popular floats up, never auto-places)", () => {
+  it("orders proposals by positive-reaction count, most-popular first", () => {
+    const older: ProposalView = {
+      id: "old",
+      dishId: "d-old",
+      createdAt: "2026-06-20T10:00:00.000Z",
+      title: "Old Idea",
+      note: null,
+      sourceUrl: null,
+      proposerName: null,
+    };
+    const newer: ProposalView = {
+      id: "new",
+      dishId: "d-new",
+      createdAt: "2026-06-23T10:00:00.000Z",
+      title: "New Idea",
+      note: null,
+      sourceUrl: null,
+      proposerName: null,
+    };
+    renderPool({
+      // Input order is the newer one first; nudge sort must float the popular
+      // older one above it.
+      proposals: [newer, older],
+      initialReactions: [
+        { id: "r1", proposal_id: "old", member_id: "me", kind: THUMBS },
+        { id: "r2", proposal_id: "old", member_id: "alex", kind: HEART },
+      ],
+    });
+    const titles = screen
+      .getAllByTestId("proposal-title")
+      .map((el) => el.textContent);
+    expect(titles).toEqual(["Old Idea", "New Idea"]);
+  });
+
+  it("breaks count ties by most-recent (newest first)", () => {
+    renderPool({ initialReactions: [] }); // p1 (older) + p2 (newer), 0 reactions
+    const titles = screen
+      .getAllByTestId("proposal-title")
+      .map((el) => el.textContent);
+    expect(titles).toEqual(["Caesar Salad", "Carnitas Tacos"]);
+  });
+});
+
+describe("ProposalPool — ready-to-slot badge", () => {
+  it("shows the badge at >= 2 distinct positive reactors", () => {
+    renderPool({
+      proposals: [proposals[0]],
+      initialReactions: [
+        { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
+        { id: "r2", proposal_id: "p1", member_id: "alex", kind: HEART },
+      ],
+    });
+    expect(screen.getByText(/ready to slot/i)).toBeInTheDocument();
+  });
+
+  it("does NOT badge when one member reacts with several positive kinds (distinct rule)", () => {
+    renderPool({
+      proposals: [proposals[0]],
+      initialReactions: [
+        { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
+        { id: "r2", proposal_id: "p1", member_id: "me", kind: HEART },
+        { id: "r3", proposal_id: "p1", member_id: "me", kind: REACTION_PALETTE[2] },
+      ],
+    });
+    expect(screen.queryByText(/ready to slot/i)).not.toBeInTheDocument();
+  });
+
+  it("does NOT badge a proposal with only neutral reactions", () => {
+    const NEUTRAL = REACTION_PALETTE[REACTION_PALETTE.length - 1];
+    renderPool({
+      proposals: [proposals[0]],
+      initialReactions: [
+        { id: "r1", proposal_id: "p1", member_id: "me", kind: NEUTRAL },
+        { id: "r2", proposal_id: "p1", member_id: "alex", kind: NEUTRAL },
+      ],
+    });
+    expect(screen.queryByText(/ready to slot/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("ProposalPool — tap-to-slot affordance", () => {
+  it("renders a day + meal picker and a Slot button on each proposal", () => {
+    renderPool({ proposals: [proposals[0]] });
+    expect(
+      screen.getByRole("button", { name: /^slot/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/day/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/meal/i)).toBeInTheDocument();
   });
 });
 

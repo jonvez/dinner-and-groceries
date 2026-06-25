@@ -36,6 +36,14 @@ export function mealTypeLabel(mealType: MealType): string {
 }
 
 /**
+ * Server-side guard for an untrusted `meal_type` slot target: an exact membership
+ * check against the enum (no case-folding/fuzzing) before any slot write.
+ */
+export function isMealType(value: string): value is MealType {
+  return (MEAL_TYPES as readonly string[]).includes(value);
+}
+
+/**
  * A human week range like "Jun 22 – Jun 28, 2026". Formatted in UTC so a civil
  * `YYYY-MM-DD` never shifts a day under the server's local timezone.
  */

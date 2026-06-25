@@ -113,3 +113,12 @@ export function isValidIsoDate(value: string): boolean {
   const date = parseCivilDateUTC(value);
   return formatCivilDateUTC(date) === value;
 }
+
+/**
+ * Server-side guard for an untrusted `day_of_week` slot target: an integer in
+ * [0,6] (0=Sun..6=Sat), matching the `slots.day_of_week` CHECK. Rejects
+ * non-integers and non-finite values before any slot write.
+ */
+export function isValidDayOfWeek(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 6;
+}
