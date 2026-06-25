@@ -3,7 +3,7 @@
 --
 -- pgTAP test (slice 1b, issue #7). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(8);
+select plan(9);
 
 create schema if not exists tests;
 
@@ -105,7 +105,20 @@ select throws_ok(
     values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '05000002-0000-0000-0000-000000000002', '0d000002-0000-0000-0000-000000000002', 1)$$,
   '42501', null, 'deny-cross: H member cannot slot a dish into K'
 );
+
+-- ---- deny-cross: H member cannot UNSLOT (delete) K's slotted dish (IDOR) ----
+-- The unslot guard rests on slot_dishes_delete (using household_id =
+-- current_household_id()): K's row is invisible to the USING clause, so this
+-- DELETE matches — and removes — ZERO rows (no error, just a silent no-op).
+-- Regression-lock on the loop-closing unit's unslot IDOR boundary. We verify the
+-- no-op by confirming (as the privileged role, RLS bypassed) that K's row
+-- survived: if H's delete had affected any row, the count would be 0.
+delete from public.slot_dishes where id = '5d000002-0000-0000-0000-000000000002';
 select tests.clear_auth();
+select is(
+  (select count(*)::int from public.slot_dishes where id = '5d000002-0000-0000-0000-000000000002'),
+  1, 'deny-cross: K''s slot_dish survives H''s DELETE (unslot IDOR: 0 rows deleted)'
+);
 
 select * from finish();
 rollback;

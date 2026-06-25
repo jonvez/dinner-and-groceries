@@ -7,20 +7,23 @@
 -- pgTAP test (slice 1b, issue #10). One rolled-back transaction; fixtures inlined
 -- (mirrors 08_slots_rls_test.sql).
 begin;
-select plan(5);
+select plan(6);
 
 create schema if not exists tests;
 
 insert into auth.users (id, instance_id, aud, role, email) values
   ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'h-owner@test.local'),
-  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'h-member@test.local');
+  ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'h-member@test.local'),
+  ('33333333-3333-3333-3333-333333333333', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'k-owner@test.local');
 
 insert into public.households (id, name, owner_id) values
-  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Household H', '11111111-1111-1111-1111-111111111111');
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Household H', '11111111-1111-1111-1111-111111111111'),
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Household K', '33333333-3333-3333-3333-333333333333');
 
 insert into public.members (id, household_id, user_id, display_name, role) values
   ('a0000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'H Owner', 'owner'),
-  ('a0000002-0000-0000-0000-000000000002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'H Member', 'member');
+  ('a0000002-0000-0000-0000-000000000002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'H Member', 'member'),
+  ('b0000001-0000-0000-0000-000000000001', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '33333333-3333-3333-3333-333333333333', 'K Owner', 'owner');
 
 create or replace function tests.authenticate_as(p_user_id uuid) returns void language plpgsql as $fn$
 begin
@@ -37,9 +40,10 @@ end; $fn$;
 grant usage on schema tests to authenticated;
 grant execute on all functions in schema tests to authenticated;
 
--- A week to slot into (privileged role: bypasses RLS for fixture setup).
+-- A week per household to slot into (privileged role: bypasses RLS for setup).
 insert into public.weeks (id, household_id, start_date) values
-  ('0e000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', date '2026-06-22');
+  ('0e000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', date '2026-06-22'),
+  ('0e000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', date '2026-06-22');
 
 -- A temp table to capture the id returned by each upsert (created + granted as
 -- the privileged role, before switching to the authenticated member below).
@@ -106,6 +110,20 @@ select throws_ok(
   $$insert into public.slots (household_id, week_id, meal_type, day_of_week)
     values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', 'dinner', 3)$$,
   '23505', null, 'duplicate natural-key slot insert raises unique_violation'
+);
+
+-- ---- 6) deny-cross: H member cannot upsert a slot referencing K's week (IDOR) ----
+-- Locks the invariant the ON CONFLICT branch relies on: week_id is
+-- household-scoped, so find-or-create can never reach another household. The H
+-- member uses their OWN household_id (passes the RLS WITH CHECK) but points
+-- week_id at K's week — only the composite (week_id, household_id) FK can reject
+-- it, raising 23503 on the INSERT attempt before any conflict is resolved.
+select throws_ok(
+  $$insert into public.slots (household_id, week_id, meal_type, day_of_week)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000002-0000-0000-0000-000000000002', 'dinner', 4)
+    on conflict (week_id, day_of_week, meal_type)
+    do update set day_of_week = excluded.day_of_week$$,
+  '23503', null, 'deny-cross: H member cannot upsert a slot into K''s week (composite FK)'
 );
 
 select tests.clear_auth();
