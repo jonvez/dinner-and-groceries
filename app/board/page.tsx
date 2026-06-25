@@ -10,7 +10,13 @@ import {
 import { formatWeekRange } from "@/lib/week/labels";
 
 import { getOrCreateWeek } from "./actions-core";
-import { BoardGrid, type ProposalView } from "./board-grid";
+import { BoardGrid } from "./board-grid";
+import {
+  ProposalPool,
+  type CommentRow,
+  type ProposalView,
+  type ReactionRow,
+} from "./proposal-pool";
 import { ProposeForm, type LibraryDish } from "./propose-form";
 
 // Per-user, session-dependent (and it lazily writes the week row): never
@@ -38,6 +44,12 @@ export default async function BoardPage({
 }) {
   const supabase = await createServerComponentClient();
   const { week: weekParam } = await searchParams;
+
+  // 0) The verified session user — used to resolve the current member id (which
+  //    reaction is "mine") and to attribute comments. Never trusted from input.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   // 1) Household week settings (RLS scopes this to the caller's household).
   const { data: household } = await supabase
@@ -93,6 +105,38 @@ export default async function BoardPage({
     .select("id, title")
     .order("title", { ascending: true });
   const libraryDishes: LibraryDish[] = libraryRows ?? [];
+
+  // 5) The week's social signals (issue #9): reactions + comments for the pool's
+  //    proposals, plus the member id->name map for attribution. All RLS-scoped.
+  //    This server fetch is the correctness baseline — the board works fully
+  //    without Realtime; Realtime only pushes subsequent changes live.
+  const { data: memberRows } = await supabase
+    .from("members")
+    .select("id, display_name, user_id");
+  const members = memberRows ?? [];
+  const currentMemberId =
+    members.find((m) => m.user_id === user?.id)?.id ?? "";
+  const memberNames: Record<string, string> = Object.fromEntries(
+    members.map((m) => [m.id, m.display_name]),
+  );
+
+  let reactions: ReactionRow[] = [];
+  let comments: CommentRow[] = [];
+  if (proposals.length > 0) {
+    const proposalIds = proposals.map((p) => p.id);
+    const { data: reactionRows } = await supabase
+      .from("reactions")
+      .select("id, proposal_id, member_id, kind")
+      .in("proposal_id", proposalIds);
+    reactions = reactionRows ?? [];
+
+    const { data: commentRows } = await supabase
+      .from("comments")
+      .select("id, proposal_id, member_id, body, created_at")
+      .in("proposal_id", proposalIds)
+      .order("created_at", { ascending: true });
+    comments = commentRows ?? [];
+  }
 
   const prevWeek = addWeeks(weekStart, -1);
   const nextWeek = addWeeks(weekStart, 1);
@@ -154,10 +198,14 @@ export default async function BoardPage({
 
       {weekId ? (
         <>
-          <BoardGrid
-            weekStart={weekStart}
-            weekStartDay={weekStartDay}
+          <BoardGrid weekStart={weekStart} weekStartDay={weekStartDay} />
+          <ProposalPool
+            householdId={householdId ?? ""}
+            currentMemberId={currentMemberId}
             proposals={proposals}
+            initialReactions={reactions}
+            initialComments={comments}
+            memberNames={memberNames}
           />
           <section className="border-border space-y-4 rounded-lg border p-4">
             <ProposeForm weekStart={weekStart} libraryDishes={libraryDishes} />

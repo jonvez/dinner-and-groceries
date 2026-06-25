@@ -54,6 +54,6 @@ describe("tallyReactions", () => {
       "me",
     );
     expect(tally.find((t) => t.kind === THUMBS)?.count).toBe(1);
-    expect(tally.some((t) => t.kind === "💩")).toBe(false);
+    expect(tally.some((t) => String(t.kind) === "💩")).toBe(false);
   });
 });
