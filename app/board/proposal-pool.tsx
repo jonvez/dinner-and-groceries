@@ -25,6 +25,10 @@
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/browser";
+import {
+  createRealtimeAuthenticator,
+  fetchRealtimeToken,
+} from "@/lib/supabase/realtime-auth";
 import { isReadyToSlot, nudgeSort } from "@/lib/social/nudge";
 import { tallyReactions } from "@/lib/social/reactions";
 import {
@@ -152,6 +156,21 @@ export function ProposalPool({
   useEffect(() => {
     if (proposalIdList.length === 0) return;
     const supabase = createClient();
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    // Authenticate the Realtime socket AS THE SIGNED-IN USER (issue #44). The
+    // browser `@supabase/ssr` client builds the websocket with the anon key only
+    // — our session tokens live in httpOnly cookies, unreadable from JS — so
+    // without this the RLS-gated postgres_changes on reactions/comments evaluate
+    // as anon and deliver NOTHING (the channel still JOINs, which is why the UI
+    // showed "Live" while no events arrived). We fetch the short-lived access
+    // token from a same-origin server route and apply it BEFORE subscribing, then
+    // keep it fresh ahead of expiry. The refresh token never leaves the server.
+    const authenticator = createRealtimeAuthenticator({
+      getToken: () => fetchRealtimeToken(),
+      setAuth: (token) => supabase.realtime.setAuth(token),
+    });
 
     // Pull the authoritative snapshot after a (re)connect: the server is truth,
     // so a drop + reconnect converges with no lost/dup state (reconcileByPk).
@@ -170,53 +189,66 @@ export function ProposalPool({
       if (cm) setComments(reconcileByPk(cm as CommentRow[]));
     }
 
-    const channel = supabase
-      .channel(`board-social:${householdId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "reactions",
-          filter: `household_id=eq.${householdId}`,
-        },
-        (payload) => {
-          const change = toChange<ReactionRow>(payload, proposalIds);
-          if (change) setReactions((prev) => mergeChange(prev, change));
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "comments",
-          filter: `household_id=eq.${householdId}`,
-        },
-        (payload) => {
-          const change = toChange<CommentRow>(payload, proposalIds);
-          if (change) setComments((prev) => mergeChange(prev, change));
-        },
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          setLive(true);
-          if (wasDisconnected.current) {
-            wasDisconnected.current = false;
-            void refetch();
+    async function setup() {
+      // Authenticate first so the channel's initial JOIN carries the user's JWT.
+      await authenticator.start();
+      if (cancelled) return;
+      channel = subscribe();
+    }
+
+    function subscribe() {
+      return supabase
+        .channel(`board-social:${householdId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "reactions",
+            filter: `household_id=eq.${householdId}`,
+          },
+          (payload) => {
+            const change = toChange<ReactionRow>(payload, proposalIds);
+            if (change) setReactions((prev) => mergeChange(prev, change));
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "comments",
+            filter: `household_id=eq.${householdId}`,
+          },
+          (payload) => {
+            const change = toChange<CommentRow>(payload, proposalIds);
+            if (change) setComments((prev) => mergeChange(prev, change));
+          },
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") {
+            setLive(true);
+            if (wasDisconnected.current) {
+              wasDisconnected.current = false;
+              void refetch();
+            }
+          } else if (
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT" ||
+            status === "CLOSED"
+          ) {
+            setLive(false);
+            wasDisconnected.current = true;
           }
-        } else if (
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT" ||
-          status === "CLOSED"
-        ) {
-          setLive(false);
-          wasDisconnected.current = true;
-        }
-      });
+        });
+    }
+
+    void setup();
 
     return () => {
-      void supabase.removeChannel(channel);
+      cancelled = true;
+      authenticator.stop();
+      if (channel) void supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [householdId, proposalIdList.join(",")]);

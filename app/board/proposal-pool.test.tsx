@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { REACTION_PALETTE } from "@/lib/social/palette";
 
@@ -33,6 +33,11 @@ const rt = vi.hoisted(() => ({
   inCalls: [] as { table: string; ids: string[] }[],
   data: { reactions: [] as unknown[], comments: [] as unknown[] },
   removeChannel: vi.fn(),
+  // Realtime auth (issue #44): record tokens applied to the socket + the order
+  // of setAuth vs. subscribe, so we can assert the socket is authenticated as
+  // the user BEFORE it joins (anon join => RLS delivers no postgres_changes).
+  setAuthTokens: [] as string[],
+  events: [] as string[],
 }));
 
 vi.mock("@/lib/supabase/browser", () => ({
@@ -45,11 +50,20 @@ vi.mock("@/lib/supabase/browser", () => ({
           return chain;
         },
         subscribe: (cb: (s: string) => void) => {
+          rt.events.push("subscribe");
           rt.subscribeCb = cb;
+          // Emit SUBSCRIBED so the channel reports "Live", as the real socket does.
+          cb("SUBSCRIBED");
           return chain;
         },
       };
       return chain;
+    };
+    const realtime = {
+      setAuth: async (token: string) => {
+        rt.events.push("setAuth");
+        rt.setAuthTokens.push(token);
+      },
     };
     const from = (table: string) => ({
       select: () => ({
@@ -67,7 +81,7 @@ vi.mock("@/lib/supabase/browser", () => ({
         },
       }),
     });
-    return { channel, from, removeChannel: rt.removeChannel };
+    return { channel, from, removeChannel: rt.removeChannel, realtime };
   },
 }));
 
@@ -91,7 +105,32 @@ beforeEach(() => {
   rt.inCalls = [];
   rt.data = { reactions: [], comments: [] };
   rt.removeChannel.mockClear();
+  rt.setAuthTokens = [];
+  rt.events = [];
+  // The component fetches a short-lived access token from /auth/realtime-token
+  // and applies it to the socket before subscribing. Stub that endpoint.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response(JSON.stringify({ token: "user-jwt", expiresAt: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
 });
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+/**
+ * Wait until the (async) Realtime setup has run: the socket is authenticated
+ * and the channel has subscribed + registered its handlers.
+ */
+async function connected() {
+  await waitFor(() => expect(rt.subscribeCb).toBeDefined());
+}
 
 const proposals: ProposalView[] = [
   {
@@ -310,8 +349,20 @@ describe("ProposalPool — comments", () => {
 });
 
 describe("ProposalPool — Realtime subscription", () => {
-  it("subscribes to reactions and comments filtered by household_id (RLS-gated column)", () => {
+  it("authenticates the socket with the user's access token BEFORE subscribing (issue #44)", async () => {
+    // Root cause of #44: the socket joined with the anon key only, so RLS-gated
+    // postgres_changes delivered nothing. The fix fetches the short-lived access
+    // token and applies it via realtime.setAuth, and must do so before the join.
     renderPool({ proposals: [proposals[0]] });
+    await connected();
+    expect(rt.setAuthTokens).toContain("user-jwt");
+    // setAuth must precede subscribe so the JOIN carries the user's JWT.
+    expect(rt.events.indexOf("setAuth")).toBeLessThan(rt.events.indexOf("subscribe"));
+  });
+
+  it("subscribes to reactions and comments filtered by household_id (RLS-gated column)", async () => {
+    renderPool({ proposals: [proposals[0]] });
+    await connected();
     expect(rt.filters.reactions).toBe("household_id=eq.hh-1");
     expect(rt.filters.comments).toBe("household_id=eq.hh-1");
   });
@@ -323,6 +374,7 @@ describe("ProposalPool — Realtime subscription", () => {
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
       ],
     });
+    await connected();
     act(() => {
       rt.handlers.reactions({
         eventType: "INSERT",
@@ -338,6 +390,7 @@ describe("ProposalPool — Realtime subscription", () => {
     // e.g. the same member acting from a second device: the live echo must mark
     // the pill pressed, not just bump an anonymous count.
     renderPool({ proposals: [proposals[0]], initialReactions: [] });
+    await connected();
     const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
     expect(btn).toHaveAttribute("aria-pressed", "false");
 
@@ -353,8 +406,9 @@ describe("ProposalPool — Realtime subscription", () => {
     expect(btn).toHaveTextContent("1");
   });
 
-  it("removes its channel on unmount (no leaked subscription)", () => {
+  it("removes its channel on unmount (no leaked subscription)", async () => {
     const { unmount } = renderPool({ proposals: [proposals[0]] });
+    await connected();
     expect(rt.removeChannel).not.toHaveBeenCalled();
     unmount();
     expect(rt.removeChannel).toHaveBeenCalledTimes(1);
@@ -362,6 +416,7 @@ describe("ProposalPool — Realtime subscription", () => {
 
   it("ignores an incoming reaction for a proposal NOT in this week (week scope)", async () => {
     renderPool({ proposals: [proposals[0]], initialReactions: [] });
+    await connected();
     act(() => {
       rt.handlers.reactions({
         eventType: "INSERT",
@@ -385,6 +440,7 @@ describe("ProposalPool — Realtime subscription", () => {
         { id: "r1", proposal_id: "p1", member_id: "alex", kind: THUMBS },
       ],
     });
+    await connected();
     const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
     expect(btn).toHaveTextContent("1");
     act(() => {
@@ -395,6 +451,7 @@ describe("ProposalPool — Realtime subscription", () => {
 
   it("shows an incoming comment from another member live", async () => {
     renderPool({ proposals: [proposals[0]], initialComments: [] });
+    await connected();
     act(() => {
       rt.handlers.comments({
         eventType: "INSERT",
@@ -420,6 +477,7 @@ describe("ProposalPool — drop + reconnect resilience", () => {
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
       ],
     });
+    await connected();
 
     // The server's truth after the drop: the thumbs is gone, a heart was added.
     rt.data.reactions = [
