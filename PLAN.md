@@ -54,11 +54,16 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 roadmap above. The board column for each issue is authoritative; if anything below disagrees with the
 board, the board wins.
 
-**Current milestone gate:** Slice 1b (the social loop) is built; the roadmap's **family-validation gate**
-is now active — exercise the full loop live before building Slice 1c. Tracked on the board as the
-pre-family live-verification smoke (two-client Realtime + full propose→react→comment→slot round-trip).
-Rationale for not skipping it: the Slice 1a retro (6-23) — *deferring live verification on a foundation
-slice produced compounding integration bugs*; 1b is the loop everything else hangs off.
+**Current direction:** Slice 1b (the social loop) is **built and validated end-to-end** — the live
+verification smoke passed all steps and surfaced + fixed a production-affecting Realtime auth bug
+(socket authenticated as anon → RLS-gated events delivered nothing; fix = short-lived-token route +
+`realtime.setAuth`, ADR 0008). See the board for issue state. **Next: production on GCP** — Cloud Run +
+cloud Supabase as prod; the highest-risk item is **re-verifying the Realtime fix against cloud Supabase**
+(realtime RLS authorization can differ on the hosted project). The M0 Cloud Run deploy is still a stub.
+
+**Two human gates remain before/after that:** (1) the roadmap's *validate the loop with the family* gate —
+now safe to do, since the live loop demonstrably works (real second members via invite); (2) production
+sign-off once deployed.
 
 ### Environment & setup (durable gotchas)
 - **Local dev (Google sign-in):** start the stack with creds via `npm run db:start` (sources `.env.local`
