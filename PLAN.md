@@ -54,6 +54,10 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 roadmap above. The board column for each issue is authoritative; if anything below disagrees with the
 board, the board wins.
 
+**M1 production slice (#46)** is groomed into P0–P7 (posture: ADRs 0009 keyless-WIF/Cloud Run + 0010
+cloud-Supabase-as-prod; credentialed bring-up steps in `docs/runbooks/production-bringup.md`). The board
+is authoritative for status.
+
 **Current milestone gate:** Slice 1b (the social loop) is built; the roadmap's **family-validation gate**
 is now active — exercise the full loop live before building Slice 1c. Tracked on the board as the
 pre-family live-verification smoke (two-client Realtime + full propose→react→comment→slot round-trip).
