@@ -136,6 +136,48 @@ export type Database = {
           },
         ]
       }
+      events: {
+        Row: {
+          created_at: string
+          event_type: Database["public"]["Enums"]["event_type"]
+          household_id: string
+          id: string
+          member_id: string | null
+          payload: Json
+        }
+        Insert: {
+          created_at?: string
+          event_type: Database["public"]["Enums"]["event_type"]
+          household_id: string
+          id?: string
+          member_id?: string | null
+          payload?: Json
+        }
+        Update: {
+          created_at?: string
+          event_type?: Database["public"]["Enums"]["event_type"]
+          household_id?: string
+          id?: string
+          member_id?: string | null
+          payload?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "events_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "events_member_id_household_id_fkey"
+            columns: ["member_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       households: {
         Row: {
           created_at: string
@@ -466,6 +508,17 @@ export type Database = {
       is_household_owner: { Args: never; Returns: boolean }
     }
     Enums: {
+      event_type:
+        | "session_start"
+        | "screen_view"
+        | "sign_in"
+        | "proposal_created"
+        | "reaction_added"
+        | "comment_added"
+        | "slot_filled"
+        | "grocery_list_built"
+        | "trip_completed"
+        | "recipe_ingested"
       meal_type: "breakfast" | "lunch" | "dinner" | "snack"
       member_role: "owner" | "member"
     }
@@ -598,6 +651,18 @@ export const Constants = {
   },
   public: {
     Enums: {
+      event_type: [
+        "session_start",
+        "screen_view",
+        "sign_in",
+        "proposal_created",
+        "reaction_added",
+        "comment_added",
+        "slot_filled",
+        "grocery_list_built",
+        "trip_completed",
+        "recipe_ingested",
+      ],
       meal_type: ["breakfast", "lunch", "dinner", "snack"],
       member_role: ["owner", "member"],
     },
