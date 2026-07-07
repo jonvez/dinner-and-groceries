@@ -9,7 +9,7 @@
 --
 -- pgTAP test (issue #16). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(10);
+select plan(11);
 
 create schema if not exists tests;
 
@@ -115,6 +115,16 @@ select throws_ok(
 select throws_ok(
   $$delete from public.events where id = 'ce000001-0000-0000-0000-000000000001'$$,
   '42501', null, 'append-only: client DELETE of an event is denied'
+);
+
+-- ---- append-only: TRUNCATE is denied to clients. TRUNCATE bypasses RLS and is
+--      a bulk delete, so the append-only invariant needs the TRUNCATE privilege
+--      revoked too — the project-wide default privilege (pg_default_acl) grants
+--      it to authenticated/anon on every public table (#49); this migration
+--      revokes it back for events. ----
+select throws_ok(
+  $$truncate public.events$$,
+  '42501', null, 'append-only: client TRUNCATE of the events log is denied'
 );
 select tests.clear_auth();
 

@@ -26,7 +26,9 @@
 --   * APPEND-ONLY for clients: only SELECT and INSERT policies exist, and only
 --     SELECT + INSERT are granted to `authenticated`. There is deliberately NO
 --     update and NO delete policy AND no update/delete grant, so a client can
---     neither mutate nor delete an emitted event. FORCE RLS keeps the owner
+--     neither mutate nor delete an emitted event. TRUNCATE (a RLS-bypassing bulk
+--     delete that the project-wide default privilege would otherwise grant) is
+--     revoked too — see the privileges block below. FORCE RLS keeps the owner
 --     non-exempt too. (Defense in depth: the missing privilege fails the write
 --     before RLS is even consulted.)
 --   * NO Google identity / PII is ever stored: attribution is the pseudonymous
@@ -80,7 +82,17 @@ create index events_household_id_idx on public.events (household_id);
 -- explicitly). Append-only: SELECT + INSERT ONLY — no UPDATE/DELETE grant, so
 -- clients cannot mutate or delete an emitted event even before RLS is checked.
 -- `anon` gets nothing (the whole app is private to authenticated members).
+--
+-- First REVOKE ALL to strip the project-wide default-privilege grants: the
+-- postgres role's pg_default_acl hands `authenticated`/`anon` TRUNCATE +
+-- REFERENCES + TRIGGER (+ MAINTAIN) on EVERY newly created public table. TRUNCATE
+-- bypasses RLS and is a bulk delete, so leaving it would defeat append-only for
+-- any raw-SQL client (not reachable via PostgREST, but the invariant should hold
+-- at the DB layer, not just the API). Revoke everything, then grant back exactly
+-- SELECT + INSERT to authenticated. (The schema-wide default-privilege tightening
+-- for all other tables is tracked separately in #49 — do not fix it here.)
 -- ===========================================================================
+revoke all on public.events from anon, authenticated;
 grant select, insert on public.events to authenticated;
 
 -- ===========================================================================
