@@ -9,7 +9,7 @@
 --
 -- pgTAP test (issue #16). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(9);
+select plan(10);
 
 create schema if not exists tests;
 
@@ -85,6 +85,16 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', null, 'session_start', '{}');
 select is(
   (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and member_id is null),
   1, 'member_id may be null: a null-member usage event is accepted'
+);
+
+-- ---- taxonomy enforced at the DB layer: an out-of-taxonomy event_type is
+--      rejected by the enum (ADR 0004 dropped `app_open` as a synonym of
+--      `session_start`). Guards against a feature slice emitting an ad hoc type
+--      via a raw insert that bypasses the typed helper. ----
+select throws_ok(
+  $$insert into public.events (household_id, event_type)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'app_open')$$,
+  '22P02', null, 'taxonomy: an out-of-taxonomy event_type is rejected by the enum'
 );
 
 -- ---- deny-cross: H member cannot emit an event tagged to K ----
