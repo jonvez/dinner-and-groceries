@@ -34,6 +34,16 @@ boots `start:standalone`, which serves `.next/standalone/server.js`).
 Pinned via [`.nvmrc`](../.nvmrc) (Node 22). CI reads it through
 `actions/setup-node` `node-version-file`.
 
+## Supply-chain pinning (#23)
+
+Every third-party GitHub Action in `ci.yml` is pinned to an **immutable 40-char
+commit SHA** (with a trailing `# vX.Y.Z` comment for the human-readable version),
+not a mutable tag — a moved tag can't silently swap the action out from under a
+run. The `Dockerfile` base image is **digest-pinned** (`node:22-slim@sha256:…`)
+on all stages for the same reason. To bump either, resolve the new SHA/digest
+deliberately (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`;
+`docker buildx imagetools inspect node:22-slim`) and update the pin + comment.
+
 ## Secrets & deploy wiring (no secrets in the repo)
 
 Secrets are **never** committed. Two sources:
