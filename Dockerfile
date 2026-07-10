@@ -14,6 +14,19 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Next.js inlines NEXT_PUBLIC_* into the CLIENT bundle at BUILD time, so the
+# public Supabase URL + anon (publishable) key must be present HERE — a runtime
+# env/secret binding is too late (lib/supabase/env.ts throws the moment the
+# browser client loads). These are non-secret public values (public URL +
+# publishable/anon key), so build-arg exposure is fine; the service-role key is
+# never built in. The deploy workflow sources both from Secret Manager and
+# passes them as --build-arg (see .github/workflows/ci.yml, docs/ci.md).
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+
 RUN npm run build
 
 # 3) Minimal runtime image

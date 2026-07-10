@@ -1,8 +1,8 @@
 name: CI
 
 # PR checks gate merges (lint + typecheck + Vitest, plus a Playwright smoke E2E).
-# On merge to main, a guarded Cloud Run deploy stub runs (no-op until GCP wiring
-# secrets exist). See docs: docs/ci.md.
+# On merge to main, a guarded Cloud Run deploy runs (no-op only while GCP wiring
+# vars are unset). See docs: docs/ci.md.
 on:
   pull_request:
   push:
@@ -159,15 +159,17 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # Deploy STUB (M0): Docker build -> Artifact Registry -> Cloud Run.
-  # Guarded to merges on main. No-op until the GCP wiring secrets/vars are set,
-  # so it never runs on PRs and commits no real GCP credentials.
-  # Real auth is via Workload Identity Federation (no long-lived keys) +
-  # secrets bound to the Cloud Run service from GCP Secret Manager.
+  # Deploy: Docker build -> Artifact Registry -> Cloud Run (ADR 0009).
+  # Guarded to merges on main; no-op only while GCP wiring vars are unset, so it
+  # never runs on PRs and commits no real GCP credentials.
+  # Auth is via Workload Identity Federation (no long-lived keys). NEXT_PUBLIC_*
+  # are read from GCP Secret Manager and injected as Docker BUILD args (Next.js
+  # inlines them into the client bundle at build time). The Cloud Run service is
+  # --allow-unauthenticated (app enforces auth via Supabase) with --min-instances 0.
   # See docs/ci.md for the variables/secrets this expects.
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy to Cloud Run (stub)
+    name: Deploy to Cloud Run
     needs: [verify, e2e]
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
@@ -205,6 +207,22 @@ jobs:
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
 
+      # NEXT_PUBLIC_* are inlined into the CLIENT bundle at BUILD time, so they
+      # must be present as Docker build-args — a Cloud Run *runtime* secret
+      # binding is too late (lib/supabase/env.ts throws when the sign-in page's
+      # browser client loads). Secret Manager is the single source of truth; the
+      # deploy SA (authed above) reads the two public, non-secret values here and
+      # passes them to the build. The service-role key is NEVER fetched or built
+      # in. Requires the deploy SA to hold secretmanager.secretAccessor on both
+      # secrets — see docs/runbooks/production-bringup.md § P3.
+      - name: Fetch build-time NEXT_PUBLIC_* from Secret Manager
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: |
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$(gcloud secrets versions access latest --secret=NEXT_PUBLIC_SUPABASE_URL --project=${{ vars.GCP_PROJECT_ID }})"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$(gcloud secrets versions access latest --secret=NEXT_PUBLIC_SUPABASE_ANON_KEY --project=${{ vars.GCP_PROJECT_ID }})"
+          } >> "$GITHUB_ENV"
+
       - name: Build & push image to Artifact Registry
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         uses: docker/build-push-action@v7
@@ -212,6 +230,10 @@ jobs:
           context: .
           push: true
           tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/dinner-and-groceries:${{ github.sha }}
+          # Public (non-secret) build-time values, inlined by `next build`.
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
       - name: Deploy to Cloud Run
         if: ${{ steps.gate.outputs.enabled == 'true' }}
@@ -220,12 +242,12 @@ jobs:
           service: dinner-and-groceries
           region: ${{ vars.GCP_REGION }}
           image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/dinner-and-groceries:${{ github.sha }}
-          # Secrets are bound from GCP Secret Manager at deploy time — never
-          # committed here. Names are placeholders documented in docs/ci.md.
-          # TODO: align secret names once Supabase env is finalized (#2).
-          secrets: |
-            NEXT_PUBLIC_SUPABASE_URL=NEXT_PUBLIC_SUPABASE_URL:latest
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest
+          # ADR 0009: the app enforces auth via Supabase (Cloud Run IAM is NOT the
+          # auth boundary), so the service is public; scale-to-zero for cost.
+          flags: --allow-unauthenticated --min-instances=0
+          # No runtime `secrets:` binding for NEXT_PUBLIC_* — they are inlined at
+          # BUILD time via build-args above, so a runtime binding does nothing.
+          # The service-role key is never bound anywhere (RLS-always, ADR 0003).
 
       - name: Stub notice (GCP not wired)
         if: ${{ steps.gate.outputs.enabled != 'true' }}
