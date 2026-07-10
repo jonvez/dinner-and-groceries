@@ -10,11 +10,6 @@ ADRs are handled by the team.
   (cloud Supabase as prod).
 - Issues: **#50 (P0)**, **#51 (P1)**, **#52 (P2)**, **#53 (P3, activate deploy)**. Parent: **#46**.
 
-> **Project-id note:** the sections below still spell the project `dinner-and-groceries-prod`;
-> the real project id is **`dinner-and-groceries`** and the rename is in flight (docs PR #58).
-> The **§ P3** commands added here already use the correct `dinner-and-groceries`. The deploy
-> workflow itself reads `${{ vars.GCP_PROJECT_ID }}`, so it is unaffected either way.
-
 ## Fixed values (settled — do not change)
 
 | Thing | Value |
