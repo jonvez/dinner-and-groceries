@@ -207,14 +207,19 @@ jobs:
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         run: gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
 
-      # NEXT_PUBLIC_* are inlined into the CLIENT bundle at BUILD time, so they
-      # must be present as Docker build-args — a Cloud Run *runtime* secret
-      # binding is too late (lib/supabase/env.ts throws when the sign-in page's
-      # browser client loads). Secret Manager is the single source of truth; the
-      # deploy SA (authed above) reads the two public, non-secret values here and
-      # passes them to the build. The service-role key is NEVER fetched or built
-      # in. Requires the deploy SA to hold secretmanager.secretAccessor on both
-      # secrets — see docs/runbooks/production-bringup.md § P3.
+      # NEXT_PUBLIC_* are needed in TWO places: (1) the CLIENT bundle, where
+      # `next build` inlines the *static* `process.env.NEXT_PUBLIC_*` references
+      # at BUILD time (so they must be Docker build-args, fetched here); and
+      # (2) the SERVER at RUNTIME — middleware.ts / server-component.ts call
+      # readSupabaseEnv() which reads process.env *dynamically*, and dynamic
+      # reads are NOT inlined by the build, so the running container must carry
+      # them in its env (bound from Secret Manager on the deploy step below).
+      # BOTH are required: build-args only ⇒ SSR 500s on every request;
+      # runtime-only ⇒ the browser sign-in client throws. Secret Manager is the
+      # single source of truth; the deploy SA (authed above) reads the two public,
+      # non-secret values here for the build. The service-role key is NEVER
+      # fetched or built in. Requires the deploy SA to hold
+      # secretmanager.secretAccessor on both secrets — runbook § P3.
       - name: Fetch build-time NEXT_PUBLIC_* from Secret Manager
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         run: |
@@ -245,9 +250,15 @@ jobs:
           # ADR 0009: the app enforces auth via Supabase (Cloud Run IAM is NOT the
           # auth boundary), so the service is public; scale-to-zero for cost.
           flags: --allow-unauthenticated --min-instances=0
-          # No runtime `secrets:` binding for NEXT_PUBLIC_* — they are inlined at
-          # BUILD time via build-args above, so a runtime binding does nothing.
-          # The service-role key is never bound anywhere (RLS-always, ADR 0003).
+          # Runtime env for the SERVER path: middleware/server-component read
+          # NEXT_PUBLIC_* from process.env dynamically at runtime (NOT inlined),
+          # so bind them from Secret Manager into the running service. (The client
+          # bundle already got them at BUILD time via build-args above.) The
+          # runtime compute SA holds secretAccessor on these — runbook § P1.6. The
+          # service-role key is never bound anywhere (RLS-always, ADR 0003).
+          secrets: |
+            NEXT_PUBLIC_SUPABASE_URL=NEXT_PUBLIC_SUPABASE_URL:latest
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest
 
       - name: Stub notice (GCP not wired)
         if: ${{ steps.gate.outputs.enabled != 'true' }}

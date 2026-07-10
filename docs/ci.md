@@ -51,27 +51,37 @@ Secrets are **never** committed. Two sources:
 - **Local dev:** copy `.env.example` → `.env.local` (gitignored). Supabase values
   come from `supabase status` once #2 lands.
 - **Production (Cloud Run):** the two `NEXT_PUBLIC_*` values live in **GCP Secret
-  Manager** (canonical names below). Because Next.js **inlines** `NEXT_PUBLIC_*`
-  into the client bundle at **build time**, the deploy job reads them from Secret
-  Manager (as the WIF-authenticated deploy SA) and passes them to `docker build`
-  as `--build-arg`s — *not* as Cloud Run runtime secrets, which would be too late
-  (`lib/supabase/env.ts` throws when the sign-in page's browser client loads). The
-  workflow references secret *names*, never values, and the values never appear in
-  logs. The **service-role** key is never fetched, built in, or bound anywhere.
+  Manager** (canonical names below) and are wired into **both** the build and the
+  runtime — because they are consumed on two paths:
+  - **Client bundle (build time):** Next.js inlines *static* `process.env.NEXT_PUBLIC_*`
+    references at build, so the deploy job fetches the values and passes them to
+    `docker build` as `--build-arg`s.
+  - **Server (runtime):** `middleware.ts` / `server-component.ts` call
+    `readSupabaseEnv()`, which reads `process.env` **dynamically** — dynamic reads
+    are *not* inlined by the build, so the running container must carry them in its
+    env, bound from Secret Manager on the `deploy-cloudrun` step.
 
-### Build-time `NEXT_PUBLIC_*` flow (Secret Manager → build-arg → inlined bundle)
+  **Both are required.** Build-args only ⇒ the SSR middleware throws
+  `Missing required Supabase env var(s)` and every request 500s. Runtime-only ⇒ the
+  browser sign-in client has no config and throws. The workflow references secret
+  *names*, never values, and the values never appear in logs. The **service-role**
+  key is never fetched, built in, or bound anywhere.
+
+### `NEXT_PUBLIC_*` flow (Secret Manager → build-arg *and* runtime binding)
 
 1. `google-github-actions/auth@v3` authenticates as the deploy SA via WIF.
 2. The **Fetch build-time NEXT_PUBLIC_\*** step runs
    `gcloud secrets versions access latest --secret=<NAME>` for both secrets and
    writes them into `$GITHUB_ENV`.
 3. `docker/build-push-action@v7` passes them as `build-args`; the `Dockerfile`
-   builder stage declares matching `ARG`/`ENV` so `next build` inlines them.
-4. The `deploy-cloudrun` step binds **no** `NEXT_PUBLIC_*` runtime secrets.
+   builder stage declares matching `ARG`/`ENV` so `next build` inlines them into
+   the **client** bundle.
+4. The `deploy-cloudrun` step binds them as Cloud Run **runtime** secrets
+   (`secrets:` mapping to `<NAME>:latest`) for the **server** path.
 
-This requires the **deploy SA** (not the runtime compute SA) to hold
-`roles/secretmanager.secretAccessor` on both secrets — granted in the P3
-prerequisite step of `docs/runbooks/production-bringup.md`.
+This requires the **deploy SA** to hold `roles/secretmanager.secretAccessor` on
+both secrets (build-time fetch, runbook § P3) **and** the runtime compute SA to
+hold it too (runtime binding, runbook § P1.6).
 
 The deploy job is enabled by these **repository variables** (Settings → Secrets
 and variables → Actions → Variables) — non-sensitive identifiers only; setting
