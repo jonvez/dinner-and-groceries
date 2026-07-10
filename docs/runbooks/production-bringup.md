@@ -47,7 +47,7 @@ ADRs are handled by the team.
 
 ### 0.1 Create the project and link billing
 ```
-gcloud projects create dinner-and-groceries --name="Dinner and Groceries (prod)"
+gcloud projects create dinner-and-groceries --name="Dinner and Groceries"
 ```
 ```
 gcloud billing projects link dinner-and-groceries --billing-account=<BILLING_ACCOUNT_ID>
