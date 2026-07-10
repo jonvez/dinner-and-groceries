@@ -9,7 +9,7 @@ CI/deploy posture. Workflow: [`.github/workflows/ci.yml`](../.github/workflows/c
 |---------|-----|--------------|
 | Every PR (+ push to `main`) | `verify` | `npm run lint`, `npm run typecheck`, `npm test` (Vitest). Any failure exits non-zero and **blocks merge**. |
 | Every PR (+ push to `main`) | `e2e` | `npm run build` (standalone) → install Chromium → `npm run test:e2e` (Playwright smoke: `/` loads and renders). |
-| Merge to `main` only | `deploy` | **Stub.** Docker build → Artifact Registry → Cloud Run. Guarded; no-op until GCP wiring vars are set. |
+| Merge to `main` only | `deploy` | Docker build → Artifact Registry → Cloud Run (WIF auth). Guarded; no-op only while GCP wiring vars are unset. |
 
 The `deploy` job has `if: github.ref == 'refs/heads/main' && github.event_name == 'push'`,
 so it never runs on PRs. Even on `main` it first checks `vars.GCP_PROJECT_ID`; if
@@ -34,18 +34,48 @@ boots `start:standalone`, which serves `.next/standalone/server.js`).
 Pinned via [`.nvmrc`](../.nvmrc) (Node 22). CI reads it through
 `actions/setup-node` `node-version-file`.
 
+## Supply-chain pinning (#23)
+
+Every third-party GitHub Action in `ci.yml` is pinned to an **immutable 40-char
+commit SHA** (with a trailing `# vX.Y.Z` comment for the human-readable version),
+not a mutable tag — a moved tag can't silently swap the action out from under a
+run. The `Dockerfile` base image is **digest-pinned** (`node:22-slim@sha256:…`)
+on all stages for the same reason. To bump either, resolve the new SHA/digest
+deliberately (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`;
+`docker buildx imagetools inspect node:22-slim`) and update the pin + comment.
+
 ## Secrets & deploy wiring (no secrets in the repo)
 
 Secrets are **never** committed. Two sources:
 
 - **Local dev:** copy `.env.example` → `.env.local` (gitignored). Supabase values
   come from `supabase status` once #2 lands.
-- **Production (Cloud Run):** bound from **GCP Secret Manager** at deploy time via
-  the `deploy-cloudrun` action's `secrets:` mapping (`NAME=SECRET:latest`). The
-  workflow references secret *names*, not values.
+- **Production (Cloud Run):** the two `NEXT_PUBLIC_*` values live in **GCP Secret
+  Manager** (canonical names below). Because Next.js **inlines** `NEXT_PUBLIC_*`
+  into the client bundle at **build time**, the deploy job reads them from Secret
+  Manager (as the WIF-authenticated deploy SA) and passes them to `docker build`
+  as `--build-arg`s — *not* as Cloud Run runtime secrets, which would be too late
+  (`lib/supabase/env.ts` throws when the sign-in page's browser client loads). The
+  workflow references secret *names*, never values, and the values never appear in
+  logs. The **service-role** key is never fetched, built in, or bound anywhere.
 
-To activate the deploy stub, set these **repository variables** (Settings →
-Secrets and variables → Actions → Variables) — non-sensitive identifiers only:
+### Build-time `NEXT_PUBLIC_*` flow (Secret Manager → build-arg → inlined bundle)
+
+1. `google-github-actions/auth@v3` authenticates as the deploy SA via WIF.
+2. The **Fetch build-time NEXT_PUBLIC_\*** step runs
+   `gcloud secrets versions access latest --secret=<NAME>` for both secrets and
+   writes them into `$GITHUB_ENV`.
+3. `docker/build-push-action@v7` passes them as `build-args`; the `Dockerfile`
+   builder stage declares matching `ARG`/`ENV` so `next build` inlines them.
+4. The `deploy-cloudrun` step binds **no** `NEXT_PUBLIC_*` runtime secrets.
+
+This requires the **deploy SA** (not the runtime compute SA) to hold
+`roles/secretmanager.secretAccessor` on both secrets — granted in the P3
+prerequisite step of `docs/runbooks/production-bringup.md`.
+
+The deploy job is enabled by these **repository variables** (Settings → Secrets
+and variables → Actions → Variables) — non-sensitive identifiers only; setting
+`GCP_PROJECT_ID` flips the gate on:
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
@@ -56,8 +86,8 @@ Secrets and variables → Actions → Variables) — non-sensitive identifiers o
 | `GCP_DEPLOY_SA` | `deployer@…iam.gserviceaccount.com` | Service account the workflow impersonates. |
 
 Authentication uses **Workload Identity Federation** (keyless) — no long-lived
-JSON service-account keys are stored in GitHub. The Secret Manager secrets the
-service expects (placeholders today, finalized with #2):
+JSON service-account keys are stored in GitHub. The canonical Secret Manager
+secrets the build reads (see the build-time flow above):
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`

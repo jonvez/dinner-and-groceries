@@ -1,12 +1,19 @@
-# Production bring-up runbook — P0, P1, P2 (Jon-run, credentialed)
+# Production bring-up runbook — P0, P1, P2, P3 prerequisite (Jon-run, credentialed)
 
 Step-by-step guide for the **credentialed blockers** of the M1 production slice (#46).
 These are the steps **Jon runs personally** — agents do not run `gcloud`/`supabase`
-against real cloud resources. P3/P5/P7 (agent work) and the ADRs are handled by the team.
+against real cloud resources. P3/P5/P7 are agent work, but **P3 has one credentialed
+prerequisite** (§ P3 below) Jon must run before the first deploy; the rest of P3 and the
+ADRs are handled by the team.
 
 - Posture of record: **ADR 0009** (deploy topology + keyless WIF) and **ADR 0010**
   (cloud Supabase as prod).
-- Issues: **#50 (P0)**, **#51 (P1)**, **#52 (P2)**. Parent: **#46**.
+- Issues: **#50 (P0)**, **#51 (P1)**, **#52 (P2)**, **#53 (P3, activate deploy)**. Parent: **#46**.
+
+> **Project-id note:** the sections below still spell the project `dinner-and-groceries-prod`;
+> the real project id is **`dinner-and-groceries`** and the rename is in flight (docs PR #58).
+> The **§ P3** commands added here already use the correct `dinner-and-groceries`. The deploy
+> workflow itself reads `${{ vars.GCP_PROJECT_ID }}`, so it is unaffected either way.
 
 ## Fixed values (settled — do not change)
 
@@ -251,11 +258,66 @@ Supabase Auth, the JS origin + Site URL are the `run.app` URL, a real Google rou
 
 ---
 
+## P3 — Activate the Cloud Run deploy (issue #53)
+
+Most of P3 is agent work (the workflow + Dockerfile changes in #53). But there is **one
+credentialed prerequisite Jon must run before the first deploy**, plus the deploy mechanism
+to understand.
+
+### 3.1 (prerequisite) Grant the **deploy SA** read access to the two secrets
+
+With the chosen build-time design (**Option A**), the `NEXT_PUBLIC_*` values are inlined
+into the client bundle at **Docker build time** — so the workflow reads them from Secret
+Manager **as the deploy SA** during the build (not the runtime compute SA at boot). P0 gave
+the deploy SA `run.admin` / `artifactregistry.writer` / `iam.serviceAccountUser` but **not**
+`secretmanager.secretAccessor`, so grant it now on both secrets:
+
+```
+gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_URL --member="serviceAccount:deployer@dinner-and-groceries.iam.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries
+```
+```
+gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_ANON_KEY --member="serviceAccount:deployer@dinner-and-groceries.iam.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries
+```
+
+> The runtime (default compute) SA's `secretAccessor` grant from **P1 step 1.6** stays as-is;
+> it is harmless but no longer load-bearing for `NEXT_PUBLIC_*` (nothing binds them at
+> runtime now). Only the **anon** URL + key are ever accessed — never the service-role key.
+
+### 3.2 The deploy mechanism (build-time inlining, no runtime secret binding)
+
+Next.js inlines `NEXT_PUBLIC_*` into the browser bundle at **build time**, so a Cloud Run
+runtime secret binding is too late (`lib/supabase/env.ts` throws when the sign-in page's
+browser client loads). The `deploy` job therefore:
+
+1. authenticates as the deploy SA via WIF (no key);
+2. `gcloud secrets versions access latest` for both `NEXT_PUBLIC_*` secrets → `$GITHUB_ENV`;
+3. passes them to `docker build` as `--build-arg`s (the `Dockerfile` builder stage declares
+   matching `ARG`/`ENV` so `next build` inlines them);
+4. pushes to Artifact Registry and deploys with
+   `--allow-unauthenticated --min-instances=0` (ADR 0009);
+5. binds **no** `NEXT_PUBLIC_*` runtime secrets (they are build-time only).
+
+See `docs/ci.md` for the full flow.
+
+### 3.3 First deploy
+
+Setting `GCP_PROJECT_ID` (P0 step 0.7) flips the gate on; the next merge to `main` runs the
+real deploy and produces `<RUN_APP_URL>` (read it via P2 step 2.3). **Merging to `main` is
+the human owner's call** — it triggers a real production deploy.
+
+**P3 done when:** the deploy SA holds `secretAccessor` on both secrets, a merge to `main`
+builds + pushes an image and deploys the `dinner-and-groceries` Cloud Run service
+(`--allow-unauthenticated`, `--min-instances 0`), and the `run.app` URL loads to the sign-in
+screen.
+
+---
+
 ## Order of operations (across P0/P1/P2/P3)
 
 1. **P0** (GCP + WIF + repo vars) and **P1 steps 1.1–1.6** (Supabase project, migrations,
    secrets) — independent, do both.
 2. **P2 steps 2.1–2.2** (OAuth client + redirect URI; needs only `<project-ref>`).
-3. Setting `GCP_PROJECT_ID` flips the gate → **P3 first deploy** → `<RUN_APP_URL>`.
+3. **P3 step 3.1** (grant the deploy SA `secretAccessor` on both secrets), then setting
+   `GCP_PROJECT_ID` flips the gate → **P3 first deploy** → `<RUN_APP_URL>`.
 4. **P2 steps 2.4–2.5** (JS origin, Site URL, test users) → sign-in works.
 5. **P1 step 1.7** two-user smoke, then **P4 (#54)** the Realtime-on-cloud gate.
