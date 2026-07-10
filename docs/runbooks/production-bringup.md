@@ -19,7 +19,7 @@ ADRs are handled by the team.
 
 | Thing | Value |
 |-------|-------|
-| GCP project id | `dinner-and-groceries-prod` |
+| GCP project id | `dinner-and-groceries` |
 | Region | `us-central1` |
 | Artifact Registry repo | `app` (Docker format) |
 | Cloud Run service | `dinner-and-groceries` |
@@ -47,54 +47,54 @@ ADRs are handled by the team.
 
 ### 0.1 Create the project and link billing
 ```
-gcloud projects create dinner-and-groceries-prod --name="Dinner and Groceries (prod)"
+gcloud projects create dinner-and-groceries --name="Dinner and Groceries (prod)"
 ```
 ```
-gcloud billing projects link dinner-and-groceries-prod --billing-account=<BILLING_ACCOUNT_ID>
+gcloud billing projects link dinner-and-groceries --billing-account=<BILLING_ACCOUNT_ID>
 ```
 ```
-gcloud config set project dinner-and-groceries-prod
+gcloud config set project dinner-and-groceries
 ```
 Capture the project number (used later for the WIF principalSet):
 ```
-gcloud projects describe dinner-and-groceries-prod --format="value(projectNumber)"
+gcloud projects describe dinner-and-groceries --format="value(projectNumber)"
 ```
 
 ### 0.2 Enable the required APIs
 ```
-gcloud services enable run.googleapis.com --project=dinner-and-groceries-prod
+gcloud services enable run.googleapis.com --project=dinner-and-groceries
 ```
 ```
-gcloud services enable artifactregistry.googleapis.com --project=dinner-and-groceries-prod
+gcloud services enable artifactregistry.googleapis.com --project=dinner-and-groceries
 ```
 ```
-gcloud services enable iam.googleapis.com --project=dinner-and-groceries-prod
+gcloud services enable iam.googleapis.com --project=dinner-and-groceries
 ```
 ```
-gcloud services enable secretmanager.googleapis.com --project=dinner-and-groceries-prod
+gcloud services enable secretmanager.googleapis.com --project=dinner-and-groceries
 ```
 ```
-gcloud services enable cloudresourcemanager.googleapis.com --project=dinner-and-groceries-prod
+gcloud services enable cloudresourcemanager.googleapis.com --project=dinner-and-groceries
 ```
 
 ### 0.3 Create the Artifact Registry repo (Docker, us-central1)
 ```
-gcloud artifacts repositories create app --repository-format=docker --location=us-central1 --description="Dinner and Groceries container images" --project=dinner-and-groceries-prod
+gcloud artifacts repositories create app --repository-format=docker --location=us-central1 --description="Dinner and Groceries container images" --project=dinner-and-groceries
 ```
 
 ### 0.4 Create the least-privilege deploy service account
 ```
-gcloud iam service-accounts create deployer --display-name="GitHub Actions deployer (WIF)" --project=dinner-and-groceries-prod
+gcloud iam service-accounts create deployer --display-name="GitHub Actions deployer (WIF)" --project=dinner-and-groceries
 ```
 Grant exactly the three deploy roles (no owner/editor):
 ```
-gcloud projects add-iam-policy-binding dinner-and-groceries-prod --member="serviceAccount:deployer@dinner-and-groceries-prod.iam.gserviceaccount.com" --role="roles/run.admin"
+gcloud projects add-iam-policy-binding dinner-and-groceries --member="serviceAccount:deployer@dinner-and-groceries.iam.gserviceaccount.com" --role="roles/run.admin"
 ```
 ```
-gcloud projects add-iam-policy-binding dinner-and-groceries-prod --member="serviceAccount:deployer@dinner-and-groceries-prod.iam.gserviceaccount.com" --role="roles/artifactregistry.writer"
+gcloud projects add-iam-policy-binding dinner-and-groceries --member="serviceAccount:deployer@dinner-and-groceries.iam.gserviceaccount.com" --role="roles/artifactregistry.writer"
 ```
 ```
-gcloud projects add-iam-policy-binding dinner-and-groceries-prod --member="serviceAccount:deployer@dinner-and-groceries-prod.iam.gserviceaccount.com" --role="roles/iam.serviceAccountUser"
+gcloud projects add-iam-policy-binding dinner-and-groceries --member="serviceAccount:deployer@dinner-and-groceries.iam.gserviceaccount.com" --role="roles/iam.serviceAccountUser"
 ```
 
 > The Cloud Run **runtime** SA is the project's default compute SA
@@ -105,24 +105,24 @@ gcloud projects add-iam-policy-binding dinner-and-groceries-prod --member="servi
 
 ### 0.5 Create the WIF pool + provider, pinned to this repo
 ```
-gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions pool" --project=dinner-and-groceries-prod
+gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions pool" --project=dinner-and-groceries
 ```
 Create the OIDC provider with the **repo-pinned attribute condition** (ADR 0009 requires
 `repository == jonvez/dinner-and-groceries`):
 ```
-gcloud iam workload-identity-pools providers create-oidc github --location=global --workload-identity-pool=github --display-name="GitHub Actions provider" --issuer-uri="https://token.actions.githubusercontent.com" --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" --attribute-condition="assertion.repository == 'jonvez/dinner-and-groceries'" --project=dinner-and-groceries-prod
+gcloud iam workload-identity-pools providers create-oidc github --location=global --workload-identity-pool=github --display-name="GitHub Actions provider" --issuer-uri="https://token.actions.githubusercontent.com" --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" --attribute-condition="assertion.repository == 'jonvez/dinner-and-groceries'" --project=dinner-and-groceries
 ```
 
 ### 0.6 Bind the deploy SA to the repo's WIF identity (scoped principalSet)
 ```
-gcloud iam service-accounts add-iam-policy-binding deployer@dinner-and-groceries-prod.iam.gserviceaccount.com --role="roles/iam.workloadIdentityUser" --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/attribute.repository/jonvez/dinner-and-groceries" --project=dinner-and-groceries-prod
+gcloud iam service-accounts add-iam-policy-binding deployer@dinner-and-groceries.iam.gserviceaccount.com --role="roles/iam.workloadIdentityUser" --member="principalSet://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/attribute.repository/jonvez/dinner-and-groceries" --project=dinner-and-groceries
 ```
 
 ### 0.7 Set the GitHub repo variables (match `ci.yml`; non-sensitive identifiers only)
 The full WIF provider resource name is:
 `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github`
 ```
-gh variable set GCP_PROJECT_ID --body "dinner-and-groceries-prod" --repo jonvez/dinner-and-groceries
+gh variable set GCP_PROJECT_ID --body "dinner-and-groceries" --repo jonvez/dinner-and-groceries
 ```
 ```
 gh variable set GCP_REGION --body "us-central1" --repo jonvez/dinner-and-groceries
@@ -134,7 +134,7 @@ gh variable set GCP_AR_REPO --body "app" --repo jonvez/dinner-and-groceries
 gh variable set GCP_WIF_PROVIDER --body "projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github" --repo jonvez/dinner-and-groceries
 ```
 ```
-gh variable set GCP_DEPLOY_SA --body "deployer@dinner-and-groceries-prod.iam.gserviceaccount.com" --repo jonvez/dinner-and-groceries
+gh variable set GCP_DEPLOY_SA --body "deployer@dinner-and-groceries.iam.gserviceaccount.com" --repo jonvez/dinner-and-groceries
 ```
 
 > Setting `GCP_PROJECT_ID` **flips the deploy job's gate on**. Do this only when P0 is
@@ -150,7 +150,7 @@ the SA has the scoped `workloadIdentityUser` binding, and the 5 repo variables a
 
 ### 1.1 Create the prod project (Free tier, us-central1)
 In the Supabase dashboard: **New project** → Organization = Jon's → Name e.g.
-`dinner-and-groceries-prod` → **Region: us-central1** (or closest offered; keep it central)
+`dinner-and-groceries` → **Region: us-central1** (or closest offered; keep it central)
 → **Plan: Free** → generate a DB password (store in Jon's password manager). Copy the
 **project ref** (`<project-ref>`, the subdomain of the project URL).
 
@@ -187,17 +187,17 @@ From the Supabase dashboard: **Project Settings → API** → copy the **Project
 **anon public** key. Create the secrets under the canonical names and grant the Cloud Run
 runtime SA access:
 ```
-printf '%s' 'https://<project-ref>.supabase.co' | gcloud secrets create NEXT_PUBLIC_SUPABASE_URL --data-file=- --project=dinner-and-groceries-prod
+printf '%s' 'https://<project-ref>.supabase.co' | gcloud secrets create NEXT_PUBLIC_SUPABASE_URL --data-file=- --project=dinner-and-groceries
 ```
 ```
-printf '%s' '<ANON_PUBLIC_KEY>' | gcloud secrets create NEXT_PUBLIC_SUPABASE_ANON_KEY --data-file=- --project=dinner-and-groceries-prod
+printf '%s' '<ANON_PUBLIC_KEY>' | gcloud secrets create NEXT_PUBLIC_SUPABASE_ANON_KEY --data-file=- --project=dinner-and-groceries
 ```
 Grant the runtime (default compute) SA read access to each secret:
 ```
-gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_URL --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries-prod
+gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_URL --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries
 ```
 ```
-gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_ANON_KEY --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries-prod
+gcloud secrets add-iam-policy-binding NEXT_PUBLIC_SUPABASE_ANON_KEY --member="serviceAccount:<PROJECT_NUMBER>-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor" --project=dinner-and-groceries
 ```
 > To rotate later: `gcloud secrets versions add <NAME> --data-file=-` (the `deploy-cloudrun`
 > mapping uses `:latest`, so a new version is picked up on the next deploy).
@@ -221,7 +221,7 @@ two-user smoke passes.
 
 ### 2.1 Create the prod OAuth Web client (redirect URI is fixed)
 Google Cloud Console → **APIs & Services → Credentials → Create credentials → OAuth client
-ID → Web application**. Name e.g. `dinner-and-groceries-prod`. Set the **Authorized redirect
+ID → Web application**. Name e.g. `dinner-and-groceries`. Set the **Authorized redirect
 URI** exactly to:
 ```
 https://<project-ref>.supabase.co/auth/v1/callback
@@ -238,7 +238,7 @@ never in the repo, app env, or Cloud Run secrets.)
 Once P0/P1 are done and the deploy activates (P3), the merge-to-`main` deploy produces
 `<RUN_APP_URL>` = `https://dinner-and-groceries-<hash>-uc.a.run.app`. Read it:
 ```
-gcloud run services describe dinner-and-groceries --region=us-central1 --project=dinner-and-groceries-prod --format="value(status.url)"
+gcloud run services describe dinner-and-groceries --region=us-central1 --project=dinner-and-groceries --format="value(status.url)"
 ```
 
 ### 2.4 Set the JS origin + Supabase Site URL to the run.app URL, then redeploy
