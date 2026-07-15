@@ -17,11 +17,14 @@ import { createServerClient } from "@supabase/ssr";
 
 import type { Database } from "@/lib/database.types";
 
+import { requestOrigin } from "@/lib/http/request-origin";
 import { authCookieOptions } from "@/lib/supabase/cookie-options";
 import { readSupabaseEnv } from "@/lib/supabase/env";
 
 export async function POST(request: NextRequest) {
-  const { origin } = request.nextUrl;
+  // Behind Cloud Run, request.nextUrl.origin is the container's internal bind
+  // host (0.0.0.0:8080); use the proxy-forwarded public origin for the redirect.
+  const origin = requestOrigin(request.headers, request.nextUrl.origin);
   const env = readSupabaseEnv();
   const cookieSecurity = authCookieOptions();
 
