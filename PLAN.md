@@ -54,9 +54,13 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 roadmap above. The board column for each issue is authoritative; if anything below disagrees with the
 board, the board wins.
 
-**M1 production slice (#46)** is groomed into P0–P7 (posture: ADRs 0009 keyless-WIF/Cloud Run + 0010
-cloud-Supabase-as-prod; credentialed bring-up steps in `docs/runbooks/production-bringup.md`). The board
-is authoritative for status.
+**Production is LIVE.** The app is deployed on Cloud Run at
+`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`, backed by the cloud Supabase prod project
+(ref `wcbjuobzeursmomcoefw`); P0–P3 done and the prod Google OAuth round-trip is verified end-to-end.
+Posture of record: ADRs 0009 (keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-prod); bring-up steps in
+`docs/runbooks/production-bringup.md`. **Next gate: P4/#54 — re-verify Realtime against *cloud* Supabase
+(two-client live round-trip + cross-household isolation) before any kid uses prod.** Board #1 is
+authoritative for status.
 
 **Current milestone gate:** Slice 1b (the social loop) is built; the roadmap's **family-validation gate**
 is now active — exercise the full loop live before building Slice 1c. Tracked on the board as the
@@ -69,6 +73,12 @@ slice produced compounding integration bugs*; 1b is the loop everything else han
   via `scripts/supabase.sh`); needs a Google OAuth client (Authorized redirect URI
   `http://127.0.0.1:54321/auth/v1/callback`, test-users added) + `.env.local` with
   `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID/_SECRET`. README "Google OAuth" has the full setup.
+- **Cloud Run + Next.js standalone gotchas (learned in prod bring-up):**
+  1. `NEXT_PUBLIC_*` must be supplied **both** as Docker build-args (client-bundle inlining at build) **and**
+     as a Cloud Run runtime secret binding (server reads `process.env` *dynamically*). Only one ⇒ the browser
+     client throws, or SSR 500s on every request. Guarded by `ci-deploy-env-wiring.test.ts`.
+  2. Absolute redirects must derive their origin from `x-forwarded-host` (via `lib/http/request-origin.ts`),
+     never `request.nextUrl.origin` — behind Cloud Run the latter is the container's internal `0.0.0.0:8080`.
 - **Branch protection on `main`:** required checks **"Lint, typecheck, unit tests" + "Playwright smoke E2E"
   + "RLS pgTAP (Supabase)"**, strict, `enforce_admins: true`, force-push/deletion blocked. No required
   *review* (single GitHub identity makes it unsatisfiable — bot/App upgrade path is the fix). **Consequence:
