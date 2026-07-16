@@ -17,6 +17,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { requestOrigin } from "@/lib/http/request-origin";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import {
@@ -109,12 +110,9 @@ export async function generateInviteAction(
   });
   if (!result.ok) return { error: result.error };
 
-  // Build the absolute link from the trusted request origin.
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
-  const proto = h.get("x-forwarded-proto") ?? "https";
+  // Build the absolute link from the trusted proxy-forwarded request origin.
   const { inviteUrl } = await import("@/lib/invites/url");
-  const origin = host ? `${proto}://${host}` : "";
+  const origin = requestOrigin(await headers());
 
   return { url: inviteUrl(result.token, origin), expiresAt: result.expiresAt };
 }
