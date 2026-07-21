@@ -55,3 +55,29 @@ test("clicking Google sign-in does not throw a missing-env error (client env is 
 
   expect(pageErrors.join("\n")).not.toContain("Missing required Supabase env");
 });
+
+/**
+ * Security headers (issue #55, phase 1) are actually served on a real response
+ * — the issue's primary acceptance criterion ("inspect any page response
+ * headers"). The CSP ships Report-Only this phase; HSTS is absent over local
+ * http (the E2E server is plain http, exercising the non-prod branch).
+ */
+test("responses carry the security headers (CSP Report-Only, no HSTS on local http)", async ({
+  page,
+}) => {
+  const response = await page.goto("/login");
+  const headers = response!.headers();
+
+  expect(headers["x-content-type-options"]).toBe("nosniff");
+  expect(headers["referrer-policy"]).toBe("strict-origin-when-cross-origin");
+  expect(headers["x-frame-options"]).toBe("DENY");
+
+  // Report-Only this phase — the enforcing header must NOT be present yet.
+  expect(headers["content-security-policy-report-only"]).toContain(
+    "default-src 'self'",
+  );
+  expect(headers["content-security-policy"]).toBeUndefined();
+
+  // Local dev is http, so HSTS must not be sent.
+  expect(headers["strict-transport-security"]).toBeUndefined();
+});

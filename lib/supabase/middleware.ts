@@ -14,6 +14,13 @@
  *
  * All data access uses the anon key + the user's cookie session => RLS is in
  * force (criterion 4). There is no service-role key on this path.
+ *
+ * It also applies the app's HTTP security headers (issue #55) to whatever
+ * response is returned. The header set itself is built by the pure, unit-tested
+ * `lib/http/security-headers.ts`; here we only (a) mint a per-request nonce,
+ * (b) expose it to Next's renderer via the request CSP header, and (c) stamp
+ * the header set onto the final response — without disturbing the
+ * session/cookie handling above.
  */
 
 import { createServerClient } from "@supabase/ssr";
@@ -22,6 +29,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "@/lib/database.types";
 
 import { resolveAuthRoute } from "@/lib/auth/routing";
+import {
+  CSP_REPORT_ONLY_HEADER,
+  buildSecurityHeaders,
+  generateNonce,
+  isSecureRequest,
+} from "@/lib/http/security-headers";
 import { authCookieOptions } from "./cookie-options";
 import { readSupabaseEnv, type SupabaseEnv } from "./env";
 import { userHasMember } from "./membership";
@@ -30,9 +43,25 @@ export async function updateSession(
   request: NextRequest,
   env: SupabaseEnv = readSupabaseEnv(),
 ): Promise<NextResponse> {
+  // Per-request security-header context. The nonce must be exposed to Next's
+  // renderer via a REQUEST header BEFORE the forwarded response is built, so
+  // Next stamps the same nonce onto its own <script> tags. Next reads the nonce
+  // from the request's `Content-Security-Policy(-Report-Only)` header, so the
+  // Report-Only variant (this phase) is enough to drive it.
+  const securityHeaders = buildSecurityHeaders({
+    supabaseUrl: env.url,
+    isProd: isSecureRequest(request.headers),
+    nonce: generateNonce(),
+  });
+  request.headers.set(
+    CSP_REPORT_ONLY_HEADER,
+    securityHeaders[CSP_REPORT_ONLY_HEADER]!,
+  );
+
   // The response we hand back. The ssr client writes refreshed-session cookies
   // onto BOTH the forwarded request (so downstream sees them) and this
-  // response (so the browser stores them).
+  // response (so the browser stores them). Because the request now carries the
+  // CSP header, every `NextResponse.next({ request })` below forwards it.
   let response = NextResponse.next({ request });
 
   const cookieSecurity = authCookieOptions();
@@ -88,8 +117,22 @@ export async function updateSession(
     response.cookies.getAll().forEach((cookie) => {
       redirect.cookies.set(cookie);
     });
-    return redirect;
+    return applySecurityHeaders(redirect, securityHeaders);
   }
 
+  return applySecurityHeaders(response, securityHeaders);
+}
+
+/**
+ * Stamp the built security headers onto a response, leaving its
+ * body/cookies/status untouched. Returns the same response for chaining.
+ */
+function applySecurityHeaders(
+  response: NextResponse,
+  headers: Record<string, string>,
+): NextResponse {
+  for (const [name, value] of Object.entries(headers)) {
+    response.headers.set(name, value);
+  }
   return response;
 }

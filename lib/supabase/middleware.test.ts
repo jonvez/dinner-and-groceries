@@ -128,3 +128,95 @@ describe("updateSession", () => {
     expect(client.__members.from).not.toHaveBeenCalled();
   });
 });
+
+describe("updateSession — security headers (issue #55)", () => {
+  it("sets the enforced baseline headers on the pass-through response", async () => {
+    createServerClientMock.mockReturnValue(
+      stubClient({ user: { id: "u1" }, hasMember: true }),
+    );
+
+    const res = await updateSession(makeRequest("/board"), fakeEnv);
+
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Referrer-Policy")).toBe(
+      "strict-origin-when-cross-origin",
+    );
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+  });
+
+  it("ships the CSP under the Report-Only header (phase 1 — not enforcing)", async () => {
+    createServerClientMock.mockReturnValue(
+      stubClient({ user: { id: "u1" }, hasMember: true }),
+    );
+
+    const res = await updateSession(makeRequest("/board"), fakeEnv);
+
+    const csp = res.headers.get("Content-Security-Policy-Report-Only");
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self' 'nonce-");
+    // The enforcing header must NOT be sent this phase.
+    expect(res.headers.get("Content-Security-Policy")).toBeNull();
+  });
+
+  it("still returns the Supabase session response with cookies intact", async () => {
+    // Simulate the ssr client writing a refreshed-session cookie via setAll.
+    const client = stubClient({ user: { id: "u1" }, hasMember: true });
+    createServerClientMock.mockImplementation((_url, _key, opts) => {
+      opts.cookies.setAll([
+        { name: "sb-access-token", value: "refreshed", options: {} },
+      ]);
+      return client;
+    });
+
+    const res = await updateSession(makeRequest("/board"), fakeEnv);
+
+    // Session cookie preserved AND security headers present on the same response.
+    expect(res.cookies.get("sb-access-token")?.value).toBe("refreshed");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+  });
+
+  it("exposes the nonce to Next via the request CSP header (Report-Only variant)", async () => {
+    // Next reads the nonce from the request's content-security-policy(-report-only)
+    // header to stamp its own <script> tags. Assert we set it before rendering.
+    const req = makeRequest("/board");
+    createServerClientMock.mockReturnValue(
+      stubClient({ user: { id: "u1" }, hasMember: true }),
+    );
+
+    await updateSession(req, fakeEnv);
+
+    expect(req.headers.get("Content-Security-Policy-Report-Only")).toContain(
+      "script-src 'self' 'nonce-",
+    );
+  });
+
+  it("carries the security headers onto a redirect response too", async () => {
+    createServerClientMock.mockReturnValue(
+      stubClient({ user: null, hasMember: false }),
+    );
+
+    const res = await updateSession(makeRequest("/board"), fakeEnv);
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toContain(
+      "default-src 'self'",
+    );
+  });
+
+  it("sends HSTS only when the request is https (prod), not on local http", async () => {
+    createServerClientMock.mockReturnValue(
+      stubClient({ user: { id: "u1" }, hasMember: true }),
+    );
+
+    const local = await updateSession(makeRequest("/board"), fakeEnv);
+    expect(local.headers.get("Strict-Transport-Security")).toBeNull();
+
+    const prodReq = makeRequest("/board");
+    prodReq.headers.set("x-forwarded-proto", "https");
+    const prod = await updateSession(prodReq, fakeEnv);
+    expect(prod.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=63072000; includeSubDomains",
+    );
+  });
+});
