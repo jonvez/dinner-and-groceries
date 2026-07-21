@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
+import { resolveCurrentMember } from "./current-member";
 import { InvitePanel } from "./invite-panel";
 
 // Per-user, session-dependent: never prerender at build time.
@@ -21,14 +22,11 @@ export const dynamic = "force-dynamic";
 export default async function Home() {
   const supabase = await createServerComponentClient();
 
-  // Runs as the signed-in user; RLS limits this to their own household.
-  const { data: member } = await supabase
-    .from("members")
-    .select("display_name, role")
-    .limit(1)
-    .maybeSingle();
-
-  const isOwner = member?.role === "owner";
+  // Scope "who am I" to the VERIFIED signed-in user. RLS lets any member read
+  // ALL co-members, so an unfiltered read would return an arbitrary row (issue
+  // #62); `resolveCurrentMember` pins the lookup to `auth.getUser()`'s id.
+  const member = await resolveCurrentMember(supabase);
+  const isOwner = member?.isOwner ?? false;
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8 text-center">
@@ -37,8 +35,8 @@ export default async function Home() {
           Dinner &amp; Groceries
         </h1>
         <p className="text-muted-foreground max-w-md">
-          {member?.display_name
-            ? `Welcome back, ${member.display_name}.`
+          {member?.displayName
+            ? `Welcome back, ${member.displayName}.`
             : "Plan the family menu together, then let the grocery list flow from it."}
         </p>
       </div>
