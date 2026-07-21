@@ -4,18 +4,19 @@
  * place and unit-tested without spinning up a request — mirroring how the repo
  * isolates logic in `lib/http/request-origin.ts` and `lib/supabase/*`.
  *
- * ── Rollout phase 1 of 2 (locked by the PO) ──────────────────────────────────
- * The CSP ships in **Report-Only** mode this phase: we emit it under
- * `Content-Security-Policy-Report-Only` so violations are reported (browser
- * console) but nothing is blocked. A later PR flips it to the enforcing
- * `Content-Security-Policy` header once prod has been observed for violations.
- * Rationale: a mistuned CSP must not be able to break the auth/realtime loop
- * that P4 just verified in production.
+ * ── Rollout phase 2 of 2 (locked by the PO) ──────────────────────────────────
+ * The CSP is now **enforcing**: we emit it under `Content-Security-Policy` so
+ * the browser blocks violations. Phase 1 shipped the identical policy under
+ * `Content-Security-Policy-Report-Only` and prod was observed to produce ZERO
+ * organic violations (Next stamps its inline scripts with the per-request
+ * nonce, and the allowed `wss://<ref>.supabase.co` Realtime origin is
+ * permitted), so flipping the disposition is safe. The directive string itself
+ * is unchanged from phase 1 — only the header carrying it changed.
  *
- * Note: because the CSP is Report-Only, its `frame-ancestors 'none'` is NOT
- * enforced by the browser — so we ALSO send the (always-enforced)
- * `X-Frame-Options: DENY` header to keep framing/clickjacking protection real
- * during this phase.
+ * Note: the enforced CSP's `frame-ancestors 'none'` now blocks framing on its
+ * own, but we keep the (always-enforced) `X-Frame-Options: DENY` header as
+ * harmless redundancy — it preserves clickjacking protection for legacy
+ * browsers that don't honor `frame-ancestors`.
  */
 
 export const CSP_ENFORCED_HEADER = "Content-Security-Policy";
@@ -106,7 +107,7 @@ export function buildContentSecurityPolicy(input: SecurityHeadersInput): string 
  * Build the full security-header set for a response.
  *
  * Enforced (always): X-Content-Type-Options, Referrer-Policy, X-Frame-Options,
- * and HSTS (prod only). The CSP ships this phase under the **Report-Only**
+ * and HSTS (prod only). The CSP ships this phase under the **enforcing**
  * header name (see the module doc for the rollout rationale).
  */
 export function buildSecurityHeaders(
@@ -115,10 +116,11 @@ export function buildSecurityHeaders(
   const headers: Record<string, string> = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    // Enforced even though the Report-Only CSP also declares frame-ancestors,
-    // because a Report-Only frame-ancestors is not enforced by the browser.
+    // Redundant with the now-enforced CSP `frame-ancestors 'none'`, but kept as
+    // harmless belt-and-suspenders protection for legacy browsers that ignore
+    // `frame-ancestors`.
     "X-Frame-Options": "DENY",
-    [CSP_REPORT_ONLY_HEADER]: buildContentSecurityPolicy(input),
+    [CSP_ENFORCED_HEADER]: buildContentSecurityPolicy(input),
   };
 
   // HSTS: production/HTTPS only. Never sent on local http dev, where it would

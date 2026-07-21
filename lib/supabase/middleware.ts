@@ -30,7 +30,7 @@ import type { Database } from "@/lib/database.types";
 
 import { resolveAuthRoute } from "@/lib/auth/routing";
 import {
-  CSP_REPORT_ONLY_HEADER,
+  CSP_ENFORCED_HEADER,
   buildSecurityHeaders,
   generateNonce,
   isSecureRequest,
@@ -46,16 +46,17 @@ export async function updateSession(
   // Per-request security-header context. The nonce must be exposed to Next's
   // renderer via a REQUEST header BEFORE the forwarded response is built, so
   // Next stamps the same nonce onto its own <script> tags. Next reads the nonce
-  // from the request's `Content-Security-Policy(-Report-Only)` header, so the
-  // Report-Only variant (this phase) is enough to drive it.
+  // from the request's `Content-Security-Policy` header (it prefers the
+  // enforcing header over the `-Report-Only` variant — see Next's
+  // `getScriptNonceFromHeader`), so the enforcing header (this phase) drives it.
   const securityHeaders = buildSecurityHeaders({
     supabaseUrl: env.url,
     isProd: isSecureRequest(request.headers),
     nonce: generateNonce(),
   });
   request.headers.set(
-    CSP_REPORT_ONLY_HEADER,
-    securityHeaders[CSP_REPORT_ONLY_HEADER]!,
+    CSP_ENFORCED_HEADER,
+    securityHeaders[CSP_ENFORCED_HEADER]!,
   );
 
   // The response we hand back. The ssr client writes refreshed-session cookies
