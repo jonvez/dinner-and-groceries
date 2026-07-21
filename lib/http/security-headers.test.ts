@@ -130,10 +130,10 @@ describe("buildSecurityHeaders", () => {
     expect(headers["X-Frame-Options"]).toBe("DENY");
   });
 
-  it("emits the CSP under the Report-Only header name this phase (not enforcing)", () => {
+  it("emits the CSP under the enforcing header name (phase 2 — not Report-Only)", () => {
     const headers = buildSecurityHeaders(prodInput());
-    expect(headers[CSP_REPORT_ONLY_HEADER]).toContain("default-src 'self'");
-    expect(headers[CSP_ENFORCED_HEADER]).toBeUndefined();
+    expect(headers[CSP_ENFORCED_HEADER]).toContain("default-src 'self'");
+    expect(headers[CSP_REPORT_ONLY_HEADER]).toBeUndefined();
   });
 
   it("sends HSTS ONLY when the prod flag is set", () => {
@@ -150,7 +150,7 @@ describe("buildSecurityHeaders", () => {
       nonce: "n",
     });
     expect(local["Strict-Transport-Security"]).toBeUndefined();
-    // ...but the report-only CSP still ships locally so we can observe it.
-    expect(local[CSP_REPORT_ONLY_HEADER]).toContain("default-src 'self'");
+    // ...but the enforcing CSP still ships locally so dev matches prod.
+    expect(local[CSP_ENFORCED_HEADER]).toContain("default-src 'self'");
   });
 });
