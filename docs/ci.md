@@ -8,7 +8,7 @@ CI/deploy posture. Workflow: [`.github/workflows/ci.yml`](../.github/workflows/c
 | Trigger | Job | What it does |
 |---------|-----|--------------|
 | Every PR (+ push to `main`) | `verify` | `npm run lint`, `npm run typecheck`, `npm test` (Vitest). Any failure exits non-zero and **blocks merge**. |
-| Every PR (+ push to `main`) | `e2e` | `npm run build` (standalone) → install Chromium → `npm run test:e2e` (Playwright smoke: `/` loads and renders). |
+| Every PR (+ push to `main`) | `e2e` | Boot ephemeral local Supabase → export its URL/anon key → `npm run build` (standalone, bundle inlined against the local stack) → install Chromium → `npm run test:e2e` (Playwright: signed-out smoke **plus** the authenticated loop — board render, propose/react/comment, and a two-context live Realtime guard). |
 | Merge to `main` only | `deploy` | Docker build → Artifact Registry → Cloud Run (WIF auth). Guarded; no-op only while GCP wiring vars are unset. |
 
 The `deploy` job has `if: github.ref == 'refs/heads/main' && github.event_name == 'push'`,
@@ -22,12 +22,20 @@ committed.
 npm run lint
 npm run typecheck
 npm test          # Vitest unit tests
-npm run build     # produces the standalone server
-npm run test:e2e  # Playwright smoke (boots the standalone server itself)
+npm run db:start  # local Supabase (required for the authed E2E tier)
+npm run build     # produces the standalone server (inlines NEXT_PUBLIC_* — see below)
+npm run test:e2e  # Playwright smoke + authed loop (boots the standalone server itself)
 ```
 
 `npm run test:e2e` requires a prior `npm run build` (the Playwright `webServer`
-boots `start:standalone`, which serves `.next/standalone/server.js`).
+boots `start:standalone`, which serves `.next/standalone/server.js`). The
+**authed** tier additionally needs a running local Supabase (`npm run db:start`):
+the Playwright `setup` project seeds two email/password users into one household
+and persists each session as a `storageState`, so the authed tests start
+signed-in with no Google OAuth. Build with the local Supabase env inlined, e.g.
+`NEXT_PUBLIC_SUPABASE_URL=$(…) NEXT_PUBLIC_SUPABASE_ANON_KEY=$(…) npm run build`
+(the values print from `npm run db:status`). The signed-out **smoke** tier needs
+no backend.
 
 ## Node version
 
@@ -49,7 +57,7 @@ deliberately (`gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`;
 Secrets are **never** committed. Two sources:
 
 - **Local dev:** copy `.env.example` → `.env.local` (gitignored). Supabase values
-  come from `supabase status` once #2 lands.
+  come from `npm run db:status` (the well-known non-secret local CLI defaults).
 - **Production (Cloud Run):** the two `NEXT_PUBLIC_*` values live in **GCP Secret
   Manager** (canonical names below) and are wired into **both** the build and the
   runtime — because they are consumed on two paths:
@@ -102,10 +110,27 @@ secrets the build reads (see the build-time flow above):
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-## #2 seam (ephemeral Supabase for E2E)
+## Ephemeral Supabase for E2E (#24 / #56)
 
-The smoke E2E runs against `next start`'s standalone server **without** Supabase,
-so it is green today. The `e2e` job has a guarded "Start ephemeral Supabase" step
-(`if: hashFiles('supabase/config.toml') != ''`) marked `TODO(#2)`. Once #2 merges
-`supabase/`, that step boots an ephemeral local stack and exports its URL/anon key
-into the E2E environment — no further workflow surgery needed.
+The `e2e` job boots a **real ephemeral local Supabase** and runs the authenticated
+loop against it. Step order is deliberate because `NEXT_PUBLIC_*` are inlined into
+the **client bundle at build time** (this repo has been bitten by that repeatedly):
+
+1. `npx supabase start` (Google OAuth env is a harmless placeholder — the flows
+   never touch Google).
+2. Export the running stack's `API_URL`/`ANON_KEY` (from `supabase status -o env`)
+   into `$GITHUB_ENV` as `NEXT_PUBLIC_SUPABASE_URL`/`_ANON_KEY` — the single source
+   of truth for build, the standalone server, and the seed.
+3. `supabase db reset --local` (clean, migrated schema).
+4. `npm run build` — the client bundle is inlined pointing at the local stack.
+5. A guard step greps `.next/static/chunks` to **prove** the local URL was inlined
+   (fails fast on the exact bundle-drift class this seam exists to prevent).
+6. `npm run test:e2e` — the Playwright `setup` project seeds two email/password
+   users into one household via the app's own authenticated RPCs, writes each
+   session as a `storageState`, and the authed + Realtime specs run.
+7. `supabase stop --no-backup` (always).
+
+**Security (ADR 0003 intact):** there is **no service-role key** anywhere in this
+job. Local Supabase disables email confirmations, so `auth.signUp` returns a live
+session immediately; the household is built entirely as the signed-in users under
+RLS. The seed logic lives in `e2e/support/seed.ts`.
