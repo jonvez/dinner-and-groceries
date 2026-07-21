@@ -23,7 +23,7 @@ The decision space had two security-relevant axes:
 ## Decision
 
 **Topology:** containerized Next.js on **GCP Cloud Run**, images in **Artifact Registry**
-(`us-central1`, repo `app`), in GCP project **`dinner-and-groceries-prod`** (region
+(`us-central1`, repo `app`), in GCP project **`dinner-and-groceries`** (region
 `us-central1`). Prod origin is the **default `https://<service>.run.app` URL**; a custom
 domain is **deferred** (post-launch follow-up, no issue created).
 

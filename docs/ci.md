@@ -89,7 +89,7 @@ and variables → Actions → Variables) — non-sensitive identifiers only; set
 
 | Variable | Example | Purpose |
 |----------|---------|---------|
-| `GCP_PROJECT_ID` | `dinner-and-groceries-prod` | GCP project; also the gate that enables deploy. |
+| `GCP_PROJECT_ID` | `dinner-and-groceries` | GCP project; also the gate that enables deploy. |
 | `GCP_REGION` | `us-central1` | Artifact Registry + Cloud Run region. |
 | `GCP_AR_REPO` | `app` | Artifact Registry repository name. |
 | `GCP_WIF_PROVIDER` | `projects/123/locations/global/workloadIdentityPools/gh/providers/gh` | Workload Identity Federation provider. |
