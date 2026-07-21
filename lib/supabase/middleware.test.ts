@@ -144,18 +144,18 @@ describe("updateSession — security headers (issue #55)", () => {
     expect(res.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
-  it("ships the CSP under the Report-Only header (phase 1 — not enforcing)", async () => {
+  it("ships the CSP under the enforcing header (phase 2 — not Report-Only)", async () => {
     createServerClientMock.mockReturnValue(
       stubClient({ user: { id: "u1" }, hasMember: true }),
     );
 
     const res = await updateSession(makeRequest("/board"), fakeEnv);
 
-    const csp = res.headers.get("Content-Security-Policy-Report-Only");
+    const csp = res.headers.get("Content-Security-Policy");
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self' 'nonce-");
-    // The enforcing header must NOT be sent this phase.
-    expect(res.headers.get("Content-Security-Policy")).toBeNull();
+    // The Report-Only header must NOT be sent now that the CSP is enforced.
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
   });
 
   it("still returns the Supabase session response with cookies intact", async () => {
@@ -175,9 +175,10 @@ describe("updateSession — security headers (issue #55)", () => {
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
-  it("exposes the nonce to Next via the request CSP header (Report-Only variant)", async () => {
-    // Next reads the nonce from the request's content-security-policy(-report-only)
-    // header to stamp its own <script> tags. Assert we set it before rendering.
+  it("exposes the nonce to Next via the request CSP header (enforcing variant)", async () => {
+    // Next reads the nonce from the request's content-security-policy header
+    // (preferred over the report-only variant) to stamp its own <script> tags.
+    // Assert we set the enforcing header before rendering.
     const req = makeRequest("/board");
     createServerClientMock.mockReturnValue(
       stubClient({ user: { id: "u1" }, hasMember: true }),
@@ -185,7 +186,7 @@ describe("updateSession — security headers (issue #55)", () => {
 
     await updateSession(req, fakeEnv);
 
-    expect(req.headers.get("Content-Security-Policy-Report-Only")).toContain(
+    expect(req.headers.get("Content-Security-Policy")).toContain(
       "script-src 'self' 'nonce-",
     );
   });
@@ -199,7 +200,7 @@ describe("updateSession — security headers (issue #55)", () => {
 
     expect(res.status).toBe(307);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toContain(
+    expect(res.headers.get("Content-Security-Policy")).toContain(
       "default-src 'self'",
     );
   });
