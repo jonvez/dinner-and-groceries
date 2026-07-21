@@ -1,0 +1,24 @@
+-- Migration: social replica identity FULL (slice 1b, issue #63)
+--
+-- Fix un-react not propagating over Realtime. `reactions`/`comments` are in the
+-- `supabase_realtime` publication (20260625183220) with DEFAULT replica identity
+-- (primary key only). A Postgres logical-replication DELETE emits ONLY the
+-- replica-identity columns — i.e. just `id`. But the board subscription filters
+-- on `household_id=eq.<id>` (app/board/proposal-pool.tsx) AND the RLS SELECT
+-- policies are household-scoped; Realtime evaluates BOTH the channel filter and
+-- RLS against the change image, and for a DELETE that image has no `household_id`,
+-- so the DELETE is dropped and never reaches other clients. INSERT/UPDATE carry
+-- the full new-row image, so they were unaffected — which is why the gap hid.
+-- Verified live on cloud during the P4 family-validation gate (ADR 0011).
+--
+-- REPLICA IDENTITY FULL makes DELETE carry the whole OLD row, so `household_id`
+-- is present in the change image and both the filter and RLS match — the un-react
+-- (and comment delete) now propagates. For these small, low-churn social tables
+-- the extra streamed columns on UPDATE/DELETE are negligible, and this widens
+-- nothing security-wise: Realtime still authorizes every row against the same
+-- household-scoped RLS via the subscriber's JWT (a client only ever receives its
+-- own household's rows). This is the correction to the original data-minimization
+-- reasoning recorded in 20260625183220_realtime_publication.sql, which is
+-- incompatible with a household-scoped DELETE filter.
+alter table public.reactions replica identity full;
+alter table public.comments  replica identity full;
