@@ -101,9 +101,23 @@ jobs:
         run: npx supabase stop --no-backup
 
   # ---------------------------------------------------------------------------
-  # PR gate: Playwright smoke E2E against the production standalone server.
-  # Runs today WITHOUT Supabase; the Supabase spin-up step is guarded and
-  # activates once #2 lands supabase/config.toml.
+  # PR gate: Playwright E2E against the production standalone server, now backed
+  # by a real ephemeral local Supabase (issues #56 + #24). Two tiers run:
+  #   * smoke   — the signed-out path (/ -> /login), no session.
+  #   * authed  — the AUTHENTICATED loop: authed SSR + RLS board render,
+  #               propose/react/comment, and a TWO-CONTEXT live Realtime guard
+  #               that asserts reaction INSERT delivery AND DELETE (un-react)
+  #               propagation between two members of one household (the automated
+  #               guard for the #63 class). Sessions are seeded directly against
+  #               local Supabase (email/password) — NO Google OAuth, and NO
+  #               service-role key (ADR 0003 stays intact): local email
+  #               confirmations are disabled so signUp returns a live session, and
+  #               the household is built via the app's own authenticated RPCs.
+  #
+  # Ordering matters: NEXT_PUBLIC_* are inlined into the CLIENT bundle at BUILD
+  # time (this repo has been bitten by this repeatedly). So we boot Supabase and
+  # export its URL/anon key into $GITHUB_ENV BEFORE `npm run build`, then verify
+  # the built bundle actually points at the local stack.
   # ---------------------------------------------------------------------------
   e2e:
     name: Playwright smoke E2E
@@ -119,35 +133,59 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # GoTrue wants the Google OAuth env present at boot (config.toml references
+      # it via env()); the E2E flows never touch Google — sessions are seeded via
+      # email/password — so harmless non-secret placeholders suffice (same pattern
+      # as the rls job).
+      - name: Start ephemeral Supabase
+        run: npx supabase start
+        env:
+          SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
+          SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
+
+      # Feed the RUNNING stack's URL + anon key to every later step (build inline,
+      # standalone server runtime, and the seed's signUp) via $GITHUB_ENV — the
+      # single source of truth, so the build can't drift from the stack the tests
+      # run against. The service-role key is deliberately NOT exported (ADR 0003).
+      - name: Export local Supabase env
+        run: |
+          eval "$(npx supabase status -o env)"
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Apply migrations (clean reset)
+        run: npx supabase db reset --local
+
+      # NEXT_PUBLIC_* come from $GITHUB_ENV above (the running stack), so the
+      # client bundle is inlined pointing at the ephemeral local Supabase.
       - name: Build (standalone)
         run: npm run build
-        # NEXT_PUBLIC_* are inlined into the CLIENT bundle at BUILD time, so the
-        # well-known non-secret local Supabase defaults must be present HERE — not
-        # only at runtime via playwright.config.ts's webServer.env. Without these,
-        # the browser Supabase client (sign-in button) has no env and throws.
-        # Values match playwright.config.ts / .env.example (public CLI demo key).
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
 
-      # TODO(#2): wire ephemeral Supabase once supabase/ lands. This step is a
-      # no-op until supabase/config.toml exists, so it never blocks PRs today.
-      # When #2 merges, the CLI is installed and `supabase start` boots an
-      # ephemeral local stack; export its URL/anon key into the E2E env below.
-      - name: Start ephemeral Supabase (guarded on #2)
-        if: ${{ hashFiles('supabase/config.toml') != '' }}
+      # Guard against the exact class of bug this task exists to prevent: if the
+      # public env wasn't inlined at build time, the browser Supabase client (and
+      # the Realtime socket) would have no backend and the authed flows would fail
+      # in confusing ways. Assert the URL is actually baked into a client chunk.
+      - name: Verify local Supabase URL is inlined into the client bundle
         run: |
-          echo "supabase/config.toml detected — booting ephemeral Supabase."
-          # TODO(#2): replace with `supabase/setup-cli` + `supabase start`, then
-          # export NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY from `supabase status`
-          # into $GITHUB_ENV so the build/start and Playwright pick them up.
-          echo "::warning::Supabase E2E wiring is a TODO(#2) placeholder; no-op."
+          if ! grep -rqF "$NEXT_PUBLIC_SUPABASE_URL" .next/static/chunks; then
+            echo "::error::Client bundle does not point at local Supabase — NEXT_PUBLIC_* was not inlined at build time."
+            exit 1
+          fi
+          echo "Client bundle correctly points at $NEXT_PUBLIC_SUPABASE_URL"
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run smoke E2E
+      # The Playwright "setup" project seeds two users + one household against the
+      # running stack and writes their storageState; the authed projects then run.
+      - name: Run E2E (smoke + authed + live Realtime guard)
         run: npm run test:e2e
+
+      - name: Stop ephemeral Supabase
+        if: ${{ always() }}
+        run: npx supabase stop --no-backup
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

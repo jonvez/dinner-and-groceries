@@ -1,18 +1,24 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { STORAGE_STATE_A } from "./e2e/support/paths";
+
 /**
- * Playwright config for the smoke E2E suite.
+ * Playwright config for the E2E suite.
  *
- * The smoke test runs against `next start` (a production build). The Next.js
- * middleware constructs an @supabase/ssr client on every request, so the public
- * Supabase env vars must be present — but the signed-out smoke path never
- * contacts Supabase (an anonymous request has no session token, so getUser()
- * resolves to "no user" without a network call). The well-known local CLI
- * defaults below are therefore sufficient and need no live Google/Supabase
- * backend, keeping this required check green with zero real credentials.
+ * Two tiers, run against the production standalone build (`start:standalone` —
+ * the exact artifact the Cloud Run image ships):
  *
- * TODO(#2): once data-backed E2E flows are wanted, CI can override these with
- * an ephemeral local Supabase DB's values (guarded on supabase/config.toml).
+ *   - **smoke** (no session): the signed-out path (`/` -> `/login`). An
+ *     anonymous request carries no session token, so the middleware's getUser()
+ *     resolves to "no user" without a network call — this tier needs no live
+ *     backend and stays green with just the well-known local defaults below.
+ *
+ *   - **authed** (issue #56): the AUTHENTICATED loop — authed SSR + RLS render,
+ *     propose/react/comment, and the two-context live Realtime guard. The
+ *     `setup` project seeds two users in one household against the local
+ *     ephemeral Supabase and writes each session as a `storageState` (see
+ *     e2e/auth.setup.ts); the authed projects depend on it. This tier needs a
+ *     live local Supabase (CI boots one; locally run `npm run db:start`).
  */
 const PORT = Number(process.env.PORT ?? 3000);
 const baseURL = `http://127.0.0.1:${PORT}`;
@@ -36,9 +42,27 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
+    // Seeds two users in one household and writes their storageState files. The
+    // authed projects depend on it; it runs first. Its NODE process reads
+    // NEXT_PUBLIC_SUPABASE_* from the ambient env (CI exports the running local
+    // stack's values; local defaults otherwise).
     {
-      name: "chromium",
+      name: "setup",
+      testMatch: /auth\.setup\.ts$/,
+    },
+    // Signed-out smoke — no session, no Supabase dependency.
+    {
+      name: "smoke",
+      testMatch: /smoke\.spec\.ts$/,
       use: { ...devices["Desktop Chrome"] },
+    },
+    // Authenticated flows. Project-level storageState signs every test in as
+    // user A; the Realtime spec opens its own second context as user B.
+    {
+      name: "authed",
+      testMatch: /authed\/.*\.spec\.ts$/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE_A },
     },
   ],
   webServer: {
