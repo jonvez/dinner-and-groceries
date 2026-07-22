@@ -158,6 +158,18 @@ name = "juice of 3 limes"` with full `rawText` retained — **safe (no data loss
 less structured**. Deferred to keep #11 on the dominant `N unit name` grammar;
 revisit in #12 if real recipes show it often. Tracked as a known limitation, not a bug.
 
+## Interaction with #12 (prefer pre-structured data when a source has it)
+Forward-note for #12 grooming — **does not change #11**. When ingesting a recipe,
+#12 should **prefer any pre-structured ingredient fields the source provides** and
+only fall back to `parseIngredient` for free-text lines. Caveat: **standard
+schema.org/Recipe JSON-LD does not carry structured quantity/unit/name** —
+`recipeIngredient` is an array of plain strings — so parsing is the *dominant* path;
+the direct-map path handles the minority of sites (some CMSs) that embed genuinely
+structured ingredient data. Both paths converge on the same `ParsedIngredient` shape,
+so everything downstream (#14) is identical regardless of source. **Invariant:**
+preserve `rawText` even on the direct-map path, so nothing is lost and every line
+stays user-correctable.
+
 ## Anticipated extensions (not built now)
 Shape the `ParsedIngredient` type and the pipeline so these slot in without a rewrite:
 - `garnish: boolean`, `optional: boolean` — detectable from trailing `(optional)` /
