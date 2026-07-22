@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeName } from "./ingredient";
+import { normalizeName, parseQuantity } from "./ingredient";
 
 describe("normalizeName", () => {
   it("trims, lowercases, and collapses whitespace", () => {
@@ -32,5 +32,35 @@ describe("normalizeName", () => {
   it("only singularizes the last word", () => {
     expect(normalizeName("olives")).toBe("olive");
     expect(normalizeName("green olives")).toBe("green olive");
+  });
+});
+
+describe("parseQuantity", () => {
+  it("parses integers and decimals", () => {
+    expect(parseQuantity("2 cups flour")).toEqual({ quantity: 2, rest: "cups flour" });
+    expect(parseQuantity("0.5 cup milk")).toEqual({ quantity: 0.5, rest: "cup milk" });
+  });
+
+  it("parses ascii fractions", () => {
+    expect(parseQuantity("1/2 cup sugar")).toEqual({ quantity: 0.5, rest: "cup sugar" });
+  });
+
+  it("parses vulgar fractions", () => {
+    expect(parseQuantity("½ cup sugar")).toEqual({ quantity: 0.5, rest: "cup sugar" });
+  });
+
+  it("parses mixed numbers (attached and spaced)", () => {
+    expect(parseQuantity("1½ cups flour")).toEqual({ quantity: 1.5, rest: "cups flour" });
+    expect(parseQuantity("1 1/2 cups flour")).toEqual({ quantity: 1.5, rest: "cups flour" });
+  });
+
+  it("resolves ranges to the high end and keeps the remainder", () => {
+    expect(parseQuantity("2-3 cups rice")).toEqual({ quantity: 3, rest: "cups rice" });
+    expect(parseQuantity("2 to 3 cups rice")).toEqual({ quantity: 3, rest: "cups rice" });
+  });
+
+  it("returns null quantity when there is no leading amount", () => {
+    expect(parseQuantity("salt to taste")).toEqual({ quantity: null, rest: "salt to taste" });
+    expect(parseQuantity("juice of 3 limes")).toEqual({ quantity: null, rest: "juice of 3 limes" });
   });
 });
