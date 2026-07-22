@@ -182,4 +182,98 @@ describe("safeFetchHtml", () => {
     server.close();
     expect(r).toEqual({ ok: false, reason: "blocked-address" });
   });
+
+  // --- QA edge cases (#76) ---
+
+  it("times out on a slow/non-responding server (5s cap, overridden here for speed)", async () => {
+    const { server, port } = await listen((_req, res) => {
+      // Never writes a response — socket stays open past the timeout.
+      setTimeout(() => res.end("too late"), 2000);
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback(), timeoutMs: 100 });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "timeout" });
+  });
+
+  it("rejects malformed/empty URLs as unreachable rather than throwing", async () => {
+    expect(await safeFetchHtml("")).toEqual({ ok: false, reason: "unreachable" });
+    expect(await safeFetchHtml("not a url at all")).toEqual({ ok: false, reason: "unreachable" });
+    expect(await safeFetchHtml("   ")).toEqual({ ok: false, reason: "unreachable" });
+  });
+
+  it("treats a missing Content-Type header as not-html", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(200, {}); // no content-type at all
+      res.end("<html></html>");
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "not-html" });
+  });
+
+  it("accepts an uppercase/mixed-case scheme (WHATWG URL normalizes before the scheme check)", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<p>hi</p>");
+    });
+    const r = await safeFetchHtml(`HTTP://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: true, html: "<p>hi</p>", finalUrl: `http://127.0.0.1:${port}/` });
+  });
+
+  it("rejects a redirect whose target uses a non-http(s) scheme", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(302, { location: "javascript:alert(1)" }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "bad-scheme" });
+  });
+
+  it("blocks an IPv6 bracket-literal loopback URL with the default blocklist", async () => {
+    // No server needed: the literal-IP pre-check must reject before ever connecting.
+    const r = await safeFetchHtml("http://[::1]:1/");
+    expect(r).toEqual({ ok: false, reason: "blocked-address" });
+  });
+
+  it("blocks an IPv4-mapped IPv6 bracket-literal URL with the default blocklist (post-URL-normalization form)", async () => {
+    // WHATWG URL normalizes "[::ffff:127.0.0.1]" to the compressed hex form "[::ffff:7f00:1]"
+    // before safeFetchHtml ever sees `hostname` — assert the full pipeline (not just the
+    // isBlockedAddress unit, which is only exercised against the dotted-decimal form).
+    const r = await safeFetchHtml("http://[::ffff:127.0.0.1]:1/");
+    expect(r).toEqual({ ok: false, reason: "blocked-address" });
+  });
+
+  it("follows exactly 3 redirects (the default cap) and succeeds", async () => {
+    const { server, port } = await listen((req, res) => {
+      if (req.url === "/3") { res.writeHead(200, { "content-type": "text/html" }); res.end("<p>done</p>"); return; }
+      const n = Number(req.url!.slice(1) || "0");
+      res.writeHead(302, { location: `/${n + 1}` }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/0`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: true, html: "<p>done</p>", finalUrl: `http://127.0.0.1:${port}/3` });
+  });
+
+  it("fails with too-many-redirects on a 4th redirect past the default cap", async () => {
+    const { server, port } = await listen((req, res) => {
+      const n = Number(req.url!.slice(1) || "0");
+      res.writeHead(302, { location: `/${n + 1}` }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/0`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "too-many-redirects" });
+  });
+
+  it("switches request implementations across a cross-protocol (http→https) redirect without crashing", async () => {
+    // No TLS server available in this suite; the point is that the https branch is exercised
+    // (protocol-switch doesn't throw) and still yields a typed result, not an unhandled rejection.
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(302, { location: `https://127.0.0.1:${port}/` }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback(), timeoutMs: 1000 });
+    server.close();
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(["unreachable", "timeout"]).toContain(r.reason);
+  });
 });
