@@ -8,6 +8,8 @@
  * TOCTOU gap. Every redirect hop re-validates. Fails closed on any uncertainty.
  */
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 
 /** Reserved CIDR ranges we refuse to connect to. Native BlockList = correct subnet math. */
@@ -106,4 +108,98 @@ export function makeGuardedLookup(
       callback(null, addresses[0].address, addresses[0].family);
     }) as never;
   }) as LookupFunction;
+}
+
+export type SafeFetchFailure =
+  | "bad-scheme" | "blocked-address" | "not-html"
+  | "too-large" | "timeout" | "too-many-redirects" | "unreachable";
+
+export type SafeFetchResult =
+  | { ok: true; html: string; finalUrl: string }
+  | { ok: false; reason: SafeFetchFailure };
+
+export type SafeFetchOptions = {
+  blockList?: BlockList;
+  timeoutMs?: number;
+  maxBytes?: number;
+  maxRedirects?: number;
+};
+
+const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_REDIRECTS = 3;
+
+type OnceResult = { kind: "redirect"; location: string } | { kind: "done"; value: SafeFetchResult };
+
+/**
+ * Node's `net.connect` skips the custom `lookup` entirely when the host is
+ * already an IP-address literal (nothing to resolve) — so a URL like
+ * `http://127.0.0.1/` or `http://169.254.169.254/` would otherwise connect
+ * without ever passing through `makeGuardedLookup`. Strip the `[...]` IPv6
+ * bracket syntax the WHATWG `URL` parser leaves on `hostname` and, if what
+ * remains is an IP literal, validate it directly here before requesting.
+ */
+function literalIpAddress(hostname: string): string | null {
+  const bare = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  return isIP(bare) !== 0 ? bare : null;
+}
+
+function fetchOnce(parsed: URL, blockList: BlockList, timeoutMs: number, maxBytes: number): Promise<OnceResult> {
+  return new Promise((resolve) => {
+    const requestFn = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    const lookup = makeGuardedLookup(blockList);
+    let settled = false;
+    const done = (value: SafeFetchResult) => { if (!settled) { settled = true; resolve({ kind: "done", value }); } };
+    const redirect = (location: string) => { if (!settled) { settled = true; resolve({ kind: "redirect", location }); } };
+
+    const literal = literalIpAddress(parsed.hostname);
+    if (literal && isBlockedAddress(literal, blockList)) { done({ ok: false, reason: "blocked-address" }); return; }
+
+    const req = requestFn(parsed, { method: "GET", lookup, timeout: timeoutMs }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status >= 300 && status < 400 && res.headers.location) { res.resume(); redirect(res.headers.location); return; }
+      if (status < 200 || status >= 300) { res.resume(); done({ ok: false, reason: "unreachable" }); return; }
+      const ctype = String(res.headers["content-type"] ?? "").toLowerCase();
+      if (!ctype.includes("text/html") && !ctype.includes("application/xhtml+xml")) {
+        res.resume(); done({ ok: false, reason: "not-html" }); return;
+      }
+      const chunks: Buffer[] = [];
+      let total = 0;
+      res.on("data", (c: Buffer) => {
+        total += c.length;
+        if (total > maxBytes) { req.destroy(); done({ ok: false, reason: "too-large" }); return; }
+        chunks.push(c);
+      });
+      res.on("end", () => done({ ok: true, html: Buffer.concat(chunks).toString("utf8"), finalUrl: parsed.toString() }));
+      res.on("error", () => done({ ok: false, reason: "unreachable" }));
+    });
+    req.on("timeout", () => { req.destroy(); done({ ok: false, reason: "timeout" }); });
+    req.on("error", (err: NodeJS.ErrnoException) => {
+      done({ ok: false, reason: err?.code === "EBLOCKED" ? "blocked-address" : "unreachable" });
+    });
+    req.end();
+  });
+}
+
+/**
+ * Fetch a user-supplied URL's HTML, blocking SSRF. Returns a typed result; never
+ * throws for expected failures. Every redirect hop re-validates scheme + IP.
+ */
+export async function safeFetchHtml(url: string, options: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+  const blockList = options.blockList ?? RESERVED;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+
+  let current = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    let parsed: URL;
+    try { parsed = new URL(current); } catch { return { ok: false, reason: "unreachable" }; }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, reason: "bad-scheme" };
+
+    const once = await fetchOnce(parsed, blockList, timeoutMs, maxBytes);
+    if (once.kind === "done") return once.value;
+    try { current = new URL(once.location, parsed).toString(); } catch { return { ok: false, reason: "unreachable" }; }
+  }
+  return { ok: false, reason: "too-many-redirects" };
 }

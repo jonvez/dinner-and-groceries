@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { isBlockedAddress, makeGuardedLookup, buildReservedBlockList } from "./safe-fetch";
+import { createServer, type Server } from "node:http";
+import { BlockList, type AddressInfo } from "node:net";
+import { isBlockedAddress, makeGuardedLookup, buildReservedBlockList, safeFetchHtml } from "./safe-fetch";
 
 describe("isBlockedAddress", () => {
   it("blocks IPv4 reserved/private/loopback/metadata ranges", () => {
@@ -90,5 +92,89 @@ describe("makeGuardedLookup", () => {
     const out = await new Promise<NodeJS.ErrnoException | null>((resolve) =>
       lookup("nope.test", { all: false } as never, (err) => resolve(err as NodeJS.ErrnoException)));
     expect(out?.code).toBe("ENOTFOUND");
+  });
+});
+
+// Empty blocklist → allows loopback so the happy path is testable.
+const allowLoopback = () => new BlockList();
+
+function listen(handler: Parameters<typeof createServer>[0]): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve) => {
+    const server = createServer(handler);
+    server.listen(0, "127.0.0.1", () => resolve({ server, port: (server.address() as AddressInfo).port }));
+  });
+}
+
+describe("safeFetchHtml", () => {
+  it("returns HTML on the happy path", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><body>hi</body></html>");
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: true, html: "<html><body>hi</body></html>", finalUrl: `http://127.0.0.1:${port}/` });
+  });
+
+  it("blocks 127.0.0.1 with the DEFAULT blocklist (seam is production-safe)", async () => {
+    const { server, port } = await listen((_req, res) => { res.end("nope"); });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`); // no options → default reserved list
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "blocked-address" });
+  });
+
+  it("rejects a non-http(s) scheme", async () => {
+    expect(await safeFetchHtml("file:///etc/passwd")).toEqual({ ok: false, reason: "bad-scheme" });
+    expect(await safeFetchHtml("gopher://x/")).toEqual({ ok: false, reason: "bad-scheme" });
+  });
+
+  it("rejects non-HTML content types", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "not-html" });
+  });
+
+  it("enforces the size cap", async () => {
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("x".repeat(5000));
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback(), maxBytes: 1000 });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("follows redirects up to the cap", async () => {
+    const { server, port } = await listen((req, res) => {
+      if (req.url === "/final") { res.writeHead(200, { "content-type": "text/html" }); res.end("<p>ok</p>"); return; }
+      const n = Number(req.url!.slice(1) || "0");
+      res.writeHead(302, { location: n >= 1 ? "/final" : "/1" }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/0`, { blockList: allowLoopback(), maxRedirects: 3 });
+    server.close();
+    expect(r).toEqual({ ok: true, html: "<p>ok</p>", finalUrl: `http://127.0.0.1:${port}/final` });
+  });
+
+  it("fails when redirects exceed the cap", async () => {
+    const { server, port } = await listen((_req, res) => { res.writeHead(302, { location: "/loop" }); res.end(); });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback(), maxRedirects: 2 });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "too-many-redirects" });
+  });
+
+  it("re-validates each redirect hop and blocks a redirect to a reserved IP", async () => {
+    // Block only 169.254/16 so the loopback first hop is allowed but the redirect target is not.
+    const bl = new BlockList();
+    bl.addSubnet("169.254.0.0", 16, "ipv4");
+    const { server, port } = await listen((_req, res) => {
+      res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data/" }); res.end();
+    });
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: bl });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "blocked-address" });
   });
 });
