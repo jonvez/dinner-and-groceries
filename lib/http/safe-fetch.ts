@@ -34,6 +34,7 @@ export function buildReservedBlockList(): BlockList {
   bl.addSubnet("fe80::", 10, "ipv6");     // link-local
   bl.addSubnet("ff00::", 8, "ipv6");      // multicast
   bl.addSubnet("2001:db8::", 32, "ipv6"); // documentation
+  bl.addSubnet("64:ff9b::", 96, "ipv6");  // NAT64 well-known prefix — belt-and-suspenders alongside the embeddedIPv4() decode
   return bl;
 }
 
@@ -149,13 +150,35 @@ function fetchOnce(parsed: URL, blockList: BlockList, timeoutMs: number, maxByte
     const requestFn = parsed.protocol === "https:" ? httpsRequest : httpRequest;
     const lookup = makeGuardedLookup(blockList);
     let settled = false;
-    const done = (value: SafeFetchResult) => { if (!settled) { settled = true; resolve({ kind: "done", value }); } };
-    const redirect = (location: string) => { if (!settled) { settled = true; resolve({ kind: "redirect", location }); } };
 
     const literal = literalIpAddress(parsed.hostname);
-    if (literal && isBlockedAddress(literal, blockList)) { done({ ok: false, reason: "blocked-address" }); return; }
+    if (literal && isBlockedAddress(literal, blockList)) {
+      resolve({ kind: "done", value: { ok: false, reason: "blocked-address" } });
+      return;
+    }
 
-    const req = requestFn(parsed, { method: "GET", lookup, timeout: timeoutMs }, (res) => {
+    // A per-hop *total wall-clock* deadline, not a socket-idle timeout: Node's
+    // `timeout` request option only fires after a period of NO activity, so a
+    // server that trickles a byte at a time — each write resetting the idle
+    // clock — can hold the connection open indefinitely without ever tripping
+    // it. This timer fires regardless of activity.
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; req.destroy(); }, timeoutMs);
+
+    const done = (value: SafeFetchResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ kind: "done", value });
+    };
+    const redirect = (location: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ kind: "redirect", location });
+    };
+
+    const req = requestFn(parsed, { method: "GET", lookup }, (res) => {
       const status = res.statusCode ?? 0;
       if (status >= 300 && status < 400 && res.headers.location) { res.resume(); redirect(res.headers.location); return; }
       if (status < 200 || status >= 300) { res.resume(); done({ ok: false, reason: "unreachable" }); return; }
@@ -171,10 +194,10 @@ function fetchOnce(parsed: URL, blockList: BlockList, timeoutMs: number, maxByte
         chunks.push(c);
       });
       res.on("end", () => done({ ok: true, html: Buffer.concat(chunks).toString("utf8"), finalUrl: parsed.toString() }));
-      res.on("error", () => done({ ok: false, reason: "unreachable" }));
+      res.on("error", () => done({ ok: false, reason: timedOut ? "timeout" : "unreachable" }));
     });
-    req.on("timeout", () => { req.destroy(); done({ ok: false, reason: "timeout" }); });
     req.on("error", (err: NodeJS.ErrnoException) => {
+      if (timedOut) { done({ ok: false, reason: "timeout" }); return; }
       done({ ok: false, reason: err?.code === "EBLOCKED" ? "blocked-address" : "unreachable" });
     });
     req.end();
@@ -191,13 +214,21 @@ export async function safeFetchHtml(url: string, options: SafeFetchOptions = {})
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
 
+  // A single total deadline spanning ALL redirect hops (not reset per hop) —
+  // otherwise a chain of slow/stalling hops could multiply the effective
+  // timeout by (maxRedirects + 1).
+  const deadline = Date.now() + timeoutMs;
+
   let current = url;
   for (let hop = 0; hop <= maxRedirects; hop++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { ok: false, reason: "timeout" };
+
     let parsed: URL;
     try { parsed = new URL(current); } catch { return { ok: false, reason: "unreachable" }; }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, reason: "bad-scheme" };
 
-    const once = await fetchOnce(parsed, blockList, timeoutMs, maxBytes);
+    const once = await fetchOnce(parsed, blockList, remaining, maxBytes);
     if (once.kind === "done") return once.value;
     try { current = new URL(once.location, parsed).toString(); } catch { return { ok: false, reason: "unreachable" }; }
   }

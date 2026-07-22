@@ -265,6 +265,15 @@ describe("safeFetchHtml", () => {
     expect(r).toEqual({ ok: false, reason: "too-many-redirects" });
   });
 
+  it("enforces a total wall-clock deadline against a server that trickles bytes forever (idle timeout alone is insufficient)", async () => {
+    const { server, port } = await listen((_req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.write("x"); /* never end */ });
+    const start = Date.now();
+    const r = await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: new BlockList(), timeoutMs: 200 });
+    server.close();
+    expect(r).toEqual({ ok: false, reason: "timeout" });
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+
   it("switches request implementations across a cross-protocol (http→https) redirect without crashing", async () => {
     // No TLS server available in this suite; the point is that the https branch is exercised
     // (protocol-switch doesn't throw) and still yields a typed result, not an unhandled rejection.
