@@ -146,3 +146,67 @@ describe("parseIngredient", () => {
     });
   });
 });
+
+describe("QA edge cases (#11)", () => {
+  it("treats a zero quantity as a real quantity, not as absent (guards against `if (!quantity)` bugs)", () => {
+    // `0` is falsy in JS; the implementation must check `=== null`, not truthiness.
+    expect(parseIngredient("0 cups flour")).toEqual({
+      quantity: 0, unit: "cup", name: "flour", rawText: "0 cups flour",
+    });
+  });
+
+  it("does not crash on an empty string and preserves rawText", () => {
+    expect(parseIngredient("")).toEqual({ quantity: null, unit: null, name: "", rawText: "" });
+  });
+
+  it("does not crash on a whitespace-only string; rawText keeps the original whitespace", () => {
+    expect(parseIngredient("   ")).toEqual({ quantity: null, unit: null, name: "", rawText: "   " });
+  });
+
+  it("matches units case-insensitively through the full pipeline, not just via matchUnit", () => {
+    expect(parseIngredient("2 CUPS flour")).toEqual({
+      quantity: 2, unit: "cup", name: "flour", rawText: "2 CUPS flour",
+    });
+    expect(parseIngredient("8 FL OZ milk")).toEqual({
+      quantity: 8, unit: "fl oz", name: "milk", rawText: "8 FL OZ milk",
+    });
+  });
+
+  it("does not treat a leading minus sign as a quantity (falls back to name-only, no data loss)", () => {
+    expect(parseIngredient("-2 cups flour")).toEqual({
+      quantity: null, unit: null, name: "-2 cups flour", rawText: "-2 cups flour",
+    });
+  });
+
+  it("assigns a unit even when nothing follows it (empty name), rather than erroring", () => {
+    expect(parseIngredient("2 cups")).toEqual({
+      quantity: 2, unit: "cup", name: "", rawText: "2 cups",
+    });
+  });
+
+  it("deliberately does NOT match ambiguous single-letter abbreviations (c / t / T) as units", () => {
+    // Per design doc: 'c', 'T', 't' are omitted from the unit table to avoid
+    // false matches (e.g. "T" could be tablespoon or a name/initial). Locks the
+    // intentional omission against an incautious future addition.
+    expect(matchUnit("c")).toBeNull();
+    expect(matchUnit("t")).toBeNull();
+    expect(matchUnit("T")).toBeNull();
+    expect(parseIngredient("2 c flour")).toEqual({
+      quantity: 2, unit: null, name: "c flour", rawText: "2 c flour",
+    });
+  });
+
+  it("normalizeName does not crash on empty or whitespace-only input", () => {
+    expect(normalizeName("")).toBe("");
+    expect(normalizeName("   ")).toBe("");
+  });
+
+  it("integration: count-item lines with different quantities dedupe to the same normalizeName key (#14)", () => {
+    const a = parseIngredient("2 eggs");
+    const b = parseIngredient("3 eggs");
+    expect(a).toEqual({ quantity: 2, unit: null, name: "eggs", rawText: "2 eggs" });
+    expect(b).toEqual({ quantity: 3, unit: null, name: "eggs", rawText: "3 eggs" });
+    expect(normalizeName(a.name)).toBe(normalizeName(b.name));
+    expect(normalizeName(a.name)).toBe("egg");
+  });
+});
