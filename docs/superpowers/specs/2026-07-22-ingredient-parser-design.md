@@ -112,11 +112,14 @@ export function normalizeName(name: string): string;
 
 1. **Preserve** `rawText` = input. Work on a trimmed / whitespace-collapsed copy.
 2. **Strip leading quantity** → `quantity` (see quantity grammar). Remainder continues.
-3. **Peek the next token** against the canonical unit table (synonyms folded). Hit →
-   `unit` = canonical form, consume the token. Miss → `unit = null`.
+3. **Only if a quantity was found**, peek the next token(s) against the canonical unit
+   table (synonyms folded; two-word units like `fl oz` tried before one-word). Hit →
+   `unit` = canonical form, consume the token(s). Miss → `unit = null`.
 4. **Remainder** → `name` (cleaned display form).
-5. If step 2 found no quantity, `quantity = null` (e.g. `salt to taste`); the whole
-   remainder is the `name`.
+5. If step 2 found **no** quantity, `quantity = null` **and** `unit = null`, and the
+   whole remainder is the `name` (e.g. `salt to taste`, `pinch of salt`). A measurement
+   unit with no preceding quantity is meaningless, so we do not assign one — this avoids
+   `pinch of salt` mis-parsing to `unit=pinch, name="of salt"`.
 
 ### Quantity grammar
 Recognized leading forms:
