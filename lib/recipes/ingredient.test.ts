@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeName, parseQuantity, matchUnit } from "./ingredient";
+import { normalizeName, parseQuantity, matchUnit, parseIngredient } from "./ingredient";
 
 describe("normalizeName", () => {
   it("trims, lowercases, and collapses whitespace", () => {
@@ -87,5 +87,62 @@ describe("matchUnit", () => {
   it("returns null for non-units", () => {
     expect(matchUnit("eggs")).toBeNull();
     expect(matchUnit("flour")).toBeNull();
+  });
+});
+
+describe("parseIngredient", () => {
+  it("parses the canonical AC example", () => {
+    expect(parseIngredient("1½ cups all-purpose flour")).toEqual({
+      quantity: 1.5, unit: "cup", name: "all-purpose flour", rawText: "1½ cups all-purpose flour",
+    });
+  });
+
+  it("treats a non-unit token as a count item (unit=null)", () => {
+    expect(parseIngredient("2 eggs")).toEqual({
+      quantity: 2, unit: null, name: "eggs", rawText: "2 eggs",
+    });
+  });
+
+  it("parses metric without converting", () => {
+    expect(parseIngredient("200 g flour")).toEqual({
+      quantity: 200, unit: "g", name: "flour", rawText: "200 g flour",
+    });
+  });
+
+  it("keeps null quantity/unit and full name for unquantified lines", () => {
+    expect(parseIngredient("salt to taste")).toEqual({
+      quantity: null, unit: null, name: "salt to taste", rawText: "salt to taste",
+    });
+  });
+
+  it("does not assign a unit when there is no quantity", () => {
+    expect(parseIngredient("pinch of salt")).toEqual({
+      quantity: null, unit: null, name: "pinch of salt", rawText: "pinch of salt",
+    });
+  });
+
+  it("resolves a range to the high end", () => {
+    expect(parseIngredient("2-3 cups rice")).toEqual({
+      quantity: 3, unit: "cup", name: "rice", rawText: "2-3 cups rice",
+    });
+  });
+
+  it("matches a two-word unit before falling back to one word", () => {
+    expect(parseIngredient("8 fl oz milk")).toEqual({
+      quantity: 8, unit: "fl oz", name: "milk", rawText: "8 fl oz milk",
+    });
+  });
+
+  it("collapses internal whitespace in the name but preserves rawText verbatim", () => {
+    expect(parseIngredient("2 cups   chopped   onion")).toEqual({
+      quantity: 2, unit: "cup", name: "chopped onion", rawText: "2 cups   chopped   onion",
+    });
+  });
+
+  it("preserves rawText on the deferred 'of' form (documented limitation)", () => {
+    // "juice of N X" is a known limitation: parses as name-only, no data lost.
+    expect(parseIngredient("juice of 3 limes")).toEqual({
+      quantity: null, unit: null, name: "juice of 3 limes", rawText: "juice of 3 limes",
+    });
   });
 });

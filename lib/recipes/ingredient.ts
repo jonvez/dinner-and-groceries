@@ -139,3 +139,41 @@ export function normalizeName(name: string): string {
   words[words.length - 1] = singularizeWord(words[words.length - 1]);
   return words.join(" ");
 }
+
+/**
+ * Parse one raw ingredient line into structured, mergeable fields. Pure; no I/O.
+ * Pipeline: preserve rawText → strip leading quantity → (only if a quantity was
+ * found) match a unit (two-word before one-word) → remainder is the display name.
+ * A measurement unit with no preceding quantity is meaningless, so unquantified
+ * lines get unit=null and the whole remainder as the name.
+ */
+export function parseIngredient(raw: string): ParsedIngredient {
+  const rawText = raw;
+  const collapsed = raw.trim().replace(/\s+/g, " ");
+  const { quantity, rest } = parseQuantity(collapsed);
+
+  if (quantity === null) {
+    return { quantity: null, unit: null, name: rest, rawText };
+  }
+
+  const tokens = rest.length ? rest.split(" ") : [];
+  let unit: string | null = null;
+  let nameTokens = tokens;
+
+  if (tokens.length >= 2) {
+    const two = matchUnit(`${tokens[0]} ${tokens[1]}`);
+    if (two) {
+      unit = two;
+      nameTokens = tokens.slice(2);
+    }
+  }
+  if (unit === null && tokens.length >= 1) {
+    const one = matchUnit(tokens[0]);
+    if (one) {
+      unit = one;
+      nameTokens = tokens.slice(1);
+    }
+  }
+
+  return { quantity, unit, name: nameTokens.join(" "), rawText };
+}
