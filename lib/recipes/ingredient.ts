@@ -70,6 +70,46 @@ export function parseQuantity(text: string): { quantity: number | null; rest: st
 }
 
 /**
+ * Closed measurement-unit table: synonym/plural → canonical form. The ONLY
+ * "dictionary" in the parser (ADR 0003 — dedupe is exact-normalized-unit match, no
+ * conversion). Single-letter ambiguous abbreviations (`c`, `T`/`t`) are deliberately
+ * omitted to avoid false matches; unambiguous metric single letters (`g`, `l`) are
+ * kept. Extend here as real recipe lines demand.
+ */
+const UNIT_SYNONYMS: Record<string, string> = {
+  teaspoon: "tsp", teaspoons: "tsp", tsp: "tsp", tsps: "tsp",
+  tablespoon: "tbsp", tablespoons: "tbsp", tbsp: "tbsp", tbsps: "tbsp", tbs: "tbsp",
+  cup: "cup", cups: "cup",
+  pint: "pint", pints: "pint", pt: "pint",
+  quart: "quart", quarts: "quart", qt: "quart",
+  gallon: "gallon", gallons: "gallon", gal: "gallon",
+  "fl oz": "fl oz", "fluid ounce": "fl oz", "fluid ounces": "fl oz", floz: "fl oz",
+  ounce: "oz", ounces: "oz", oz: "oz",
+  pound: "lb", pounds: "lb", lb: "lb", lbs: "lb",
+  gram: "g", grams: "g", g: "g",
+  kilogram: "kg", kilograms: "kg", kg: "kg",
+  milliliter: "ml", milliliters: "ml", millilitre: "ml", millilitres: "ml", ml: "ml",
+  liter: "l", liters: "l", litre: "l", litres: "l", l: "l",
+  clove: "clove", cloves: "clove",
+  can: "can", cans: "can",
+  package: "package", packages: "package", pkg: "package", pkgs: "package",
+  stick: "stick", sticks: "stick",
+  pinch: "pinch", pinches: "pinch",
+  dash: "dash", dashes: "dash",
+  slice: "slice", slices: "slice",
+};
+
+/**
+ * Canonical unit for `token`, or null if it is not a known measurement unit.
+ * Case-insensitive; folds a single trailing period. Multi-word units (e.g. "fl oz")
+ * are matched by passing the joined two-word string.
+ */
+export function matchUnit(token: string): string | null {
+  const key = token.trim().toLowerCase().replace(/\.$/, "");
+  return UNIT_SYNONYMS[key] ?? null;
+}
+
+/**
  * Irregular plurals where naive strip-`s`/`ves` would be wrong. Grows as real data
  * demands — kept in one place.
  */

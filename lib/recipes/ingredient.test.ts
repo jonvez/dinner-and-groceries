@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeName, parseQuantity } from "./ingredient";
+import { normalizeName, parseQuantity, matchUnit } from "./ingredient";
 
 describe("normalizeName", () => {
   it("trims, lowercases, and collapses whitespace", () => {
@@ -62,5 +62,30 @@ describe("parseQuantity", () => {
   it("returns null quantity when there is no leading amount", () => {
     expect(parseQuantity("salt to taste")).toEqual({ quantity: null, rest: "salt to taste" });
     expect(parseQuantity("juice of 3 limes")).toEqual({ quantity: null, rest: "juice of 3 limes" });
+  });
+});
+
+describe("matchUnit", () => {
+  it("folds synonyms and plurals to a canonical unit", () => {
+    expect(matchUnit("cups")).toBe("cup");
+    expect(matchUnit("Cup")).toBe("cup");
+    expect(matchUnit("tablespoons")).toBe("tbsp");
+    expect(matchUnit("tbsp")).toBe("tbsp");
+    expect(matchUnit("grams")).toBe("g");
+    expect(matchUnit("g")).toBe("g");
+  });
+
+  it("recognizes metric and two-word units", () => {
+    expect(matchUnit("ml")).toBe("ml");
+    expect(matchUnit("fl oz")).toBe("fl oz");
+  });
+
+  it("tolerates a trailing period", () => {
+    expect(matchUnit("tbsp.")).toBe("tbsp");
+  });
+
+  it("returns null for non-units", () => {
+    expect(matchUnit("eggs")).toBeNull();
+    expect(matchUnit("flour")).toBeNull();
   });
 });
