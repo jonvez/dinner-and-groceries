@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isBlockedAddress } from "./safe-fetch";
+import { isBlockedAddress, makeGuardedLookup, buildReservedBlockList } from "./safe-fetch";
 
 describe("isBlockedAddress", () => {
   it("blocks IPv4 reserved/private/loopback/metadata ranges", () => {
@@ -46,5 +46,49 @@ describe("isBlockedAddress", () => {
     for (const bad of ["", "not-an-ip", "999.999.999.999", "127.0.0.1.5"]) {
       expect(isBlockedAddress(bad), bad).toBe(true);
     }
+  });
+});
+
+// A fake resolver so we can drive resolved IPs deterministically (no network).
+function fakeResolver(map: Record<string, Array<{ address: string; family: number }>>) {
+  return (hostname: string, _opts: unknown, cb: (e: Error | null, a: unknown, f?: number) => void) => {
+    const rec = map[hostname];
+    if (!rec) { const e = new Error("ENOTFOUND") as NodeJS.ErrnoException; e.code = "ENOTFOUND"; cb(e, "", 0); return; }
+    cb(null, rec, undefined); // `all: true` shape
+  };
+}
+
+describe("makeGuardedLookup", () => {
+  const bl = buildReservedBlockList();
+
+  it("passes through a public address", async () => {
+    const lookup = makeGuardedLookup(bl, fakeResolver({ "example.com": [{ address: "93.184.216.34", family: 4 }] }));
+    const out = await new Promise<{ err: Error | null; address: string }>((resolve) =>
+      lookup("example.com", { all: false } as never, (err, address) => resolve({ err, address: address as string })));
+    expect(out.err).toBeNull();
+    expect(out.address).toBe("93.184.216.34");
+  });
+
+  it("rejects with EBLOCKED when a resolved address is reserved (rebinding defense)", async () => {
+    const lookup = makeGuardedLookup(bl, fakeResolver({ "evil.test": [{ address: "169.254.169.254", family: 4 }] }));
+    const out = await new Promise<NodeJS.ErrnoException | null>((resolve) =>
+      lookup("evil.test", { all: false } as never, (err) => resolve(err as NodeJS.ErrnoException)));
+    expect(out?.code).toBe("EBLOCKED");
+  });
+
+  it("rejects when ANY of several resolved addresses is reserved", async () => {
+    const lookup = makeGuardedLookup(bl, fakeResolver({
+      "mixed.test": [{ address: "8.8.8.8", family: 4 }, { address: "127.0.0.1", family: 4 }],
+    }));
+    const out = await new Promise<NodeJS.ErrnoException | null>((resolve) =>
+      lookup("mixed.test", { all: false } as never, (err) => resolve(err as NodeJS.ErrnoException)));
+    expect(out?.code).toBe("EBLOCKED");
+  });
+
+  it("propagates a resolver (DNS) error as unreachable", async () => {
+    const lookup = makeGuardedLookup(bl, fakeResolver({}));
+    const out = await new Promise<NodeJS.ErrnoException | null>((resolve) =>
+      lookup("nope.test", { all: false } as never, (err) => resolve(err as NodeJS.ErrnoException)));
+    expect(out?.code).toBe("ENOTFOUND");
   });
 });

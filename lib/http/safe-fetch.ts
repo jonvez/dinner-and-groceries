@@ -7,7 +7,8 @@
  * `lookup` threaded into https/http.request), which closes the DNS-rebinding
  * TOCTOU gap. Every redirect hop re-validates. Fails closed on any uncertainty.
  */
-import { BlockList, isIP } from "node:net";
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 
 /** Reserved CIDR ranges we refuse to connect to. Native BlockList = correct subnet math. */
 export function buildReservedBlockList(): BlockList {
@@ -71,4 +72,38 @@ export function isBlockedAddress(ip: string, blockList: BlockList = RESERVED): b
   const v4 = embeddedIPv4(ip);
   if (v4) return isBlockedAddress(v4, blockList) || blockList.check(ip, "ipv6");
   return blockList.check(ip, "ipv6");
+}
+
+type ResolverFn = (
+  hostname: string,
+  options: { all: true },
+  callback: (err: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void,
+) => void;
+
+/**
+ * A `net`-compatible custom `lookup` that validates EVERY resolved address before
+ * the socket connects. If any is blocked, it errors with `EBLOCKED` and the
+ * connection never opens — so the IP validated is the IP connected to (rebinding
+ * defense). `resolver` is injectable for tests; production uses `node:dns` lookup.
+ */
+export function makeGuardedLookup(
+  blockList: BlockList,
+  resolver: ResolverFn = dnsLookup as unknown as ResolverFn,
+): LookupFunction {
+  return ((hostname, options, callback) => {
+    resolver(hostname, { all: true }, (err, addresses) => {
+      if (err) { (callback as (e: NodeJS.ErrnoException) => void)(err); return; }
+      for (const a of addresses) {
+        if (isBlockedAddress(a.address, blockList)) {
+          const e = new Error(`blocked address for ${hostname}: ${a.address}`) as NodeJS.ErrnoException;
+          e.code = "EBLOCKED";
+          (callback as (e: NodeJS.ErrnoException) => void)(e);
+          return;
+        }
+      }
+      const wantsAll = typeof options === "object" && options !== null && (options as { all?: boolean }).all;
+      if (wantsAll) { (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, addresses); return; }
+      callback(null, addresses[0].address, addresses[0].family);
+    }) as never;
+  }) as LookupFunction;
 }
