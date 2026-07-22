@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createServer, type Server } from "node:http";
+import { createServer, type RequestListener, type Server } from "node:http";
+import { type LookupAddress } from "node:dns";
 import { BlockList, type AddressInfo } from "node:net";
 import { isBlockedAddress, makeGuardedLookup, buildReservedBlockList, safeFetchHtml } from "./safe-fetch";
 
@@ -52,11 +53,15 @@ describe("isBlockedAddress", () => {
 });
 
 // A fake resolver so we can drive resolved IPs deterministically (no network).
-function fakeResolver(map: Record<string, Array<{ address: string; family: number }>>) {
-  return (hostname: string, _opts: unknown, cb: (e: Error | null, a: unknown, f?: number) => void) => {
+function fakeResolver(map: Record<string, LookupAddress[]>) {
+  return (
+    hostname: string,
+    _opts: { all: true },
+    cb: (e: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void,
+  ) => {
     const rec = map[hostname];
-    if (!rec) { const e = new Error("ENOTFOUND") as NodeJS.ErrnoException; e.code = "ENOTFOUND"; cb(e, "", 0); return; }
-    cb(null, rec, undefined); // `all: true` shape
+    if (!rec) { const e = new Error("ENOTFOUND") as NodeJS.ErrnoException; e.code = "ENOTFOUND"; cb(e, []); return; }
+    cb(null, rec); // `all: true` shape
   };
 }
 
@@ -98,7 +103,7 @@ describe("makeGuardedLookup", () => {
 // Empty blocklist → allows loopback so the happy path is testable.
 const allowLoopback = () => new BlockList();
 
-function listen(handler: Parameters<typeof createServer>[0]): Promise<{ server: Server; port: number }> {
+function listen(handler: RequestListener): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = createServer(handler);
     server.listen(0, "127.0.0.1", () => resolve({ server, port: (server.address() as AddressInfo).port }));
