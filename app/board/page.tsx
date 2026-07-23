@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AppNav } from "@/components/app-nav";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 import {
   addWeeks,
@@ -171,84 +172,81 @@ export default async function BoardPage({
   const isCurrent = weekStart === thisWeek;
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 p-6">
-      <header className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
+    <>
+      <AppNav />
+      <main className="mx-auto max-w-3xl space-y-8 p-6">
+        <header className="space-y-3">
           <h1 className="text-2xl font-semibold tracking-tight">
             Weekly menu
           </h1>
-          <Link
-            href="/"
-            className="text-muted-foreground text-sm underline underline-offset-4"
+
+          <nav
+            aria-label="Week navigation"
+            className="flex items-center justify-between gap-2"
           >
-            Home
-          </Link>
-        </div>
+            <Link
+              href={`/board?week=${prevWeek}`}
+              className="border-input rounded-md border px-3 py-1.5 text-sm"
+              rel="prev"
+            >
+              ← Previous
+            </Link>
 
-        <nav
-          aria-label="Week navigation"
-          className="flex items-center justify-between gap-2"
-        >
-          <Link
-            href={`/board?week=${prevWeek}`}
-            className="border-input rounded-md border px-3 py-1.5 text-sm"
-            rel="prev"
-          >
-            ← Previous
-          </Link>
+            <div className="text-center">
+              <span className="block text-sm font-medium">
+                {formatWeekRange(weekStart)}
+              </span>
+              {isCurrent ? (
+                <span className="text-muted-foreground text-xs">
+                  This week
+                </span>
+              ) : (
+                <Link
+                  href={`/board?week=${thisWeek}`}
+                  className="text-primary text-xs underline underline-offset-4"
+                >
+                  Jump to this week
+                </Link>
+              )}
+            </div>
 
-          <div className="text-center">
-            <span className="block text-sm font-medium">
-              {formatWeekRange(weekStart)}
-            </span>
-            {isCurrent ? (
-              <span className="text-muted-foreground text-xs">This week</span>
-            ) : (
-              <Link
-                href={`/board?week=${thisWeek}`}
-                className="text-primary text-xs underline underline-offset-4"
-              >
-                Jump to this week
-              </Link>
-            )}
-          </div>
+            <Link
+              href={`/board?week=${nextWeek}`}
+              className="border-input rounded-md border px-3 py-1.5 text-sm"
+              rel="next"
+            >
+              Next →
+            </Link>
+          </nav>
+        </header>
 
-          <Link
-            href={`/board?week=${nextWeek}`}
-            className="border-input rounded-md border px-3 py-1.5 text-sm"
-            rel="next"
-          >
-            Next →
-          </Link>
-        </nav>
-      </header>
-
-      {weekId ? (
-        <>
-          <BoardGrid
-            weekStart={weekStart}
-            weekStartDay={weekStartDay}
-            slotted={slotted}
-          />
-          <ProposalPool
-            householdId={householdId ?? ""}
-            currentMemberId={currentMemberId}
-            weekStart={weekStart}
-            weekStartDay={weekStartDay}
-            proposals={proposals}
-            initialReactions={reactions}
-            initialComments={comments}
-            memberNames={memberNames}
-          />
-          <section className="border-border space-y-4 rounded-lg border p-4">
-            <ProposeForm weekStart={weekStart} libraryDishes={libraryDishes} />
-          </section>
-        </>
-      ) : (
-        <p className="text-destructive text-sm">
-          We couldn&apos;t open this week. Please reload.
-        </p>
-      )}
-    </main>
+        {weekId ? (
+          <>
+            <BoardGrid
+              weekStart={weekStart}
+              weekStartDay={weekStartDay}
+              slotted={slotted}
+            />
+            <ProposalPool
+              householdId={householdId ?? ""}
+              currentMemberId={currentMemberId}
+              weekStart={weekStart}
+              weekStartDay={weekStartDay}
+              proposals={proposals}
+              initialReactions={reactions}
+              initialComments={comments}
+              memberNames={memberNames}
+            />
+            <section className="border-border space-y-4 rounded-lg border p-4">
+              <ProposeForm weekStart={weekStart} libraryDishes={libraryDishes} />
+            </section>
+          </>
+        ) : (
+          <p className="text-destructive text-sm">
+            We couldn&apos;t open this week. Please reload.
+          </p>
+        )}
+      </main>
+    </>
   );
 }
