@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { AppNav } from "@/components/app-nav";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { resolveCurrentMember } from "./current-member";
@@ -29,35 +30,38 @@ export default async function Home() {
   const isOwner = member?.isOwner ?? false;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8 text-center">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Dinner &amp; Groceries
-        </h1>
-        <p className="text-muted-foreground max-w-md">
-          {member?.displayName
-            ? `Welcome back, ${member.displayName}.`
-            : "Plan the family menu together, then let the grocery list flow from it."}
-        </p>
-      </div>
+    <>
+      <AppNav />
+      <main className="flex min-h-[80vh] flex-col items-center justify-center gap-6 p-8 text-center">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Dinner &amp; Groceries
+          </h1>
+          <p className="text-muted-foreground max-w-md">
+            {member?.displayName
+              ? `Welcome back, ${member.displayName}.`
+              : "Plan the family menu together, then let the grocery list flow from it."}
+          </p>
+        </div>
 
-      <Link
-        href="/board"
-        className="bg-primary text-primary-foreground rounded-md px-5 py-2.5 text-sm font-medium"
-      >
-        Plan this week
-      </Link>
-
-      {isOwner ? <InvitePanel /> : null}
-
-      <form action="/auth/signout" method="post">
-        <button
-          type="submit"
-          className="text-muted-foreground text-sm underline underline-offset-4"
+        <Link
+          href="/board"
+          className="bg-primary text-primary-foreground rounded-md px-5 py-2.5 text-sm font-medium"
         >
-          Sign out
-        </button>
-      </form>
-    </main>
+          Plan this week
+        </Link>
+
+        {isOwner ? <InvitePanel /> : null}
+
+        <form action="/auth/signout" method="post">
+          <button
+            type="submit"
+            className="text-muted-foreground text-sm underline underline-offset-4"
+          >
+            Sign out
+          </button>
+        </form>
+      </main>
+    </>
   );
 }
