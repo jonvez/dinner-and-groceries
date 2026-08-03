@@ -13,7 +13,7 @@
 --
 -- pgTAP test (slice 1b, issue #7). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(10);
+select plan(12);
 
 create schema if not exists tests;
 
@@ -61,6 +61,8 @@ insert into public.slots (id, household_id, week_id, meal_type, day_of_week, pos
 insert into public.proposals (id, household_id, week_id, dish_id) values
   ('90000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', '0d000001-0000-0000-0000-000000000001'),
   ('90000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '0e000002-0000-0000-0000-000000000002', '0d000002-0000-0000-0000-000000000002');
+insert into public.ingredients (id, household_id, dish_id, name, raw_text) values
+  ('01000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000001-0000-0000-0000-000000000001', 'spaghetti', '1 lb spaghetti');
 
 -- The attacker is a legitimate H member acting only within their own household_id.
 select tests.authenticate_as('22222222-2222-2222-2222-222222222222');
@@ -103,6 +105,13 @@ select throws_ok(
   $$insert into public.comments (household_id, proposal_id, member_id, body)
     values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '90000002-0000-0000-0000-000000000002', 'a0000002-0000-0000-0000-000000000002', 'sneaky')$$,
   '23503', null, 'FK: comment in H cannot reference K''s proposal (composite parent FK blocks it)'
+);
+
+-- ingredients -> dishes
+select throws_ok(
+  $$insert into public.ingredients (household_id, dish_id, name, raw_text)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000002-0000-0000-0000-000000000002', 'sneaky', 'sneaky')$$,
+  '23503', null, 'ingredients: authed attacker cannot attach to another household''s dish (composite FK 23503)'
 );
 
 -- ===========================================================================
@@ -152,6 +161,13 @@ select throws_ok(
   $$update public.dishes set household_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
     where id = '0d000001-0000-0000-0000-000000000001'$$,
   '42501', null, 'move: H member cannot UPDATE an H dish into K (RLS WITH CHECK)'
+);
+
+-- ingredients: cannot move an H ingredient into K
+select throws_ok(
+  $$update public.ingredients set household_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+    where id = '01000001-0000-0000-0000-000000000001'$$,
+  '42501', null, 'ingredients: cannot move row to another household via UPDATE (RLS WITH CHECK 42501)'
 );
 
 select tests.clear_auth();
