@@ -116,3 +116,26 @@ export function decodeEntities(text: string): string {
     return NAMED_ENTITIES[body] ?? whole;
   });
 }
+
+function ingredientLinesOf(node: Record<string, unknown>): string[] {
+  const raw = node.recipeIngredient ?? node.ingredients;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((line): line is string => typeof line === "string")
+    .map((line) => decodeEntities(line).trim())
+    .filter((line) => line.length > 0);
+}
+
+export function extractRecipeJsonLd(html: string): ExtractedRecipe | null {
+  const node = findRecipeNode(collectJsonLdNodes(html));
+  if (!node) return null;
+  const name = node.name;
+  return {
+    title: typeof name === "string" ? decodeEntities(name).trim() : null,
+    imageUrl: firstImageUrl(node.image),
+    ingredientLines: ingredientLinesOf(node),
+    prepMinutes: isoDurationToMinutes(node.prepTime),
+    cookMinutes: isoDurationToMinutes(node.cookTime),
+    totalMinutes: isoDurationToMinutes(node.totalTime),
+  };
+}

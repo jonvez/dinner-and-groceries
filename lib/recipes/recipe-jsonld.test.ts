@@ -1,12 +1,19 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   collectJsonLdNodes,
   decodeEntities,
+  extractRecipeJsonLd,
   findRecipeNode,
   firstImageUrl,
   isoDurationToMinutes,
 } from "./recipe-jsonld";
+
+const fixture = (name: string) =>
+  readFileSync(join(__dirname, "fixtures", name), "utf8");
 
 describe("isoDurationToMinutes", () => {
   it("converts hours + minutes", () => {
@@ -72,5 +79,50 @@ describe("decodeEntities", () => {
     expect(decodeEntities("&frac12; cup")).toBe("½ cup");
     expect(decodeEntities("2 &#39;big&#39; eggs")).toBe("2 'big' eggs");
     expect(decodeEntities("&#188; tsp")).toBe("¼ tsp");
+  });
+});
+
+describe("extractRecipeJsonLd", () => {
+  it("extracts a single-object recipe with times, image, ingredients", () => {
+    const r = extractRecipeJsonLd(fixture("single-recipe.html"))!;
+    expect(r.title).toBe("Carnitas Tacos");
+    expect(r.imageUrl).toBe("https://example.com/tacos.jpg");
+    expect(r.prepMinutes).toBe(20);
+    expect(r.cookMinutes).toBe(90);
+    expect(r.totalMinutes).toBe(110);
+    expect(r.ingredientLines).toEqual([
+      "2 lb pork shoulder",
+      "1 tbsp ground cumin",
+      "3 corn tortillas",
+    ]);
+  });
+
+  it("finds a Recipe inside @graph with @type array + image object", () => {
+    const r = extractRecipeJsonLd(fixture("graph.html"))!;
+    expect(r.title).toBe("Graph Soup");
+    expect(r.imageUrl).toBe("https://example.com/soup.jpg");
+    expect(r.totalMinutes).toBe(45);
+    expect(r.ingredientLines).toEqual(["1 onion, diced", "2 cups vegetable broth"]);
+  });
+
+  it("handles a top-level array, legacy `ingredients`, and image array", () => {
+    const r = extractRecipeJsonLd(fixture("array-types.html"))!;
+    expect(r.title).toBe("Array Stew");
+    expect(r.imageUrl).toBe("https://example.com/stew1.jpg");
+    expect(r.ingredientLines).toEqual(["3 carrots", "1 lb beef chuck"]);
+  });
+
+  it("returns null when there is no Recipe block", () => {
+    expect(extractRecipeJsonLd(fixture("no-recipe.html"))).toBeNull();
+  });
+
+  it("skips a malformed block, recovers the Recipe, and decodes entities", () => {
+    const r = extractRecipeJsonLd(fixture("malformed.html"))!;
+    expect(r.title).toBe("Recovered & Tasty");
+    expect(r.ingredientLines).toEqual(["1 cup rice & beans", "½ tsp salt"]);
+  });
+
+  it("returns null for HTML with no JSON-LD at all", () => {
+    expect(extractRecipeJsonLd("<html><body>nope</body></html>")).toBeNull();
   });
 });
