@@ -205,6 +205,50 @@ export type Database = {
         }
         Relationships: []
       }
+      ingredients: {
+        Row: {
+          created_at: string
+          dish_id: string
+          household_id: string
+          id: string
+          name: string
+          position: number
+          quantity: number | null
+          raw_text: string
+          unit: string | null
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          household_id: string
+          id?: string
+          name: string
+          position?: number
+          quantity?: number | null
+          raw_text: string
+          unit?: string | null
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          household_id?: string
+          id?: string
+          name?: string
+          position?: number
+          quantity?: number | null
+          raw_text?: string
+          unit?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredients_dish_id_household_id_fkey"
+            columns: ["dish_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       invites: {
         Row: {
           consumed_at: string | null
