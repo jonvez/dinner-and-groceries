@@ -39,3 +39,35 @@ export function isoDurationToMinutes(iso: unknown): number | null {
     (seconds ? Math.round(Number(seconds) / 60) : 0)
   );
 }
+
+const JSONLD_SCRIPT_RE =
+  /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+
+/** Expand a parsed JSON-LD value into candidate nodes (arrays + @graph inlined). */
+function flattenNodes(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(flattenNodes);
+  if (value && typeof value === "object") {
+    const graph = (value as Record<string, unknown>)["@graph"];
+    if (Array.isArray(graph)) return [value, ...graph.flatMap(flattenNodes)];
+    return [value];
+  }
+  return [value];
+}
+
+export function collectJsonLdNodes(html: string): Record<string, unknown>[] {
+  const nodes: Record<string, unknown>[] = [];
+  for (const match of html.matchAll(JSONLD_SCRIPT_RE)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(match[1].trim());
+    } catch {
+      continue; // one malformed block must not sink the whole page
+    }
+    for (const node of flattenNodes(parsed)) {
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        nodes.push(node as Record<string, unknown>);
+      }
+    }
+  }
+  return nodes;
+}
