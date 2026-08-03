@@ -71,3 +71,48 @@ export function collectJsonLdNodes(html: string): Record<string, unknown>[] {
   }
   return nodes;
 }
+
+function typeIsRecipe(type: unknown): boolean {
+  const one = (t: unknown) => typeof t === "string" && (t === "Recipe" || t.endsWith("/Recipe"));
+  return Array.isArray(type) ? type.some(one) : one(type);
+}
+
+export function findRecipeNode(
+  nodes: Record<string, unknown>[],
+): Record<string, unknown> | null {
+  return nodes.find((node) => typeIsRecipe(node["@type"])) ?? null;
+}
+
+export function firstImageUrl(image: unknown): string | null {
+  if (typeof image === "string") return image;
+  if (Array.isArray(image)) {
+    for (const item of image) {
+      const url = firstImageUrl(item);
+      if (url) return url;
+    }
+    return null;
+  }
+  if (image && typeof image === "object") {
+    const url = (image as Record<string, unknown>).url;
+    return typeof url === "string" ? url : null;
+  }
+  return null;
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  frac12: "½", frac13: "⅓", frac14: "¼", frac34: "¾", frac23: "⅔",
+};
+
+export function decodeEntities(text: string): string {
+  return text.replace(/&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z0-9]+);/g, (whole, body: string) => {
+    if (body[0] === "#") {
+      const code =
+        body[1] === "x" || body[1] === "X"
+          ? parseInt(body.slice(2), 16)
+          : parseInt(body.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+    }
+    return NAMED_ENTITIES[body] ?? whole;
+  });
+}

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { collectJsonLdNodes, isoDurationToMinutes } from "./recipe-jsonld";
+import {
+  collectJsonLdNodes,
+  decodeEntities,
+  findRecipeNode,
+  firstImageUrl,
+  isoDurationToMinutes,
+} from "./recipe-jsonld";
 
 describe("isoDurationToMinutes", () => {
   it("converts hours + minutes", () => {
@@ -34,5 +40,37 @@ describe("collectJsonLdNodes", () => {
     const names = collectJsonLdNodes(html).map((n) => n.name).filter(Boolean);
     expect(names).toEqual(expect.arrayContaining(["O", "B", "C"]));
     // the malformed block contributes nothing
+  });
+});
+
+describe("findRecipeNode", () => {
+  it("matches @type as a string or an array, else null", () => {
+    expect(findRecipeNode([{ "@type": "Article" }])).toBeNull();
+    expect(findRecipeNode([{ "@type": "Recipe", name: "X" }])?.name).toBe("X");
+    expect(findRecipeNode([{ "@type": ["Thing", "Recipe"], name: "Y" }])?.name).toBe("Y");
+    expect(findRecipeNode([{ "@type": "http://schema.org/Recipe", name: "Z" }])?.name).toBe("Z");
+  });
+  it("returns the first Recipe when several exist", () => {
+    const first = findRecipeNode([{ "@type": "Recipe", name: "first" }, { "@type": "Recipe", name: "second" }]);
+    expect(first?.name).toBe("first");
+  });
+});
+
+describe("firstImageUrl", () => {
+  it("handles string, {url}, and array", () => {
+    expect(firstImageUrl("https://a/x.jpg")).toBe("https://a/x.jpg");
+    expect(firstImageUrl({ url: "https://a/y.jpg" })).toBe("https://a/y.jpg");
+    expect(firstImageUrl(["https://a/z1.jpg", "https://a/z2.jpg"])).toBe("https://a/z1.jpg");
+    expect(firstImageUrl([{ url: "https://a/o.jpg" }])).toBe("https://a/o.jpg");
+    expect(firstImageUrl(undefined)).toBeNull();
+  });
+});
+
+describe("decodeEntities", () => {
+  it("decodes the common named + numeric entities", () => {
+    expect(decodeEntities("rice &amp; beans")).toBe("rice & beans");
+    expect(decodeEntities("&frac12; cup")).toBe("½ cup");
+    expect(decodeEntities("2 &#39;big&#39; eggs")).toBe("2 'big' eggs");
+    expect(decodeEntities("&#188; tsp")).toBe("¼ tsp");
   });
 });
