@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // etc. Mock it so the client component renders in jsdom (we assert the UI
 // wiring here; the action contract itself is covered by ingest-core.test.ts).
 const actionMocks = vi.hoisted(() => ({
-  fetchRecipePreviewAction: vi.fn(async (_prev: unknown, _formData: FormData) => null as unknown),
-  saveIngestedDishAction: vi.fn(async (_prev: unknown, _formData: FormData) => null as unknown),
+  fetchRecipePreviewAction: vi.fn(async () => null as unknown),
+  saveIngestedDishAction: vi.fn(async () => null as unknown),
 }));
 
 vi.mock("./actions", () => actionMocks);
@@ -47,7 +47,10 @@ describe("RecipeIngestForm", () => {
     });
 
     expect(actionMocks.saveIngestedDishAction).toHaveBeenCalledTimes(1);
-    const submitted = actionMocks.saveIngestedDishAction.mock.calls[0][1] as FormData;
+    const [, submitted] = actionMocks.saveIngestedDishAction.mock.calls[0] as unknown as [
+      unknown,
+      FormData,
+    ];
     expect(submitted.get("title")).toBe("Skillet Chicken");
     expect(submitted.get("sourceUrl")).toBe("");
     expect(submitted.get("ingredients")).toBe("1 lb chicken thighs\n2 tbsp olive oil");
