@@ -5,6 +5,8 @@ import type { SafeFetchFailure, SafeFetchResult } from "@/lib/http/safe-fetch";
 import {
   EMPTY_RECIPE_PREVIEW,
   fetchRecipePreview,
+  ingredientRowsFromText,
+  saveIngestedDish,
   type FetchHtml,
 } from "./ingest-core";
 
@@ -105,5 +107,288 @@ describe("fetchRecipePreview", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.preview.imageUrl).toBeNull();
+  });
+});
+
+describe("ingredientRowsFromText", () => {
+  it("parses each non-blank line, in order, with household/dish scoping", () => {
+    const rows = ingredientRowsFromText(
+      "2 lb pork shoulder\n\n1 tbsp ground cumin",
+      "hh-1",
+      "d1",
+    );
+    expect(rows).toEqual([
+      {
+        household_id: "hh-1",
+        dish_id: "d1",
+        name: "pork shoulder",
+        quantity: 2,
+        unit: "lb",
+        raw_text: "2 lb pork shoulder",
+        position: 0,
+      },
+      {
+        household_id: "hh-1",
+        dish_id: "d1",
+        name: "ground cumin",
+        quantity: 1,
+        unit: "tbsp",
+        raw_text: "1 tbsp ground cumin",
+        position: 1,
+      },
+    ]);
+  });
+
+  it("falls back to the raw line as the name when parsing yields no name (e.g. a bare quantity)", () => {
+    const rows = ingredientRowsFromText("2", "hh-1", "d1");
+    expect(rows).toEqual([
+      {
+        household_id: "hh-1",
+        dish_id: "d1",
+        name: "2",
+        quantity: 2,
+        unit: null,
+        raw_text: "2",
+        position: 0,
+      },
+    ]);
+  });
+
+  it("returns no rows for blank input", () => {
+    expect(ingredientRowsFromText("   \n\n  ", "hh-1", "d1")).toEqual([]);
+  });
+});
+
+type Result = { data: unknown; error: unknown };
+
+function makeSaveClient(opts: { dish?: Result; ingredientsError?: unknown }) {
+  const dishesInsert: unknown[] = [];
+  const ingredientsInsert: unknown[] = [];
+  const fromTables: string[] = [];
+
+  const from = vi.fn((table: string) => {
+    fromTables.push(table);
+    if (table === "dishes") {
+      return {
+        insert: vi.fn((vals: unknown) => {
+          dishesInsert.push(vals);
+          return {
+            select: () => ({
+              single: async () => opts.dish ?? { data: { id: "d1" }, error: null },
+            }),
+          };
+        }),
+      };
+    }
+    return {
+      insert: vi.fn((vals: unknown) => {
+        ingredientsInsert.push(vals);
+        return Promise.resolve({ error: opts.ingredientsError ?? null });
+      }),
+    };
+  });
+
+  return {
+    client: { from } as unknown as Parameters<typeof saveIngestedDish>[0],
+    calls: { dishesInsert, ingredientsInsert, fromTables },
+  };
+}
+
+describe("saveIngestedDish", () => {
+  it("inserts the dish then its ingredients, in order", async () => {
+    const { client, calls } = makeSaveClient({});
+
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "  Carnitas Tacos  ",
+      sourceUrl: "https://example.com/tacos",
+      imageUrl: "https://example.com/tacos.jpg",
+      prepMinutes: "20",
+      cookMinutes: "90",
+      totalMinutes: "110",
+      ingredientsText: "2 lb pork shoulder\n1 tbsp ground cumin",
+    });
+
+    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: true });
+    expect(calls.dishesInsert).toEqual([
+      {
+        household_id: "hh-1",
+        title: "Carnitas Tacos",
+        source_url: "https://example.com/tacos",
+        image_url: "https://example.com/tacos.jpg",
+        prep_minutes: 20,
+        cook_minutes: 90,
+        total_minutes: 110,
+        created_by: "m1",
+      },
+    ]);
+    expect(calls.ingredientsInsert).toEqual([
+      [
+        {
+          household_id: "hh-1",
+          dish_id: "d1",
+          name: "pork shoulder",
+          quantity: 2,
+          unit: "lb",
+          raw_text: "2 lb pork shoulder",
+          position: 0,
+        },
+        {
+          household_id: "hh-1",
+          dish_id: "d1",
+          name: "ground cumin",
+          quantity: 1,
+          unit: "tbsp",
+          raw_text: "1 tbsp ground cumin",
+          position: 1,
+        },
+      ],
+    ]);
+  });
+
+  it("rejects a blank title before any DB call", async () => {
+    const { client, calls } = makeSaveClient({});
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "   ",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "",
+    });
+    expect(result.ok).toBe(false);
+    expect(calls.fromTables).toEqual([]);
+  });
+
+  it("stores null source/image URLs and null times for a by-hand add with no URL", async () => {
+    const { client, calls } = makeSaveClient({});
+    await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Skillet Chicken",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "1 lb chicken thighs",
+    });
+    expect(calls.dishesInsert[0]).toMatchObject({
+      source_url: null,
+      image_url: null,
+      prep_minutes: null,
+      cook_minutes: null,
+      total_minutes: null,
+    });
+  });
+
+  it("drops (not blocks on) a javascript: image URL — the dish still saves", async () => {
+    const { client, calls } = makeSaveClient({});
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Sneaky",
+      sourceUrl: "",
+      imageUrl: "javascript:alert(document.cookie)",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "1 egg",
+    });
+    expect(result.ok).toBe(true);
+    expect(calls.dishesInsert[0]).toMatchObject({ image_url: null });
+  });
+
+  it("drops a mistyped/tampered source URL rather than failing the save", async () => {
+    const { client, calls } = makeSaveClient({});
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Tampered",
+      sourceUrl: "javascript:alert(1)",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "",
+    });
+    expect(result.ok).toBe(true);
+    expect(calls.dishesInsert[0]).toMatchObject({ source_url: null });
+  });
+
+  it("ignores unparseable/negative minutes fields rather than crashing, and rounds decimals", async () => {
+    const { client, calls } = makeSaveClient({});
+    await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Weird Times",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "not-a-number",
+      cookMinutes: "-5",
+      totalMinutes: "12.7",
+      ingredientsText: "",
+    });
+    expect(calls.dishesInsert[0]).toMatchObject({
+      prep_minutes: null,
+      cook_minutes: null,
+      total_minutes: 13,
+    });
+  });
+
+  it("does not touch the ingredients table for a title-only add (no ingredient lines)", async () => {
+    const { client, calls } = makeSaveClient({});
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Just a title",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "   ",
+    });
+    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: true });
+    expect(calls.fromTables).toEqual(["dishes"]);
+  });
+
+  it("returns a benign ingredientsSaved:false when the dish saves but the ingredients insert fails", async () => {
+    const { client } = makeSaveClient({ ingredientsError: { message: "boom" } });
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Half Saved",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "1 egg",
+    });
+    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: false });
+  });
+
+  it("fails closed when the dish insert itself errors", async () => {
+    const { client, calls } = makeSaveClient({
+      dish: { data: null, error: { message: "boom" } },
+    });
+    const result = await saveIngestedDish(client, {
+      householdId: "hh-1",
+      createdBy: "m1",
+      title: "Ill-Fated",
+      sourceUrl: "",
+      imageUrl: "",
+      prepMinutes: "",
+      cookMinutes: "",
+      totalMinutes: "",
+      ingredientsText: "1 egg",
+    });
+    expect(result.ok).toBe(false);
+    expect(calls.ingredientsInsert).toEqual([]);
   });
 });
