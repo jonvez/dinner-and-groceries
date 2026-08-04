@@ -47,11 +47,14 @@ Decisions made at the recipe-epic kickoff, after this plan was drafted. Where on
 - `app/recipes/new/ingest-core.test.ts` — **create.** Unit tests for both functions over fakes (no network, no DB).
 - `app/recipes/new/actor.ts` — **create.** `resolveRecipeActor` — household + member id from the verified session. Mirrors `app/board/actor.ts`'s `resolveActor` minus the week concept this flow doesn't have.
 - `app/recipes/new/actor.test.ts` — **create.**
-- `app/recipes/new/actions.ts` — **create.** The thin `"use server"` boundary: builds the real client, resolves the actor, calls `ingest-core.ts` with the real `safeFetchHtml`, emits the `recipe_ingested` analytics event on a URL-sourced save, revalidates `/recipes`.
+- `app/recipes/new/actions.ts` — **create.** The thin `"use server"` boundary: builds the real client, resolves the actor, calls `ingest-core.ts` with the real `safeFetchHtml`, emits the `recipe_ingested` analytics event on a URL-sourced save, revalidates `/recipes`, and on a successful save **redirects to `/recipes/{id}` (PRG — kickoff resolution 2)**.
 - `app/recipes/new/recipe-ingest-form.tsx` — **create.** Client component: the fetch-preview form + the edit/save form (title, image URL, prep/cook/total minutes, one-ingredient-per-line textarea).
 - `app/recipes/new/recipe-ingest-form.test.tsx` — **create.** Component tests with `./actions` mocked (matches `app/board/propose-form.test.tsx`'s pattern).
 - `app/recipes/new/page.tsx` — **create.** The protected route (`runtime = "nodejs"`, `dynamic = "force-dynamic"`); renders `<AppNav/>` + the form.
 - `app/recipes/new/page.test.tsx` — **create.**
+- `app/recipes/[id]/detail-core.ts` — **create (kickoff resolution 3).** Pure `loadRecipeDetail(supabase, id)` — RLS-scoped dish + ingredient-line fetch over an injected client, returns the detail view or `null` (no row = bad id OR another household's recipe). No React, no `"use server"`; unit-tested like `ingest-core.ts`.
+- `app/recipes/[id]/detail-core.test.ts` — **create.** Found + not-found/cross-household paths over a fake client.
+- `app/recipes/[id]/page.tsx` — **create (kickoff resolution 3).** The read-only recipe detail page and the PRG redirect target from Task 4. Async Server Component (`dynamic = "force-dynamic"`) mirroring `app/board/page.tsx`: resolve `params.id`, build the cookie-session client, call `loadRecipeDetail`, `notFound()` on `null`, else render title/image/times/ingredient lines as text. No unit test (async RSC + live client — matches the repo's `app/board/page.tsx` precedent, which has none; the found path is covered by Task 9's E2E round-trip and the not-found branch by `detail-core.test.ts`).
 - `app/recipes/page.tsx` — **modify.** Replace the 12z placeholder copy with a real "Add a recipe" link to `/recipes/new` (otherwise this brick ships with no way to reach it).
 - `app/recipes/page.test.tsx` — **modify.** Add an assertion for the new link.
 - `e2e/authed/recipes.spec.ts` — **create.** Authenticated E2E: the by-hand add flow only (rationale for not live-fetching a URL in Task 8).
@@ -946,6 +949,7 @@ git commit -m "feat(recipes): resolveRecipeActor — verified-session identity f
  */
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { emitEvent } from "@/lib/analytics/events";
 import { safeFetchHtml } from "@/lib/http/safe-fetch";
@@ -977,10 +981,9 @@ export async function fetchRecipePreviewAction(
   return fetchRecipePreview(safeFetchHtml, String(formData.get("url") ?? ""));
 }
 
-export type SaveState =
-  | null
-  | { error: string }
-  | { saved: true; dishId: string; ingredientsSaved: boolean };
+// Success navigates away (PRG, kickoff resolution 2), so there is no on-page
+// "saved" state — only the failure arm is a returned state.
+export type SaveState = null | { error: string };
 
 export async function saveIngestedDishAction(
   _prev: SaveState,
@@ -1014,8 +1017,17 @@ export async function saveIngestedDishAction(
     });
   }
 
+  // Post/Redirect/Get to the saved recipe's canonical URL (kickoff resolution
+  // 2). Leaving the user on /recipes/new with a populated form lets a back
+  // button + re-submit create a DUPLICATE dish; redirecting to a resource URL
+  // removes that entire edge-case class. `revalidatePath` still refreshes the
+  // library behind the redirect. `redirect()` throws NEXT_REDIRECT, so nothing
+  // after it runs and the success path never returns a value (its type is
+  // `never`) — do NOT wrap it in a try/catch that swallows that control-flow
+  // signal. A benign ingredients-partial save is not surfaced inline anymore;
+  // the detail page simply shows the dish with no ingredient lines.
   revalidatePath("/recipes");
-  return { saved: true, dishId: result.dishId, ingredientsSaved: result.ingredientsSaved };
+  redirect(`/recipes/${result.dishId}`);
 }
 ```
 
@@ -1047,7 +1059,7 @@ git commit -m "feat(recipes): wire the ingest Server Actions (fetch preview + sa
 
 ```tsx
 // app/recipes/new/recipe-ingest-form.test.tsx
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The form imports the "use server" actions module, which pulls in next/headers
@@ -1079,11 +1091,9 @@ describe("RecipeIngestForm", () => {
   });
 
   it("saves by hand without ever fetching a URL", async () => {
-    actionMocks.saveIngestedDishAction.mockResolvedValueOnce({
-      saved: true,
-      dishId: "d1",
-      ingredientsSaved: true,
-    });
+    // On success the real action redirects (PRG); the mock just resolves. We
+    // assert the FormData contract the action is invoked with — the redirect
+    // itself is covered by the Task 9 E2E round-trip, not in jsdom.
     render(<RecipeIngestForm />);
 
     fireEvent.change(screen.getByLabelText("Title"), {
@@ -1103,10 +1113,6 @@ describe("RecipeIngestForm", () => {
     expect(submitted.get("sourceUrl")).toBe("");
     expect(submitted.get("ingredients")).toBe("1 lb chicken thighs\n2 tbsp olive oil");
     expect(actionMocks.fetchRecipePreviewAction).not.toHaveBeenCalled();
-
-    await waitFor(() =>
-      expect(screen.getByText(/saved to your library/i)).toBeInTheDocument(),
-    );
   });
 
   it("populates the editable fields from a successful fetch", async () => {
@@ -1373,17 +1379,11 @@ export function RecipeIngestForm() {
           className={inputClass}
         />
 
+        {/* Success navigates away (PRG → /recipes/{id}); only the failure
+            state renders inline. */}
         {saveState && "error" in saveState ? (
           <p role="alert" className="text-destructive text-sm">
             {saveState.error}
-          </p>
-        ) : null}
-        {saveState && "saved" in saveState ? (
-          <p role="status" className="text-sm text-emerald-600">
-            Saved to your library.
-            {saveState.ingredientsSaved
-              ? ""
-              : " (Ingredients couldn't be saved — edit the dish to add them.)"}
           </p>
         ) : null}
 
@@ -1591,9 +1591,323 @@ git commit -m "feat(recipes): link the Recipes shell to the add-a-recipe screen 
 
 ---
 
-### Task 8: Authenticated E2E — the by-hand add flow
+### Task 8: `/recipes/[id]` — read-only recipe detail page (PRG redirect target)
 
-**Why by-hand only (not the URL-fetch path):** the URL-fetch path would require either a real internet URL (network-dependent, slow, flaky in CI, and not hermetic — the recipe page's markup could change or the host could go down) or standing up a local fixture HTTP server just for this one test. Neither is warranted: `fetchRecipePreview`'s fetch → extract → scrub pipeline is exhaustively covered offline in Task 1 (`ingest-core.test.ts`, injected fake fetcher — including the SSRF-block and no-JSON-LD-Recipe cases), and the client-side wiring of a successful/failed fetch is covered by Task 5's component tests with the Server Action mocked. This E2E test proves the one thing those two layers can't: the full authenticated stack — RLS-scoped insert as the real signed-in user, `revalidatePath`, the rendered success state — round-trips for real, using the by-hand path (self-contained, no network egress required).
+Kickoff resolution 3. This is the page Task 4's save action redirects to. A pure `loadRecipeDetail` loader (injected client, unit-tested for found + not-found) plus a thin async Server Component that calls it and `notFound()`s on a miss — mirroring `app/board/page.tsx` (async RSC + cookie-session client, itself unit-test-free in this repo). RLS scopes the fetch to the caller's household, so an id belonging to another household returns no row → the not-found boundary, never a cross-household read.
+
+**Files:**
+- Create: `app/recipes/[id]/detail-core.ts`
+- Create: `app/recipes/[id]/detail-core.test.ts`
+- Create: `app/recipes/[id]/page.tsx`
+
+**Interfaces:**
+- Consumes: `SupabaseClient<Database>` (`from("dishes")`, `from("ingredients")`) for the loader; `createServerComponentClient` (`@/lib/supabase/server-component`), `AppNav` (`@/components/app-nav`), `notFound` (`next/navigation`) for the page.
+- Produces: `type RecipeDetail`, `loadRecipeDetail(supabase, id): Promise<RecipeDetail | null>` (loader) and the route itself (default export `RecipeDetailPage`) — the redirect target of Task 4 and the link target of 12d.
+
+- [ ] **Step 1: Write the failing loader tests**
+
+```ts
+// app/recipes/[id]/detail-core.test.ts
+import { describe, expect, it, vi } from "vitest";
+
+import { loadRecipeDetail } from "./detail-core";
+
+/**
+ * `loadRecipeDetail` reads a dish + its ingredient lines through an INJECTED
+ * client (no live DB). In production the cookie-session client's RLS scopes the
+ * read to the caller's household, so a bad id OR another household's id both
+ * surface as "no dish row" — the loader returns null and the page 404s. The
+ * not-found branch is covered here; the found path end-to-end is Task 9's E2E.
+ */
+
+type DishRow = {
+  id: string;
+  title: string;
+  image_url: string | null;
+  source_url: string | null;
+  prep_minutes: number | null;
+  cook_minutes: number | null;
+  total_minutes: number | null;
+};
+
+function detailClient(opts: {
+  dish: DishRow | null;
+  ingredients?: { raw_text: string }[];
+}) {
+  const from = vi.fn((table: string) => {
+    if (table === "dishes") {
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: opts.dish, error: null }),
+          }),
+        }),
+      };
+    }
+    return {
+      select: () => ({
+        eq: () => ({
+          order: async () => ({ data: opts.ingredients ?? [], error: null }),
+        }),
+      }),
+    };
+  });
+  return { from } as unknown as Parameters<typeof loadRecipeDetail>[0];
+}
+
+describe("loadRecipeDetail", () => {
+  it("returns null when RLS yields no dish row (bad id OR another household's recipe)", async () => {
+    const client = detailClient({ dish: null });
+    expect(
+      await loadRecipeDetail(client, "00000000-0000-0000-0000-000000000000"),
+    ).toBeNull();
+  });
+
+  it("maps the dish and its ingredient lines (in position order) for a found recipe", async () => {
+    const client = detailClient({
+      dish: {
+        id: "d1",
+        title: "Carnitas Tacos",
+        image_url: "https://example.com/tacos.jpg",
+        source_url: "https://example.com/tacos",
+        prep_minutes: 20,
+        cook_minutes: 90,
+        total_minutes: 110,
+      },
+      ingredients: [
+        { raw_text: "2 lb pork shoulder" },
+        { raw_text: "1 tbsp ground cumin" },
+      ],
+    });
+
+    expect(await loadRecipeDetail(client, "d1")).toEqual({
+      id: "d1",
+      title: "Carnitas Tacos",
+      imageUrl: "https://example.com/tacos.jpg",
+      sourceUrl: "https://example.com/tacos",
+      prepMinutes: 20,
+      cookMinutes: 90,
+      totalMinutes: 110,
+      ingredientLines: ["2 lb pork shoulder", "1 tbsp ground cumin"],
+    });
+  });
+
+  it("returns an empty ingredient-line list for a title-only recipe", async () => {
+    const client = detailClient({
+      dish: {
+        id: "d2",
+        title: "Just a title",
+        image_url: null,
+        source_url: null,
+        prep_minutes: null,
+        cook_minutes: null,
+        total_minutes: null,
+      },
+      ingredients: [],
+    });
+
+    const detail = await loadRecipeDetail(client, "d2");
+    expect(detail).not.toBeNull();
+    expect(detail?.ingredientLines).toEqual([]);
+    expect(detail?.imageUrl).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `npx vitest run "app/recipes/[id]/detail-core.test.ts"`
+Expected: FAIL — `Cannot find module './detail-core'`.
+
+- [ ] **Step 3: Write the minimal loader**
+
+```ts
+// app/recipes/[id]/detail-core.ts
+/**
+ * Read-only recipe detail loader (issue #12c, kickoff resolution 3). Pure over
+ * an injected Supabase-like client (unit-tested without a live DB), exactly like
+ * `app/recipes/new/ingest-core.ts`. In production the cookie-session client runs
+ * as the signed-in user, so RLS + `public.current_household_id()` scope the read
+ * to the caller's household: a dish id from ANOTHER household simply returns no
+ * row, indistinguishable from a bad id — both yield `null`, and the page renders
+ * the not-found boundary. There is no service-role key on this path.
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import type { Database } from "@/lib/database.types";
+
+type DbClient = SupabaseClient<Database>;
+
+export type RecipeDetail = {
+  id: string;
+  title: string;
+  imageUrl: string | null;
+  sourceUrl: string | null;
+  prepMinutes: number | null;
+  cookMinutes: number | null;
+  totalMinutes: number | null;
+  ingredientLines: string[];
+};
+
+export async function loadRecipeDetail(
+  supabase: Pick<DbClient, "from">,
+  id: string,
+): Promise<RecipeDetail | null> {
+  const { data: dish } = await supabase
+    .from("dishes")
+    .select(
+      "id, title, image_url, source_url, prep_minutes, cook_minutes, total_minutes",
+    )
+    .eq("id", id)
+    .maybeSingle();
+
+  // No row = bad id OR another household's recipe (RLS). A malformed (non-uuid)
+  // id comes back as a PostgREST error, not a throw — `maybeSingle` yields
+  // `data: null` here too, so the page 404s instead of crashing.
+  if (!dish) return null;
+
+  const { data: ingredients } = await supabase
+    .from("ingredients")
+    .select("raw_text")
+    .eq("dish_id", id)
+    .order("position", { ascending: true });
+
+  return {
+    id: dish.id,
+    title: dish.title,
+    imageUrl: dish.image_url,
+    sourceUrl: dish.source_url,
+    prepMinutes: dish.prep_minutes,
+    cookMinutes: dish.cook_minutes,
+    totalMinutes: dish.total_minutes,
+    ingredientLines: (ingredients ?? []).map((row) => row.raw_text),
+  };
+}
+```
+
+- [ ] **Step 4: Run to verify it passes**
+
+Run: `npx vitest run "app/recipes/[id]/detail-core.test.ts"`
+Expected: PASS — 3 tests green.
+
+- [ ] **Step 5: Write the detail-page Server Component**
+
+```tsx
+// app/recipes/[id]/page.tsx
+import { notFound } from "next/navigation";
+
+import { AppNav } from "@/components/app-nav";
+import { createServerComponentClient } from "@/lib/supabase/server-component";
+
+import { loadRecipeDetail } from "./detail-core";
+
+// Behind the auth/household gate (deny-by-default middleware). Session-dependent
+// + RLS-scoped read — never prerender at build time.
+export const dynamic = "force-dynamic";
+
+/**
+ * Read-only recipe detail page (issue #12c, kickoff resolution 3) — the PRG
+ * redirect target after a save, and 12d's library-list link target. Mirrors
+ * `app/board/page.tsx`: an async Server Component whose queries all run through
+ * the RLS-scoped cookie session. A miss (bad id or another household's recipe)
+ * renders the not-found boundary, never a crash and never a cross-household
+ * read. Untrusted text (title, ingredient lines) renders as plain React
+ * children (escaped by construction) — no `dangerouslySetInnerHTML`.
+ */
+export default async function RecipeDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const supabase = await createServerComponentClient();
+  const recipe = await loadRecipeDetail(supabase, id);
+  if (!recipe) notFound();
+
+  const times = [
+    recipe.prepMinutes !== null ? { label: "Prep", value: recipe.prepMinutes } : null,
+    recipe.cookMinutes !== null ? { label: "Cook", value: recipe.cookMinutes } : null,
+    recipe.totalMinutes !== null ? { label: "Total", value: recipe.totalMinutes } : null,
+  ].filter((t): t is { label: string; value: number } => t !== null);
+
+  return (
+    <>
+      <AppNav />
+      <main className="mx-auto max-w-3xl space-y-6 p-6">
+        <h1 className="text-2xl font-semibold tracking-tight">{recipe.title}</h1>
+
+        {recipe.imageUrl ? (
+          // A user-supplied external image URL, already scheme-validated via
+          // safeHttpUrl before it was ever stored. A plain <img> is deliberately
+          // preferred over next/image here: routing an arbitrary host through
+          // the image optimizer would add a server-side fetch (an SSRF surface)
+          // for no benefit.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={recipe.imageUrl}
+            alt=""
+            className="max-h-64 rounded-md object-cover"
+          />
+        ) : null}
+
+        {times.length > 0 ? (
+          <dl className="flex gap-6 text-sm">
+            {times.map((t) => (
+              <div key={t.label}>
+                <dt className="text-muted-foreground">{t.label}</dt>
+                <dd className="font-medium">{t.value} min</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+
+        <section className="space-y-2">
+          <h2 className="font-medium">Ingredients</h2>
+          {recipe.ingredientLines.length > 0 ? (
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {recipe.ingredientLines.map((line, index) => (
+                <li key={index}>{line}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground text-sm">No ingredients yet.</p>
+          )}
+        </section>
+
+        {recipe.sourceUrl ? (
+          <a
+            href={recipe.sourceUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-primary inline-block text-sm underline underline-offset-4"
+          >
+            View original recipe
+          </a>
+        ) : null}
+      </main>
+    </>
+  );
+}
+```
+
+- [ ] **Step 6: Typecheck**
+
+Run: `npx tsc --noEmit`
+Expected: clean.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add "app/recipes/[id]/detail-core.ts" "app/recipes/[id]/detail-core.test.ts" "app/recipes/[id]/page.tsx"
+git commit -m "feat(recipes): read-only /recipes/[id] detail page + loader (#12c)"
+```
+
+---
+
+### Task 9: Authenticated E2E — the by-hand add flow
+
+**Why by-hand only (not the URL-fetch path):** the URL-fetch path would require either a real internet URL (network-dependent, slow, flaky in CI, and not hermetic — the recipe page's markup could change or the host could go down) or standing up a local fixture HTTP server just for this one test. Neither is warranted: `fetchRecipePreview`'s fetch → extract → scrub pipeline is exhaustively covered offline in Task 1 (`ingest-core.test.ts`, injected fake fetcher — including the SSRF-block and no-JSON-LD-Recipe cases), and the client-side wiring of a successful/failed fetch is covered by Task 5's component tests with the Server Action mocked. This E2E test proves the one thing those two layers can't: the full authenticated stack — RLS-scoped insert as the real signed-in user, `revalidatePath`, the PRG redirect, and the rendered read-only detail page (Task 8) — round-trips for real, using the by-hand path (self-contained, no network egress required). It is also the found-path coverage for the detail page.
 
 **Files:**
 - Create: `e2e/authed/recipes.spec.ts`
@@ -1613,13 +1927,15 @@ import { expect, test } from "@playwright/test";
  * Authenticated recipe-ingest flow (issue #12c): the by-hand add path.
  *
  * The URL-fetch path is deliberately NOT exercised here against a real
- * internet URL — see the plan's Task 8 rationale (ingest-core.test.ts and
+ * internet URL — see the plan's Task 9 rationale (ingest-core.test.ts and
  * recipe-ingest-form.test.tsx already cover it offline and deterministically).
  * This test proves the full authenticated stack round-trips for real: an
- * RLS-scoped insert as the signed-in user, followed by the rendered success
- * state.
+ * RLS-scoped insert as the signed-in user, the PRG redirect, and the rendered
+ * read-only detail page (Task 8).
  */
-test("adding a recipe by hand (no URL) saves it to the library", async ({ page }) => {
+test("adding a recipe by hand (no URL) saves it and lands on its detail page", async ({
+  page,
+}) => {
   const title = `E2E Hand-Added Dish ${randomUUID().slice(0, 8)}`;
 
   await page.goto("/recipes/new");
@@ -1628,14 +1944,19 @@ test("adding a recipe by hand (no URL) saves it to the library", async ({ page }
   await page.getByLabel(/ingredients/i).fill("2 cups flour\n1 tsp salt");
   await page.getByRole("button", { name: "Save to library" }).click();
 
-  await expect(page.getByText(/saved to your library/i)).toBeVisible();
+  // PRG (kickoff resolution 2): the save redirects to the new recipe's
+  // canonical URL, and the read-only detail page shows what we just saved.
+  await expect(page).toHaveURL(/\/recipes\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await expect(page.getByText("2 cups flour")).toBeVisible();
+  await expect(page.getByText("1 tsp salt")).toBeVisible();
 });
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npm run build && npx playwright test --project=authed e2e/authed/recipes.spec.ts`
-Expected: FAIL before Tasks 1–7 exist (route/module not found); once this task runs LAST (after Task 7), expect PASS — confirm by running this command as the final verification step of the whole plan, against a local Supabase stack (`npm run db:start` first) and a fresh production build.
+Expected: FAIL before Tasks 1–8 exist (route/module not found); once this task runs LAST (after Task 8), expect PASS — confirm by running this command as the final verification step of the whole plan, against a local Supabase stack (`npm run db:start` first) and a fresh production build.
 
 - [ ] **Step 3: Run to verify it passes**
 
@@ -1682,4 +2003,9 @@ git commit -m "test(e2e): authenticated by-hand recipe-add round trip (#12c)"
 
 ## Open questions for the Product Owner / human
 
-- None blocking. One product nice-to-have deferred (not decided by me — flag if you want it in-scope): a "Saved — add another?" reset affordance after a successful save, versus the current behavior (form stays populated with the just-saved values; the user can edit fields and press Save again, which will currently create a SECOND dish rather than update the first — same "no dedupe" behavior the design doc already accepts for URL re-ingestion, but worth confirming it's acceptable for the manual-edit-after-save case too).
+- None blocking. The earlier duplicate-dish concern (form stays populated → a
+  second Save creates a SECOND dish) is **resolved by kickoff resolution 2**:
+  the save Post/Redirect/Gets to `/recipes/{id}`, so the populated `/recipes/new`
+  form no longer lingers behind the back button. The "Saved — add another?"
+  reset affordance is deferred → issue **#88**; editing an already-saved recipe
+  is deferred → issue **#89**.
