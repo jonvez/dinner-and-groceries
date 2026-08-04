@@ -17,3 +17,6 @@ e2e/.auth/
 !.env.example
 .DS_Store
 .vercel
+# Editor + local orchestration scratch (SDD progress ledger, task briefs).
+.idea/
+.superpowers/
