@@ -62,11 +62,13 @@ Posture of record: ADRs 0009 (keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-p
 (two-client live round-trip + cross-household isolation) before any kid uses prod.** Board #1 is
 authoritative for status.
 
-**Current milestone gate:** Slice 1b (the social loop) is built; the roadmap's **family-validation gate**
-is now active — exercise the full loop live before building Slice 1c. Tracked on the board as the
-pre-family live-verification smoke (two-client Realtime + full propose→react→comment→slot round-trip).
-Rationale for not skipping it: the Slice 1a retro (6-23) — *deferring live verification on a foundation
-slice produced compounding integration bugs*; 1b is the loop everything else hangs off.
+**Current milestone: Slice 1c (recipes, free).** The Slice 1b **family-validation gate is cleared** — the
+loop was exercised live with the family, so 1c is unblocked. Remaining stories **12c** (recipes screen +
+ingest + `/recipes/{id}` detail) and **12d** (library list) are planned and queued for the first
+**autonomous epic run** — see `docs/superpowers/plans/2026-08-04-recipes-epic-run-brief.md` (goal, ACs,
+gate model). The build team now operates at **epic granularity** (kickoff → autonomous execution →
+acceptance); gated subagent verdicts run synchronously (process-bus evt-0004). Board #1 is authoritative
+for all issue status.
 
 ### Environment & setup (durable gotchas)
 - **Local dev (Google sign-in):** start the stack with creds via `npm run db:start` (sources `.env.local`
