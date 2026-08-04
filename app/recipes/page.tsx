@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { AppNav } from "@/components/app-nav";
 
 // Behind the auth/household gate (deny-by-default middleware). Session-dependent
@@ -5,9 +7,9 @@ import { AppNav } from "@/components/app-nav";
 export const dynamic = "force-dynamic";
 
 /**
- * Recipes screen shell (issue #12z). The fetch → edit → save ingest flow is #12c;
- * the library list is #12d. For now this is the empty destination the global nav
- * points at, so the shell + navigation ship and are reviewed on their own.
+ * Recipes screen shell (issue #12z). The fetch -> edit -> save ingest flow
+ * lives at /recipes/new (issue #12c); the library list itself is #12d. For now
+ * this screen is just the shell + the entry point into the add flow.
  */
 export default function RecipesPage() {
   return (
@@ -16,8 +18,14 @@ export default function RecipesPage() {
       <main className="mx-auto max-w-3xl space-y-4 p-6">
         <h1 className="text-2xl font-semibold tracking-tight">Recipes</h1>
         <p className="text-muted-foreground text-sm">
-          Add a recipe by pasting a link or entering it by hand — coming next.
+          Your saved recipes will show up here — coming soon.
         </p>
+        <Link
+          href="/recipes/new"
+          className="bg-primary text-primary-foreground inline-block rounded-md px-4 py-2 text-sm font-medium"
+        >
+          Add a recipe
+        </Link>
       </main>
     </>
   );

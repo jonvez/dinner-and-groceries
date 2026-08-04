@@ -11,4 +11,12 @@ describe("RecipesPage shell", () => {
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recipes" })).toBeInTheDocument();
   });
+
+  it("links to the add-a-recipe screen", () => {
+    render(<RecipesPage />);
+    expect(screen.getByRole("link", { name: /add a recipe/i })).toHaveAttribute(
+      "href",
+      "/recipes/new",
+    );
+  });
 });
