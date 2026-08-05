@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
+import { safeHttpUrl } from "@/lib/web/safe-url";
 
 type DbClient = SupabaseClient<Database>;
 
@@ -51,8 +52,13 @@ export async function loadRecipeDetail(
   return {
     id: dish.id,
     title: dish.title,
-    imageUrl: dish.image_url,
-    sourceUrl: dish.source_url,
+    // Defense-in-depth: re-scrub the stored URLs at the read boundary before
+    // they reach an <img src>/<a href> (matching app/board/proposal-pool.tsx).
+    // Every current write path already scrubs via safeHttpUrl, so valid URLs
+    // pass through unchanged and nulls stay null — but any future unscrubbed
+    // write path (import, seed, backfill) can't turn into stored XSS here.
+    imageUrl: safeHttpUrl(dish.image_url),
+    sourceUrl: safeHttpUrl(dish.source_url),
     prepMinutes: dish.prep_minutes,
     cookMinutes: dish.cook_minutes,
     totalMinutes: dish.total_minutes,
