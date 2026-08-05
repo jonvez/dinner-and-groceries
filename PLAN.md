@@ -54,21 +54,16 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 roadmap above. The board column for each issue is authoritative; if anything below disagrees with the
 board, the board wins.
 
-**Production is LIVE.** The app is deployed on Cloud Run at
-`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`, backed by the cloud Supabase prod project
-(ref `wcbjuobzeursmomcoefw`); P0–P3 done and the prod Google OAuth round-trip is verified end-to-end.
-Posture of record: ADRs 0009 (keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-prod); bring-up steps in
-`docs/runbooks/production-bringup.md`. **Next gate: P4/#54 — re-verify Realtime against *cloud* Supabase
-(two-client live round-trip + cross-household isolation) before any kid uses prod.** Board #1 is
-authoritative for status.
+**Production.** Deployed on Cloud Run (`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`), backed by
+the cloud Supabase prod project (ref `wcbjuobzeursmomcoefw`). Posture of record: ADRs 0009 (keyless-WIF/
+Cloud Run) + 0010 (cloud-Supabase-as-prod); bring-up in `docs/runbooks/production-bringup.md`. **Durable
+safety constraint:** cloud-Supabase Realtime is not yet live-verified two-client end-to-end — treat prod
+as *not family-ready* until it is (tracked on the board).
 
-**Current milestone: Slice 1c (recipes, free).** The Slice 1b **family-validation gate is cleared** — the
-loop was exercised live with the family, so 1c is unblocked. Remaining stories **12c** (recipes screen +
-ingest + `/recipes/{id}` detail) and **12d** (library list) are planned and queued for the first
-**autonomous epic run** — see `docs/superpowers/plans/2026-08-04-recipes-epic-run-brief.md` (goal, ACs,
-gate model). The build team now operates at **epic granularity** (kickoff → autonomous execution →
-acceptance); gated subagent verdicts run synchronously (process-bus evt-0004). Board #1 is authoritative
-for all issue status.
+**Current milestone: Slice 1c (recipes, free)** — the Slice 1b family-validation gate is cleared, so 1c is
+unblocked. Delivered as an epic-level autonomous run (kickoff → autonomous execution → acceptance); goal,
+ACs, and gate model live in `docs/superpowers/plans/2026-08-04-recipes-epic-run-brief.md`. **Board #1 is
+authoritative for all story/issue status** (merged / open / blocked) — not mirrored here.
 
 ### Environment & setup (durable gotchas)
 - **Local dev (Google sign-in):** start the stack with creds via `npm run db:start` (sources `.env.local`
