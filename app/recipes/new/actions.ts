@@ -72,7 +72,11 @@ export async function saveIngestedDishAction(
   });
   if (!result.ok) return { error: result.error };
 
-  if (sourceUrl !== "") {
+  // Gate `recipe_ingested` on the SCRUBBED source URL the save actually
+  // persisted — not the raw form value. A directly-invoked action carrying an
+  // unsafe `sourceUrl` (e.g. `javascript:…`) stores `source_url = null`, so it
+  // was not a real URL-sourced ingest and must not emit the event.
+  if (result.sourceUrl) {
     await emitEvent(supabase, {
       householdId: actor.householdId,
       memberId: actor.memberId,

@@ -210,7 +210,12 @@ describe("saveIngestedDish", () => {
       ingredientsText: "2 lb pork shoulder\n1 tbsp ground cumin",
     });
 
-    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: true });
+    expect(result).toEqual({
+      ok: true,
+      dishId: "d1",
+      ingredientsSaved: true,
+      sourceUrl: "https://example.com/tacos",
+    });
     expect(calls.dishesInsert).toEqual([
       {
         household_id: "hh-1",
@@ -318,6 +323,9 @@ describe("saveIngestedDish", () => {
     });
     expect(result.ok).toBe(true);
     expect(calls.dishesInsert[0]).toMatchObject({ source_url: null });
+    // The scrubbed source URL a caller gates `recipe_ingested` on is null here —
+    // a tampered javascript: URL is NOT a real URL-sourced ingest.
+    if (result.ok) expect(result.sourceUrl).toBeNull();
   });
 
   it("ignores unparseable/negative minutes fields rather than crashing, and rounds decimals", async () => {
@@ -353,7 +361,12 @@ describe("saveIngestedDish", () => {
       totalMinutes: "",
       ingredientsText: "   ",
     });
-    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: true });
+    expect(result).toEqual({
+      ok: true,
+      dishId: "d1",
+      ingredientsSaved: true,
+      sourceUrl: null,
+    });
     expect(calls.fromTables).toEqual(["dishes"]);
   });
 
@@ -370,7 +383,12 @@ describe("saveIngestedDish", () => {
       totalMinutes: "",
       ingredientsText: "1 egg",
     });
-    expect(result).toEqual({ ok: true, dishId: "d1", ingredientsSaved: false });
+    expect(result).toEqual({
+      ok: true,
+      dishId: "d1",
+      ingredientsSaved: false,
+      sourceUrl: null,
+    });
   });
 
   it("fails closed when the dish insert itself errors", async () => {

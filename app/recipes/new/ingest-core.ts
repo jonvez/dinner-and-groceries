@@ -138,7 +138,15 @@ export type SaveIngestedDishInput = {
 };
 
 export type SaveIngestedDishResult =
-  | { ok: true; dishId: string; ingredientsSaved: boolean }
+  | {
+      ok: true;
+      dishId: string;
+      ingredientsSaved: boolean;
+      /** The SCRUBBED source URL (null when absent or unsafe). Callers gate the
+       *  `recipe_ingested` analytics event on this post-scrub truth, never on
+       *  the raw form input. */
+      sourceUrl: string | null;
+    }
   | { ok: false; error: string };
 
 function parseMinutesField(raw: string): number | null {
@@ -225,9 +233,9 @@ export async function saveIngestedDish(
 
   const rows = ingredientRowsFromText(input.ingredientsText, input.householdId, dish.id);
   if (rows.length === 0) {
-    return { ok: true, dishId: dish.id, ingredientsSaved: true };
+    return { ok: true, dishId: dish.id, ingredientsSaved: true, sourceUrl };
   }
 
   const { error: ingredientsError } = await supabase.from("ingredients").insert(rows);
-  return { ok: true, dishId: dish.id, ingredientsSaved: !ingredientsError };
+  return { ok: true, dishId: dish.id, ingredientsSaved: !ingredientsError, sourceUrl };
 }
