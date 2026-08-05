@@ -101,4 +101,24 @@ describe("loadRecipeDetail", () => {
     expect(detail?.ingredientLines).toEqual([]);
     expect(detail?.imageUrl).toBeNull();
   });
+
+  it("re-scrubs an unsafe stored image/source URL (defense-in-depth) rather than trusting the stored row", async () => {
+    const client = detailClient({
+      dish: {
+        id: "d3",
+        title: "Compromised Row",
+        image_url: "javascript:alert(1)",
+        source_url: "javascript:alert(1)",
+        prep_minutes: null,
+        cook_minutes: null,
+        total_minutes: null,
+      },
+      ingredients: [],
+    });
+
+    const detail = await loadRecipeDetail(client, "d3");
+    expect(detail).not.toBeNull();
+    expect(detail?.imageUrl).toBeNull();
+    expect(detail?.sourceUrl).toBeNull();
+  });
 });
