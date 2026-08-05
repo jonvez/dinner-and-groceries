@@ -91,9 +91,13 @@ export function buildContentSecurityPolicy(input: SecurityHeadersInput): string 
     // Auth (https) + Realtime (wss) to the hosted Supabase origin. Make-or-break
     // for the social loop; derived from the env URL, never a hardcoded ref.
     `connect-src ${connectSrc.join(" ")}`,
-    // Self-hosted + inline data: images only. External recipe-image origins are
-    // deferred until Slice 1c (recipe URL fetch) actually lands.
-    `img-src 'self' data:`,
+    // Self-hosted + inline data: images, plus any https origin. Slice 1c (recipe
+    // URL ingest) has landed: saved recipes carry a user-pasted external
+    // `image_url` (scheme-validated via safeHttpUrl before storage) that the
+    // detail page and library thumbnails render in an <img>. Images are
+    // non-executable, and script-src/frame-ancestors/connect-src stay locked, so
+    // allowing https image origins is low-risk. (PO-approved, 2026-08-05.)
+    `img-src 'self' data: https:`,
     `base-uri 'self'`,
     `form-action 'self'`,
     `frame-ancestors 'none'`,

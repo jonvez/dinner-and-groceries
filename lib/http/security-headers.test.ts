@@ -116,9 +116,9 @@ describe("buildContentSecurityPolicy", () => {
     expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
 
-  it("allows self + data: images (external recipe origins deferred to Slice 1c)", () => {
+  it("allows self + data: + any https image origin (external recipe images, Slice 1c)", () => {
     const csp = buildContentSecurityPolicy(prodInput());
-    expect(directive(csp, "img-src")).toBe("img-src 'self' data:");
+    expect(directive(csp, "img-src")).toBe("img-src 'self' data: https:");
   });
 });
 
