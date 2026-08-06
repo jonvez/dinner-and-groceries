@@ -125,4 +125,20 @@ describe("extractRecipeJsonLd", () => {
   it("returns null for HTML with no JSON-LD at all", () => {
     expect(extractRecipeJsonLd("<html><body>nope</body></html>")).toBeNull();
   });
+
+  // #95: real-world Yoast/minified pages emit an UNQUOTED type attribute
+  // (`<script type=application/ld+json class=yoast-schema-graph>`), valid HTML5.
+  // The extractor must match it — a huge share of recipe blogs use this shape.
+  it("extracts a Recipe from an UNQUOTED <script type=application/ld+json> in @graph (#95)", () => {
+    const r = extractRecipeJsonLd(fixture("yoast-unquoted.html"))!;
+    expect(r.title).toBe("Creamy Hummus & Pita");
+    expect(r.imageUrl).toBe("https://example.com/img/hummus.jpg");
+    expect(r.prepMinutes).toBe(10);
+    expect(r.totalMinutes).toBe(10);
+    expect(r.ingredientLines).toEqual([
+      "1 (15 oz) can chickpeas, drained",
+      "1/4 cup tahini",
+      "2 tbsp lemon juice",
+    ]);
+  });
 });
