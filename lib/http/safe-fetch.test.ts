@@ -121,6 +121,21 @@ describe("safeFetchHtml", () => {
     expect(r).toEqual({ ok: true, html: "<html><body>hi</body></html>", finalUrl: `http://127.0.0.1:${port}/` });
   });
 
+  it("sends a descriptive User-Agent and an Accept header (#96)", async () => {
+    let ua: string | undefined;
+    let accept: string | undefined;
+    const { server, port } = await listen((req, res) => {
+      ua = req.headers["user-agent"];
+      accept = req.headers["accept"];
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("<html></html>");
+    });
+    await safeFetchHtml(`http://127.0.0.1:${port}/`, { blockList: allowLoopback() });
+    server.close();
+    expect(ua).toMatch(/DinnerAndGroceries\/1\.0/);
+    expect(accept).toContain("text/html");
+  });
+
   it("blocks 127.0.0.1 with the DEFAULT blocklist (seam is production-safe)", async () => {
     const { server, port } = await listen((_req, res) => { res.end("nope"); });
     const r = await safeFetchHtml(`http://127.0.0.1:${port}/`); // no options → default reserved list
