@@ -44,6 +44,29 @@ jobs:
         run: npm test
 
   # ---------------------------------------------------------------------------
+  # PR gate: the PRODUCTION Docker image build (`next build` inside the image).
+  # This catches the class of failure that the standalone `verify` typecheck
+  # CANNOT: anything that compiles against the full tree but breaks once the
+  # image is built with `.dockerignore` applied (e.g. a root config importing an
+  # excluded dir). `next build` type-checks the copied tree, so a stale/missing
+  # module surfaces here and nowhere else. No push, no GCP creds — placeholder
+  # NEXT_PUBLIC_* build-args are enough to exercise the build (they are only
+  # inlined into the client bundle; the service-role key is never built in).
+  # ---------------------------------------------------------------------------
+  prod-build:
+    name: Production build (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build the production image (no push) — mirrors the Cloud Run deploy build
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co \
+            --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=placeholder-anon-key \
+            -t dinner-and-groceries:ci .
+
+  # ---------------------------------------------------------------------------
   # PR gate: RLS (pgTAP) against a real ephemeral Supabase Postgres.
   # The identity household-scoping RLS (and every later slice's RLS that builds
   # on it) is the security bedrock — it can only be verified against a live
