@@ -1,0 +1,30 @@
+-- Migration: grocery_items realtime (slice 1d, issue #15)
+--
+-- Make the week's shopping list live so two shoppers in the same store see each
+-- other's check-offs without a reload. Two storage-layer prerequisites, both
+-- asserted in supabase/tests/20_grocery_items_realtime_test.sql:
+--
+--   1. REPLICA IDENTITY FULL — the `/grocery` client subscribes with
+--      `filter: household_id=eq.<id>` and the `grocery_items` RLS SELECT policy
+--      is household-scoped. Logical replication emits only the replica-identity
+--      columns for a DELETE (and for an UPDATE's OLD image); under the DEFAULT
+--      identity that is the primary key alone, so the change image carries no
+--      `household_id`, Realtime's filter AND RLS both miss, and the event is
+--      silently dropped. That is exactly the #63 class of bug — and completing a
+--      trip archives rows, so a dropped event would strand an already-bought
+--      item on the other shopper's phone. Set FULL *before* adding the table to
+--      the publication so no window exists where events stream with a PK-only
+--      image.
+--
+--   2. Publication membership — without it Postgres emits nothing at all and the
+--      client shows "Live" while receiving zero changes (the silent failure the
+--      social tables hit in 20260625183220).
+--
+-- Security: this widens NOTHING. Realtime authorizes every Postgres-Changes row
+-- against the same household-scoped, FORCEd RLS policies (#13) using the
+-- subscriber's own JWT, so a client only ever receives its own household's list
+-- rows. No new grants, no service-role path. `grocery_items` is small and
+-- low-churn (a week's shopping list), so the extra streamed columns are
+-- negligible.
+alter table public.grocery_items replica identity full;
+alter publication supabase_realtime add table public.grocery_items;
