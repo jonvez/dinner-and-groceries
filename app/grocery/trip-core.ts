@@ -13,12 +13,19 @@
  *     does `promoteToCatalog` write. Nothing is force-added to the catalog.
  *
  * Security: `householdId` comes from the caller's VERIFIED session (the actor
- * resolver) — it is written on insert and also filters the lookup, so promotion
- * can only ever touch the caller's own catalog. Every statement runs under RLS
- * as the signed-in user; there is no service-role key. Upsert-by-lower(name) is
- * a check-then-write in TypeScript (no RPC, no elevated privilege); the
- * `(household_id, lower(name))` unique index is the real referee, so a
- * concurrent duplicate is absorbed rather than surfaced as an error.
+ * resolver) — it is written on insert and also filters every statement, so
+ * promotion can only ever touch the caller's own catalog. Every statement runs
+ * under RLS as the signed-in user; there is no service-role key. Upsert-by-
+ * lower(name) is a check-then-write in TypeScript (no RPC, no elevated
+ * privilege); the `(household_id, lower(name))` unique index is the real
+ * referee, so a concurrent duplicate is absorbed rather than surfaced.
+ *
+ * The name match is done IN TYPESCRIPT over one household-scoped catalog read,
+ * never as an `ilike` pattern: PostgREST aliases `*` to `%` in a LIKE pattern
+ * and rewrites an escaped `\*` into a literal `\%` (which matches nothing), so
+ * a typed name can neither be escaped safely nor trusted as a pattern. Reading
+ * the catalog once removes the metacharacter surface entirely, mirrors the
+ * unique index exactly, and costs one round trip per batch instead of N.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -51,15 +58,8 @@ type ArchivedRow = {
   catalog_item_id: string | null;
 };
 
-/**
- * Escape the LIKE metacharacters in a user-typed name before it becomes an
- * `ilike` pattern. Without this, "50% cream" would wildcard-match an unrelated
- * staple (and a `%`-heavy name could match several rows, breaking maybeSingle).
- * PostgREST passes the pattern straight to ILIKE, whose default escape is `\`.
- */
-export function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
-}
+/** A staple as read back for the case-insensitive name match. */
+type CatalogMatch = { id: string; name: string; added_count: number | null };
 
 /**
  * Archive the cart: stamp `purchased_at` on every checked, not-yet-purchased row
@@ -77,12 +77,15 @@ export async function completeTrip(
 ): Promise<CompleteTripResult> {
   const clock = input.now ?? (() => new Date());
 
-  // RLS scopes this to the caller's household; the filters below only narrow it
-  // to "this week's cart". `RETURNING` gives us the count AND the candidates in
-  // one round trip, with no read-then-write race.
+  // RLS scopes this to the caller's household; the explicit `household_id`
+  // filter is defense in depth (and keeps this symmetric with
+  // `promoteToCatalog`, so no reader assumes a fence that isn't there). The
+  // remaining filters narrow it to "this week's cart". `RETURNING` gives us the
+  // count AND the candidates in one round trip, with no read-then-write race.
   const { data, error } = await supabase
     .from("grocery_items")
     .update({ purchased_at: clock().toISOString() })
+    .eq("household_id", input.householdId)
     .eq("week_id", input.weekId)
     .eq("checked", true)
     .is("purchased_at", null)
@@ -113,6 +116,9 @@ export async function completeTrip(
  * Promote the accepted names into the staples catalog: bump an existing staple
  * (matched case-insensitively, mirroring the `(household_id, lower(name))`
  * unique index) or insert a new one with `added_count = 1`.
+ *
+ * The household's catalog is read ONCE and matched in TypeScript — see the file
+ * header for why a per-name `ilike` is not safe with user-typed text.
  */
 export async function promoteToCatalog(
   supabase: Pick<DbClient, "from">,
@@ -125,17 +131,26 @@ export async function promoteToCatalog(
   const clock = input.now ?? (() => new Date());
   let promoted = 0;
 
+  // One RLS-scoped read for the whole batch (the `household_id` filter is
+  // defense in depth over RLS), keyed the way the unique index is.
+  const { data: catalog, error: lookupError } = await supabase
+    .from("catalog_items")
+    .select("id, name, added_count")
+    .eq("household_id", input.householdId);
+  if (lookupError) return { ok: false, error: PROMOTE_ERROR };
+
+  const byName = new Map<string, CatalogMatch>(
+    ((catalog ?? []) as unknown as CatalogMatch[]).map((row) => [
+      row.name.toLowerCase(),
+      row,
+    ]),
+  );
+
   for (const raw of input.names ?? []) {
     const name = typeof raw === "string" ? raw.trim() : "";
     if (name === "") continue;
 
-    const { data: existing, error: lookupError } = await supabase
-      .from("catalog_items")
-      .select("id, added_count")
-      .eq("household_id", input.householdId)
-      .ilike("name", escapeLikePattern(name))
-      .maybeSingle();
-    if (lookupError) return { ok: false, error: PROMOTE_ERROR };
+    const existing = byName.get(name.toLowerCase());
 
     if (existing) {
       const { error } = await supabase

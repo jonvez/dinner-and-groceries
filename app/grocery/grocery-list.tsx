@@ -17,9 +17,14 @@
  *     applied to incoming INSERT/UPDATE rows; a row that arrives already
  *     archived (`purchased_at` set) LEAVES the active list, which is how the
  *     other phone sees "complete trip" happen.
- *   - On a drop + reconnect we re-FETCH the authoritative snapshot and
- *     `reconcileByPk` — the server is the source of truth, so state converges
- *     with no lost or duplicated rows.
+ *   - On a drop + reconnect we ask the SERVER to re-render the authoritative
+ *     snapshot (`router.refresh()`), and the `sig`-keyed effect below
+ *     `reconcileByPk`s the new props — the server is the source of truth, so
+ *     state converges with no lost or duplicated rows. It has to be a server
+ *     re-render, NOT a read on the browser client: auth cookies are httpOnly,
+ *     so the browser client has no session, and `realtime.setAuth` authenticates
+ *     only the SOCKET. A browser-client read runs as anon, RLS denies it, and
+ *     the swallowed error would blank the list mid-aisle.
  *   - Toggles apply optimistically and roll back if the action reports an error,
  *     so a tap feels instant in a store with bad signal.
  *
@@ -29,6 +34,7 @@
  * nothing while still reporting "Live". No service-role key exists on any path.
  */
 
+import { useRouter } from "next/navigation";
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/browser";
@@ -52,12 +58,7 @@ import {
   setHaveItAction,
   type GroceryActionState,
 } from "./actions";
-import {
-  loadGroceryList,
-  toGroceryRow,
-  type CatalogRow,
-  type GroceryRow,
-} from "./list-core";
+import { toGroceryRow, type CatalogRow, type GroceryRow } from "./list-core";
 
 export type GroceryListProps = {
   weekId: string;
@@ -106,6 +107,13 @@ export function GroceryList({
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [accepted, setAccepted] = useState<Record<string, boolean>>({});
+  // Held in a ref so the router's identity can never churn the subscription
+  // below (a re-JOIN would drop events mid-aisle).
+  const router = useRouter();
+  const routerRef = useRef(router);
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   // Reconcile to the server snapshot whenever it actually changes (i.e. after a
   // revalidate), NOT on every render — otherwise a re-render would undo rows the
@@ -128,13 +136,6 @@ export function GroceryList({
       getToken: () => fetchRealtimeToken(),
       setAuth: (token) => supabase.realtime.setAuth(token),
     });
-
-    // Authoritative snapshot after a (re)connect — the server is truth, so a
-    // drop converges with no lost/duplicated rows.
-    async function refetch() {
-      const { items: fresh } = await loadGroceryList(supabase, { weekId });
-      if (!cancelled) setItems(sortItems(reconcileByPk(fresh)));
-    }
 
     async function setup() {
       // Authenticate FIRST so the channel's JOIN carries the user's JWT.
@@ -164,7 +165,10 @@ export function GroceryList({
             setLive(true);
             if (wasDisconnected.current) {
               wasDisconnected.current = false;
-              void refetch();
+              // Re-render the RLS-scoped snapshot ON THE SERVER; the sig-keyed
+              // effect above reconciles the new props. (A browser-client read
+              // would run as anon and blank the list — see the file header.)
+              if (!cancelled) routerRef.current.refresh();
             }
           } else if (
             status === "CHANNEL_ERROR" ||
@@ -488,9 +492,11 @@ function StapleChips({
 }
 
 function AdHocForm({ weekId }: { weekId: string }) {
-  // `weekId` is bound server-side; it only ever narrows a statement RLS has
-  // already fenced, and the composite FK makes another household's week
-  // unstorable (#13).
+  // `weekId` is bound HERE, in a client component, so treat it as client-
+  // supplied: the action re-derives `household_id` from the verified session and
+  // never trusts this value for authorization. It only narrows a statement RLS
+  // has already fenced, and the composite FK `(week_id, household_id) → weeks`
+  // makes a row in another household's week literally unstorable (#13).
   const boundAction = addAdHocItemAction.bind(null, weekId);
   const [state, action, pending] = useActionState<GroceryActionState, FormData>(
     boundAction,

@@ -29,8 +29,13 @@ const rt = vi.hoisted(() => ({
   removeChannel: vi.fn(),
   setAuthTokens: [] as string[],
   events: [] as string[],
-  refetch: [] as unknown[],
+  refresh: vi.fn(),
 }));
+
+// The reconnect snapshot comes from a SERVER re-render: the browser client has
+// no session (auth cookies are httpOnly), so a browser-client read would run as
+// anon, be denied by RLS, and blank the list.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: rt.refresh }) }));
 
 vi.mock("@/lib/supabase/browser", () => ({
   createClient: () => {
@@ -61,23 +66,11 @@ vi.mock("@/lib/supabase/browser", () => ({
         rt.setAuthTokens.push(token);
       },
     };
-    // Snapshot re-fetch (loadGroceryList over the browser client).
-    const from = (table: string) => ({
-      select: () => {
-        const result = {
-          data: table === "grocery_items" ? rt.refetch : [],
-          error: null,
-        };
-        const chain: Record<string, unknown> = {
-          eq: () => chain,
-          is: () => chain,
-          order: () => chain,
-          then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
-            Promise.resolve(result).then(onF, onR),
-        };
-        return chain;
-      },
-    });
+    // The browser client is used ONLY for the socket — it has no session, so it
+    // must never be used for a data read (see the reconnect test).
+    const from = () => {
+      throw new Error("the browser client must not read data (no session)");
+    };
     return { channel, from, removeChannel: rt.removeChannel, realtime };
   },
 }));
@@ -107,7 +100,7 @@ beforeEach(() => {
   rt.removeChannel.mockClear();
   rt.setAuthTokens = [];
   rt.events = [];
-  rt.refetch = [];
+  rt.refresh.mockClear();
   actions.setChecked.mockClear();
   actions.setHaveIt.mockClear();
   vi.stubGlobal(
@@ -293,19 +286,30 @@ describe("GroceryList", () => {
     expect(screen.queryByTestId("grocery-item")).not.toBeInTheDocument();
   });
 
-  it("re-fetches the authoritative snapshot after a reconnect", async () => {
+  it("asks the SERVER for the authoritative snapshot after a reconnect", async () => {
     renderList([row({ id: "g1", name: "eggs" })]);
     await connected();
+    expect(rt.refresh).not.toHaveBeenCalled();
 
-    rt.refetch = [dbRow({ id: "g2", name: "milk" })];
     await act(async () => {
       rt.subscribeCb?.("CHANNEL_ERROR");
       rt.subscribeCb?.("SUBSCRIBED");
     });
 
-    await waitFor(() => {
-      const names = screen.getAllByTestId("grocery-item").map((el) => el.dataset.name);
-      expect(names).toEqual(["milk"]);
-    });
+    // `router.refresh()` re-renders the RLS-scoped server snapshot into props;
+    // the `sig`-keyed effect reconciles it. A browser-client read would run as
+    // anon (httpOnly cookies) and blank the list mid-aisle — the mocked client's
+    // `from()` throws to keep that from creeping back.
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+    expect(screen.getAllByTestId("grocery-item").map((el) => el.dataset.name)).toEqual([
+      "eggs",
+    ]);
+  });
+
+  it("does not refresh on the FIRST subscribe (only after a drop)", async () => {
+    renderList([row({ id: "g1", name: "eggs" })]);
+    await connected();
+
+    expect(rt.refresh).not.toHaveBeenCalled();
   });
 });

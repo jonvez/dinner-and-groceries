@@ -43,9 +43,21 @@ const GROCERY_PATH = "/grocery";
 
 const SIGNED_OUT_ERROR = "Sign in to edit the list.";
 
-/** Bounds on the promotion payload (untrusted list from the client). */
+/**
+ * Bounds on untrusted text. A Server Action is a PUBLIC endpoint — the form's
+ * `maxLength` is a browser hint, not a control — so every free-text field is
+ * trimmed and sliced here, on the server, before it reaches a core.
+ */
 const MAX_PROMOTIONS = 100;
 const MAX_NAME_LENGTH = 200;
+const MAX_UNIT_LENGTH = 40;
+
+/** Trim, then bound — padding must not eat a field's allowance. */
+function boundedText(value: FormDataEntryValue | null, max: number): string {
+  return String(value ?? "")
+    .trim()
+    .slice(0, max);
+}
 
 export type GroceryActionState = { ok: true } | { error: string } | null;
 
@@ -90,9 +102,11 @@ export async function addCatalogItemToListAction(
 }
 
 /**
- * Ad-hoc add (a `useActionState` form). `weekId` is bound server-side by the
- * caller; name is required, quantity and unit are optional — a bare "eggs" is a
- * valid list row, so an empty quantity stays NULL rather than becoming 1.
+ * Ad-hoc add (a `useActionState` form). `weekId` is bound by the CLIENT
+ * component, so it is untrusted input that only narrows an RLS-fenced statement;
+ * name is required, quantity and unit are optional — a bare "eggs" is a valid
+ * list row, so an empty quantity stays NULL rather than becoming 1. Name and
+ * unit are bounded here because a request need not come from the form.
  */
 export async function addAdHocItemAction(
   weekId: string,
@@ -109,9 +123,9 @@ export async function addAdHocItemAction(
   const result = await addAdHocItem(supabase, {
     householdId: actor.householdId,
     weekId,
-    name: String(formData.get("name") ?? ""),
+    name: boundedText(formData.get("name"), MAX_NAME_LENGTH),
     quantity,
-    unit: String(formData.get("unit") ?? ""),
+    unit: boundedText(formData.get("unit"), MAX_UNIT_LENGTH),
   });
   if (!result.ok) return { error: result.error };
 

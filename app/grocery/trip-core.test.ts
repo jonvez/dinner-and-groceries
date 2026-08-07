@@ -17,9 +17,10 @@ import { completeTrip, promoteToCatalog } from "./trip-core";
  *     "olive oil" rather than creating a twin), matching the
  *     `(household_id, lower(name))` unique index;
  *   - promotion writes `household_id` from the CALLER'S verified session and
- *     also filters the lookup by it (defense in depth over RLS);
- *   - LIKE metacharacters in a typed name are escaped, so "50% cream" can't
- *     wildcard-match a different staple.
+ *     also filters the catalog read by it (defense in depth over RLS);
+ *   - the catalog is read ONCE per batch and matched in TypeScript, so a name
+ *     containing a LIKE/PostgREST metacharacter ("Milk*") can never wildcard-
+ *     match a different staple.
  */
 
 type QueryResult = { data: unknown; error: unknown };
@@ -34,14 +35,13 @@ type Recorded = {
 
 function makeClient(opts: {
   archived?: QueryResult;
-  /** Sequential answers for the per-name catalog lookup. */
-  lookups?: QueryResult[];
+  /** The single household-scoped catalog read the promotion batch does. */
+  catalog?: QueryResult;
   insert?: QueryResult;
   update?: QueryResult;
 } = {}) {
   const calls: Recorded = { selects: [], inserts: [], updates: [] };
   const ok: QueryResult = { data: null, error: null };
-  const lookups = [...(opts.lookups ?? [])];
 
   const from = vi.fn((table: string) => ({
     select: (columns: string) => {
@@ -51,13 +51,11 @@ function makeClient(opts: {
           filters.push({ op: "eq", column, value });
           return builder;
         },
-        ilike(column: string, value: unknown) {
-          filters.push({ op: "ilike", column, value });
-          return builder;
-        },
-        maybeSingle() {
+        then<T>(resolve: (r: QueryResult) => T) {
           calls.selects.push({ table, columns, filters });
-          return Promise.resolve(lookups.shift() ?? ok);
+          return Promise.resolve(opts.catalog ?? { data: [], error: null }).then(
+            resolve,
+          );
         },
       };
       return builder;
@@ -112,6 +110,9 @@ describe("completeTrip", () => {
         table: "grocery_items",
         values: { purchased_at: NOW.toISOString() },
         filters: [
+          // Explicit household fence (defense in depth over RLS), mirroring
+          // `promoteToCatalog`.
+          { op: "eq", column: "household_id", value: "hh-1" },
           { op: "eq", column: "week_id", value: "wk-1" },
           { op: "eq", column: "checked", value: true },
           { op: "is", column: "purchased_at", value: null },
@@ -186,9 +187,16 @@ describe("completeTrip", () => {
   });
 });
 
+const catalogRows = (rows: { id: string; name: string; added_count: number }[]) => ({
+  data: rows,
+  error: null,
+});
+
 describe("promoteToCatalog", () => {
   it("inserts a new staple for an unknown name, scoped to the caller's household", async () => {
-    const { client, calls } = makeClient({ lookups: [{ data: null, error: null }] });
+    const { client, calls } = makeClient({
+      catalog: catalogRows([{ id: "c1", name: "olive oil", added_count: 3 }]),
+    });
 
     const result = await promoteToCatalog(client, {
       householdId: "hh-1",
@@ -210,9 +218,29 @@ describe("promoteToCatalog", () => {
     ]);
   });
 
+  it("reads the catalog ONCE per batch, filtered to the caller's household", async () => {
+    const { client, calls } = makeClient({ catalog: catalogRows([]) });
+
+    await promoteToCatalog(client, {
+      householdId: "hh-1",
+      names: ["salt", "pepper", "flour"],
+      now,
+    });
+
+    // One round trip for the whole batch — no per-name lookup, so no pattern
+    // ever reaches the database.
+    expect(calls.selects).toEqual([
+      {
+        table: "catalog_items",
+        columns: "id, name, added_count",
+        filters: [{ op: "eq", column: "household_id", value: "hh-1" }],
+      },
+    ]);
+  });
+
   it("bumps an existing staple case-insensitively instead of creating a twin", async () => {
     const { client, calls } = makeClient({
-      lookups: [{ data: { id: "c1", added_count: 3 }, error: null }],
+      catalog: catalogRows([{ id: "c1", name: "olive oil", added_count: 3 }]),
     });
 
     const result = await promoteToCatalog(client, {
@@ -230,15 +258,41 @@ describe("promoteToCatalog", () => {
         filters: [{ op: "eq", column: "id", value: "c1" }],
       },
     ]);
-    // The lookup is household-filtered (defense in depth over RLS).
-    expect(calls.selects[0].filters).toEqual([
-      { op: "eq", column: "household_id", value: "hh-1" },
-      { op: "ilike", column: "name", value: "Olive Oil" },
+  });
+
+  it("matches names LITERALLY — a `*` in a typed name can't wildcard-match a staple", async () => {
+    // PostgREST aliases `*` to `%` in an ilike pattern (and rewrites `\*` to a
+    // literal `\%`, which matches nothing), so the match happens in TypeScript.
+    // "Milk*" is its own item; it must not bump "Milk".
+    const { client, calls } = makeClient({
+      catalog: catalogRows([{ id: "c1", name: "Milk", added_count: 7 }]),
+    });
+
+    const result = await promoteToCatalog(client, {
+      householdId: "hh-1",
+      names: ["Milk*"],
+      now,
+    });
+
+    expect(result).toEqual({ ok: true, promoted: 1 });
+    expect(calls.updates).toHaveLength(0);
+    expect(calls.inserts).toEqual([
+      {
+        table: "catalog_items",
+        rows: {
+          household_id: "hh-1",
+          name: "Milk*",
+          added_count: 1,
+          last_added_at: NOW.toISOString(),
+        },
+      },
     ]);
   });
 
-  it("escapes LIKE metacharacters so a typed name can't wildcard-match", async () => {
-    const { client, calls } = makeClient({ lookups: [{ data: null, error: null }] });
+  it("keeps a `%`/`_` name literal too, storing the user's exact text", async () => {
+    const { client, calls } = makeClient({
+      catalog: catalogRows([{ id: "c1", name: "50 cream soda", added_count: 1 }]),
+    });
 
     await promoteToCatalog(client, {
       householdId: "hh-1",
@@ -246,19 +300,12 @@ describe("promoteToCatalog", () => {
       now,
     });
 
-    expect(calls.selects[0].filters[1]).toEqual({
-      op: "ilike",
-      column: "name",
-      value: "50\\% cream\\_soda",
-    });
-    // The STORED name keeps the user's literal text.
+    expect(calls.updates).toHaveLength(0);
     expect((calls.inserts[0].rows as { name: string }).name).toBe("50% cream_soda");
   });
 
   it("skips blank names and trims the rest", async () => {
-    const { client, calls } = makeClient({
-      lookups: [{ data: null, error: null }],
-    });
+    const { client, calls } = makeClient({ catalog: catalogRows([]) });
 
     const result = await promoteToCatalog(client, {
       householdId: "hh-1",
@@ -270,9 +317,20 @@ describe("promoteToCatalog", () => {
     expect((calls.inserts[0].rows as { name: string }).name).toBe("bananas");
   });
 
+  it("returns a generic error when the catalog read is denied", async () => {
+    const { client, calls } = makeClient({
+      catalog: { data: null, error: { code: "42501", message: "permission denied" } },
+    });
+
+    expect(
+      await promoteToCatalog(client, { householdId: "hh-1", names: ["salt"], now }),
+    ).toEqual({ ok: false, error: "Could not add those to your staples." });
+    expect(calls.inserts).toHaveLength(0);
+  });
+
   it("treats a concurrent duplicate insert as already promoted", async () => {
     const { client } = makeClient({
-      lookups: [{ data: null, error: null }],
+      catalog: catalogRows([]),
       insert: { data: null, error: { code: "23505", message: "duplicate key" } },
     });
 
@@ -283,7 +341,7 @@ describe("promoteToCatalog", () => {
 
   it("returns a generic error when a write is denied", async () => {
     const { client } = makeClient({
-      lookups: [{ data: null, error: null }],
+      catalog: catalogRows([]),
       insert: { data: null, error: { code: "42501", message: "permission denied" } },
     });
 

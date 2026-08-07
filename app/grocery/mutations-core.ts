@@ -11,7 +11,11 @@
  *     the `with check` policy applies (#13). There is no service-role path.
  *   - Row ids are NOT trusted: an id from another household simply matches no
  *     row under RLS, so the update affects nothing (fails closed, and the
- *     `catalog_items` read returns null before any write happens).
+ *     `catalog_items` read returns null before any write happens). Note a
+ *     Supabase update matching ZERO rows returns `error: null`, so the toggles
+ *     answer `{ ok: true }` having changed nothing. That is DELIBERATE: an
+ *     identical response for "not yours", "doesn't exist", and "done" denies an
+ *     existence oracle. Do not "fix" it into a not-found error.
  *   - The toggles write ONE column each — a request can't ride along and
  *     re-home a row, rename it, or clear its provenance.
  *
@@ -148,7 +152,11 @@ export async function setHaveIt(
   return { ok: true };
 }
 
-/** Check-off / un-check — the edit that propagates live to the other shopper. */
+/**
+ * Check-off / un-check — the edit that propagates live to the other shopper.
+ * A foreign or nonexistent id matches no row under RLS and returns `ok` without
+ * changing anything (uniform response, no existence oracle — see the header).
+ */
 export async function setChecked(
   supabase: Pick<DbClient, "from">,
   input: { id: string; checked: boolean },
