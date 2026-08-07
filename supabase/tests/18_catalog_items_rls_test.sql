@@ -4,7 +4,7 @@
 -- pgTAP test (slice 1d, issue #13). One rolled-back transaction; fixtures inlined
 -- so the file is self-contained (matches 17_ingredients_rls_test.sql).
 begin;
-select plan(6);
+select plan(8);
 
 create schema if not exists tests;
 
@@ -62,6 +62,16 @@ select throws_ok(
 select lives_ok(
   $$insert into public.catalog_items (household_id, name) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'olive oil')$$,
   'allow-same: H member inserts a catalog item into H');
+
+-- 7: allow-same update — the UPDATE policy's USING clause lets H's own rows through
+update public.catalog_items set category = 'x' where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select is((select bool_and(category = 'x') from public.catalog_items where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  true, 'allow-same: H member''s UPDATE actually changes H''s catalog rows');
+
+-- 8: deny-cross update — WITH CHECK blocks re-homing a row into another household
+select throws_ok(
+  $$update public.catalog_items set household_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'$$,
+  '42501', null, 'with check blocks re-homing a catalog row');
 
 select * from finish();
 rollback;

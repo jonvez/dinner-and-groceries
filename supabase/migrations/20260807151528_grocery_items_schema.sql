@@ -2,9 +2,20 @@
 -- household_id denormalized (ADR 0003) + composite FK so a list row is always in
 -- the same household as its week. Three feeders, none mandatory: from a dish
 -- (`ingredient_id`), from the staples catalog (`catalog_item_id`), or ad-hoc
--- (both null). Those two FKs are simple (not composite) and ON DELETE SET NULL:
--- deleting a source dish/ingredient or catalog staple drops the provenance but
--- never removes a row the shopper is standing in the store with.
+-- (both null). Both feeder FKs are composite `(x, household_id)` like every other
+-- inter-table FK here, so a provenance pointer can only ever name a row in the
+-- *same* household — a cross-household pointer is unstorable by construction, not
+-- merely unreadable via RLS. They use the PG15+ column-list ON DELETE SET NULL
+-- (see social_schema.sql) so deleting a source ingredient or catalog staple drops
+-- the provenance while leaving the NOT NULL household_id intact — never removing a
+-- row the shopper is standing in the store with. MATCH SIMPLE means a NULL feeder
+-- skips the check entirely, so ad-hoc rows still insert freely.
+--
+-- catalog_items already exposes `unique (id, household_id)`; ingredients does not,
+-- so add it here (additive, before the table that references it).
+alter table public.ingredients
+  add constraint ingredients_id_household_key unique (id, household_id);
+
 --
 -- quantity/unit are optional (nullable) — "bananas" needs no number. `edited`
 -- flags a hand-edited row so re-roll-up (#14) leaves it alone; `purchased_at`
@@ -17,8 +28,8 @@ create table public.grocery_items (
   name            text not null,
   quantity        numeric,
   unit            text,
-  ingredient_id   uuid references public.ingredients (id)    on delete set null,
-  catalog_item_id uuid references public.catalog_items (id)  on delete set null,
+  ingredient_id   uuid,
+  catalog_item_id uuid,
   have_it         boolean not null default false,
   checked         boolean not null default false,
   edited          boolean not null default false,
@@ -27,7 +38,11 @@ create table public.grocery_items (
   created_at      timestamptz not null default now(),
   constraint grocery_items_name_not_blank check (length(btrim(name)) > 0),
   foreign key (week_id, household_id)
-    references public.weeks (id, household_id) on delete cascade
+    references public.weeks (id, household_id) on delete cascade,
+  foreign key (ingredient_id, household_id)
+    references public.ingredients (id, household_id) on delete set null (ingredient_id),
+  foreign key (catalog_item_id, household_id)
+    references public.catalog_items (id, household_id) on delete set null (catalog_item_id)
 );
 
 create index grocery_items_household_id_idx   on public.grocery_items (household_id);

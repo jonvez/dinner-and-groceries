@@ -4,7 +4,7 @@
 -- pgTAP test (slice 1d, issue #13). One rolled-back transaction; fixtures inlined
 -- so the file is self-contained (matches 17_ingredients_rls_test.sql).
 begin;
-select plan(7);
+select plan(10);
 
 create schema if not exists tests;
 
@@ -42,6 +42,14 @@ insert into public.weeks (id, household_id, start_date) values
   ('0e000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2026-08-03'),
   ('0e000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '2026-08-03');
 
+-- A dish + ingredient in household K, so assert 10 can try to point an H grocery
+-- row at a foreign household's ingredient.
+insert into public.dishes (id, household_id, title, created_by) values
+  ('0d000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'K Tacos', 'b0000001-0000-0000-0000-000000000001');
+
+insert into public.ingredients (id, household_id, dish_id, name, raw_text) values
+  ('01000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '0d000002-0000-0000-0000-000000000002', 'tortillas', '8 corn tortillas');
+
 -- Ad-hoc rows (no ingredient_id / catalog_item_id) with quantity+unit NULL.
 insert into public.grocery_items (id, household_id, week_id, name) values
   ('09000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', 'paper towels'),
@@ -72,6 +80,22 @@ select lives_ok(
 select throws_ok(
   $$insert into public.grocery_items (household_id, week_id, name) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', '   ')$$,
   '23514', null, 'integrity: a blank grocery item name is rejected');
+
+-- 8: allow-same update — the UPDATE policy's USING clause lets H's own rows through
+update public.grocery_items set have_it = true where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select is((select bool_and(have_it) from public.grocery_items where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  true, 'allow-same: H member''s UPDATE actually changes H''s grocery rows');
+
+-- 9: deny-cross update — WITH CHECK blocks re-homing a row into another household
+select throws_ok(
+  $$update public.grocery_items set household_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', week_id = '0e000002-0000-0000-0000-000000000002' where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'$$,
+  '42501', null, 'with check blocks re-homing a grocery row');
+
+-- 10: provenance is household-anchored — the composite FK refuses a pointer at
+-- another household's ingredient even though the row itself is H's own.
+select throws_ok(
+  $$insert into public.grocery_items (household_id, week_id, name, ingredient_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', 'x', '01000002-0000-0000-0000-000000000002')$$,
+  '23503', null, 'composite FK blocks pointing at another household ingredient');
 
 select * from finish();
 rollback;

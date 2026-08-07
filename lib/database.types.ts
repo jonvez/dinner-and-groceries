@@ -270,18 +270,18 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "grocery_items_catalog_item_id_fkey"
-            columns: ["catalog_item_id"]
+            foreignKeyName: "grocery_items_catalog_item_id_household_id_fkey"
+            columns: ["catalog_item_id", "household_id"]
             isOneToOne: false
             referencedRelation: "catalog_items"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "grocery_items_ingredient_id_fkey"
-            columns: ["ingredient_id"]
+            foreignKeyName: "grocery_items_ingredient_id_household_id_fkey"
+            columns: ["ingredient_id", "household_id"]
             isOneToOne: false
             referencedRelation: "ingredients"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "grocery_items_week_id_household_id_fkey"
