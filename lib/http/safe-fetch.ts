@@ -130,6 +130,15 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 3;
 
+// A descriptive, honest User-Agent (#96). Many sites serve a bot-challenge or
+// stripped page — or 4xx — to a request with no UA (Node sends none by default),
+// so recipe extraction silently failed on them. This does NOT spoof a browser
+// (that would be evasion, and won't beat intentional paywalls anyway); it just
+// identifies the fetcher so permissive sites return their normal HTML. A plain
+// Accept nudges HTML over other representations.
+const USER_AGENT = "DinnerAndGroceries/1.0 (+https://github.com/jonvez/dinner-and-groceries; recipe import)";
+const ACCEPT_HTML = "text/html,application/xhtml+xml";
+
 type OnceResult = { kind: "redirect"; location: string } | { kind: "done"; value: SafeFetchResult };
 
 /**
@@ -178,7 +187,10 @@ function fetchOnce(parsed: URL, blockList: BlockList, timeoutMs: number, maxByte
       resolve({ kind: "redirect", location });
     };
 
-    const req = requestFn(parsed, { method: "GET", lookup }, (res) => {
+    const req = requestFn(
+      parsed,
+      { method: "GET", lookup, headers: { "User-Agent": USER_AGENT, Accept: ACCEPT_HTML } },
+      (res) => {
       const status = res.statusCode ?? 0;
       if (status >= 300 && status < 400 && res.headers.location) { res.resume(); redirect(res.headers.location); return; }
       if (status < 200 || status >= 300) { res.resume(); done({ ok: false, reason: "unreachable" }); return; }

@@ -106,6 +106,9 @@ export function RecipeIngestForm() {
 
       <form action={saveAction} className="flex flex-col gap-3 text-left">
         <h2 className="font-medium">Recipe details</h2>
+        <p className="text-muted-foreground text-sm">
+          No link? Just type a title and paste your ingredients below.
+        </p>
         <input type="hidden" name="sourceUrl" value={sourceUrl} readOnly />
 
         <label className="text-sm font-medium" htmlFor="ingest-title">
@@ -180,13 +183,13 @@ export function RecipeIngestForm() {
         </div>
 
         <label className="text-sm font-medium" htmlFor="ingest-ingredients">
-          Ingredients (one per line)
+          Ingredients — paste your list here, one per line
         </label>
         <textarea
           id="ingest-ingredients"
           name="ingredients"
           rows={8}
-          placeholder={"2 lb pork shoulder\n1 tbsp ground cumin"}
+          placeholder={"Paste or type your ingredients — one per line:\n2 lb pork shoulder\n1 tbsp ground cumin"}
           value={fields.ingredientsText}
           onChange={(e) => setFields((f) => ({ ...f, ingredientsText: e.target.value }))}
           className={inputClass}
