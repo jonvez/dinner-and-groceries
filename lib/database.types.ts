@@ -34,6 +34,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      catalog_items: {
+        Row: {
+          added_count: number
+          category: string | null
+          created_at: string
+          default_unit: string | null
+          household_id: string
+          id: string
+          last_added_at: string | null
+          name: string
+        }
+        Insert: {
+          added_count?: number
+          category?: string | null
+          created_at?: string
+          default_unit?: string | null
+          household_id: string
+          id?: string
+          last_added_at?: string | null
+          name: string
+        }
+        Update: {
+          added_count?: number
+          category?: string | null
+          created_at?: string
+          default_unit?: string | null
+          household_id?: string
+          id?: string
+          last_added_at?: string | null
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_items_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       comments: {
         Row: {
           body: string
@@ -174,6 +215,79 @@ export type Database = {
             columns: ["member_id", "household_id"]
             isOneToOne: false
             referencedRelation: "members"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      grocery_items: {
+        Row: {
+          catalog_item_id: string | null
+          checked: boolean
+          created_at: string
+          edited: boolean
+          have_it: boolean
+          household_id: string
+          id: string
+          ingredient_id: string | null
+          name: string
+          position: number
+          purchased_at: string | null
+          quantity: number | null
+          unit: string | null
+          week_id: string
+        }
+        Insert: {
+          catalog_item_id?: string | null
+          checked?: boolean
+          created_at?: string
+          edited?: boolean
+          have_it?: boolean
+          household_id: string
+          id?: string
+          ingredient_id?: string | null
+          name: string
+          position?: number
+          purchased_at?: string | null
+          quantity?: number | null
+          unit?: string | null
+          week_id: string
+        }
+        Update: {
+          catalog_item_id?: string | null
+          checked?: boolean
+          created_at?: string
+          edited?: boolean
+          have_it?: boolean
+          household_id?: string
+          id?: string
+          ingredient_id?: string | null
+          name?: string
+          position?: number
+          purchased_at?: string | null
+          quantity?: number | null
+          unit?: string | null
+          week_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grocery_items_catalog_item_id_household_id_fkey"
+            columns: ["catalog_item_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_items"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "grocery_items_ingredient_id_household_id_fkey"
+            columns: ["ingredient_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "grocery_items_week_id_household_id_fkey"
+            columns: ["week_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "weeks"
             referencedColumns: ["id", "household_id"]
           },
         ]
