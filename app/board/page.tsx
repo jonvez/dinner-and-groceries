@@ -9,8 +9,8 @@ import {
   weekStartForDate,
 } from "@/lib/week/boundary";
 import { formatWeekRange } from "@/lib/week/labels";
+import { getOrCreateWeek, loadWeekSettings } from "@/lib/week/open-week";
 
-import { getOrCreateWeek } from "./actions-core";
 import { BoardGrid, type SlottedDishView } from "./board-grid";
 import {
   ProposalPool,
@@ -53,13 +53,8 @@ export default async function BoardPage({
   } = await supabase.auth.getUser();
 
   // 1) Household week settings (RLS scopes this to the caller's household).
-  const { data: household } = await supabase
-    .from("households")
-    .select("name, timezone, week_start_day")
-    .maybeSingle();
-
-  const timezone = household?.timezone ?? "America/Los_Angeles";
-  const weekStartDay = household?.week_start_day ?? 1;
+  //    Shared with /grocery so both screens resolve the same week.
+  const { timezone, weekStartDay } = await loadWeekSettings(supabase);
 
   // 2) Viewed week: validated param (normalized) or the current local week.
   const weekStart =

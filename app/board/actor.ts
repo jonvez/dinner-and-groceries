@@ -13,8 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 import { isValidIsoDate, weekStartForDate } from "@/lib/week/boundary";
-
-import { getOrCreateWeek } from "./actions-core";
+import { getOrCreateWeek } from "@/lib/week/open-week";
 
 type DbClient = SupabaseClient<Database>;
 

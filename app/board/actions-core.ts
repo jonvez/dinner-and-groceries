@@ -6,8 +6,6 @@
  * the caller's household + member identity, then call these.
  *
  * Modeling contract (SPEC "Deliberate modeling choices"; #7 schema):
- *   - `weeks` is lazily UPSERTed on (household_id, start_date) so reopening the
- *     board is idempotent — never a duplicate week (ADR 0003).
  *   - A brand-new proposal creates a `dishes` row (the reusable library entry)
  *     AND a `proposals` row for the week.
  *   - Recycling ("propose again") creates ONLY a `proposals` row pointing at the
@@ -15,6 +13,10 @@
  *
  * RLS does the household scoping; we pass `household_id` explicitly because it
  * is a NOT NULL denormalized column the INSERT policies check against.
+ *
+ * Lazy week creation used to live here; it now lives in `@/lib/week/open-week`
+ * because `/grocery` opens the same week (issue #15) and the two screens must
+ * never resolve to different week rows.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -32,33 +34,6 @@ export type ActionResult<T> =
 function nullableText(value: string | null | undefined): string | null {
   const trimmed = (value ?? "").trim();
   return trimmed === "" ? null : trimmed;
-}
-
-// ---------------------------------------------------------------------------
-// Lazy week creation
-// ---------------------------------------------------------------------------
-
-export async function getOrCreateWeek(
-  supabase: Pick<DbClient, "from">,
-  input: { householdId: string; startDate: string },
-): Promise<ActionResult<{ weekId: string }>> {
-  // UPSERT on the UNIQUE(household_id, start_date) key: opening (or reopening)
-  // the board converges on exactly one row for the period. On conflict the
-  // existing row's id is preserved (ON CONFLICT DO UPDATE keeps the PK).
-  const { data, error } = await supabase
-    .from("weeks")
-    .upsert(
-      { household_id: input.householdId, start_date: input.startDate },
-      { onConflict: "household_id,start_date" },
-    )
-    .select("id")
-    .single();
-
-  if (error || !data) {
-    return { ok: false, error: "We couldn't open this week. Please try again." };
-  }
-
-  return { ok: true, weekId: data.id };
 }
 
 // ---------------------------------------------------------------------------

@@ -20,12 +20,16 @@ describe("isActive", () => {
 });
 
 describe("AppNav", () => {
-  it("links to Home, Board and Recipes", () => {
+  it("links to Home, Board, Recipes and Groceries", () => {
     pathname.mockReturnValue("/board");
     render(<AppNav />);
     expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Board" })).toHaveAttribute("href", "/board");
     expect(screen.getByRole("link", { name: "Recipes" })).toHaveAttribute("href", "/recipes");
+    expect(screen.getByRole("link", { name: "Groceries" })).toHaveAttribute(
+      "href",
+      "/grocery",
+    );
   });
 
   it("marks the current section with aria-current=page", () => {
