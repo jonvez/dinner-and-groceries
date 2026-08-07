@@ -55,10 +55,9 @@ roadmap above. The board column for each issue is authoritative; if anything bel
 board, the board wins.
 
 **Production.** Deployed on Cloud Run (`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`), backed by
-the cloud Supabase prod project (ref `wcbjuobzeursmomcoefw`). Posture of record: ADRs 0009 (keyless-WIF/
-Cloud Run) + 0010 (cloud-Supabase-as-prod); bring-up in `docs/runbooks/production-bringup.md`. **Durable
-safety constraint:** cloud-Supabase Realtime is not yet live-verified two-client end-to-end — treat prod
-as *not family-ready* until it is (tracked on the board).
+the cloud Supabase prod project (ref `wcbjuobzeursmomcoefw`, Free tier). Posture of record: ADRs 0009
+(keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-prod) + 0011 (Realtime verified live two-client on
+cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-bringup.md`.
 
 **Current milestone: Slice 1c (recipes, free)** — the Slice 1b family-validation gate is cleared, so 1c is
 unblocked. Delivered as an epic-level autonomous run (kickoff → autonomous execution → acceptance); goal,
