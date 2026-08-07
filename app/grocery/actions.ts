@@ -29,11 +29,23 @@ import {
   GENERIC_ERROR,
 } from "./mutations-core";
 import { buildGroceryList, type BuildGroceryListResult } from "./rollup-core";
+import {
+  completeTrip,
+  promoteToCatalog,
+  TRIP_ERROR,
+  PROMOTE_ERROR,
+  type CompleteTripResult,
+  type PromoteResult,
+} from "./trip-core";
 
 /** The route every grocery action refreshes. */
 const GROCERY_PATH = "/grocery";
 
 const SIGNED_OUT_ERROR = "Sign in to edit the list.";
+
+/** Bounds on the promotion payload (untrusted list from the client). */
+const MAX_PROMOTIONS = 100;
+const MAX_NAME_LENGTH = 200;
 
 export type GroceryActionState = { ok: true } | { error: string } | null;
 
@@ -141,4 +153,50 @@ export async function setCheckedAction(
 
   revalidatePath(GROCERY_PATH);
   return { ok: true };
+}
+
+/**
+ * Finish the trip: archive what's in the cart and report which newly-typed
+ * items could become staples. Promotion is NOT done here — the shopper picks
+ * from the returned candidates and confirms (`promoteToCatalogAction`).
+ */
+export async function completeTripAction(
+  weekId: string,
+): Promise<CompleteTripResult> {
+  const supabase = await createServerComponentClient();
+  const actor = await resolveGroceryActor(supabase);
+  if (!actor) return { ok: false as const, error: TRIP_ERROR };
+
+  const result = await completeTrip(supabase, {
+    householdId: actor.householdId,
+    weekId,
+  });
+  if (result.ok) revalidatePath(GROCERY_PATH);
+  return result;
+}
+
+/** The explicit "add these to our staples" confirm. */
+export async function promoteToCatalogAction(
+  names: string[],
+): Promise<PromoteResult> {
+  if (!Array.isArray(names)) return { ok: false as const, error: PROMOTE_ERROR };
+
+  // Bound + sanitized before it reaches the core: a request can't drive an
+  // unbounded write loop or store an over-long name.
+  const clean = names
+    .filter((n): n is string => typeof n === "string")
+    .map((n) => n.trim().slice(0, MAX_NAME_LENGTH))
+    .filter((n) => n !== "")
+    .slice(0, MAX_PROMOTIONS);
+
+  const supabase = await createServerComponentClient();
+  const actor = await resolveGroceryActor(supabase);
+  if (!actor) return { ok: false as const, error: PROMOTE_ERROR };
+
+  const result = await promoteToCatalog(supabase, {
+    householdId: actor.householdId,
+    names: clean,
+  });
+  if (result.ok) revalidatePath(GROCERY_PATH);
+  return result;
 }
