@@ -1,0 +1,42 @@
+-- Migration: grocery_items realtime (slice 1d, issue #15)
+--
+-- Make the week's shopping list live so two shoppers in the same store see each
+-- other's check-offs without a reload. Two storage-layer prerequisites, both
+-- asserted in supabase/tests/20_grocery_items_realtime_test.sql:
+--
+--   1. REPLICA IDENTITY FULL — the `/grocery` client subscribes with
+--      `filter: household_id=eq.<id>`, which Realtime evaluates SERVER-SIDE
+--      against the replication change image. Logical replication emits only the
+--      replica-identity columns for a DELETE (and for an UPDATE's OLD image);
+--      under the DEFAULT identity that is the primary key alone, so the image
+--      carries no `household_id`, the server-side filter can't match, and the
+--      event is silently dropped before anyone is notified. That is exactly the
+--      #63 class of bug — and "rebuild from menu" hard-deletes rows, so a
+--      dropped event would strand an already-removed item on the other
+--      shopper's phone. (FULL is about the SERVER matching the filter, not
+--      about the client receiving `household_id`: the DELETE payload delivered
+--      to a client is reduced to the primary key regardless.) Set FULL *before*
+--      adding the table to the publication so no window exists where events
+--      stream with a PK-only image.
+--
+--   2. Publication membership — without it Postgres emits nothing at all and the
+--      client shows "Live" while receiving zero changes (the silent failure the
+--      social tables hit in 20260625183220).
+--
+-- Security: no new grants, no service-role path, and no row CONTENT leaves the
+-- household. Realtime authorizes INSERT and UPDATE deliveries against the same
+-- household-scoped, FORCEd RLS policies (#13) using the subscriber's own JWT
+-- (verified live against this stack: a socket authenticated as household A and
+-- subscribed with household B's filter received nothing).
+--
+-- The one documented exception is DELETE: Realtime does NOT evaluate RLS on
+-- delete events, and delivers the PRIMARY KEY only — no `name`, no
+-- `household_id`, no quantities. So an authenticated user who ALREADY knows
+-- another household's UUID could observe that some row id was deleted there,
+-- and when. No list content, and the client merges an unknown PK as a no-op.
+-- That residual is accepted for this app; it is an upstream Realtime
+-- limitation, and the same one already applies to `reactions`/`comments`
+-- (20260625183220). `grocery_items` is small and low-churn (a week's shopping
+-- list), so the extra streamed columns are negligible.
+alter table public.grocery_items replica identity full;
+alter publication supabase_realtime add table public.grocery_items;

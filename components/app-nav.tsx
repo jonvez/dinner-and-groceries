@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 /**
  * Global navigation for the authenticated app shell (issue #12z). Rendered by
- * every signed-in screen (Home, Board, Recipes; Grocery/Dashboard later). The
+ * every signed-in screen (Home, Board, Recipes, Groceries; Dashboard later). The
  * login/join screens deliberately do NOT render it. `usePathname` marks the
  * current section — Home matches only the exact root so it isn't "active" on
  * every page.
@@ -15,6 +15,7 @@ const LINKS = [
   { href: "/", label: "Home" },
   { href: "/board", label: "Board" },
   { href: "/recipes", label: "Recipes" },
+  { href: "/grocery", label: "Groceries" },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {
