@@ -34,6 +34,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      catalog_items: {
+        Row: {
+          added_count: number
+          category: string | null
+          created_at: string
+          default_unit: string | null
+          household_id: string
+          id: string
+          last_added_at: string | null
+          name: string
+        }
+        Insert: {
+          added_count?: number
+          category?: string | null
+          created_at?: string
+          default_unit?: string | null
+          household_id: string
+          id?: string
+          last_added_at?: string | null
+          name: string
+        }
+        Update: {
+          added_count?: number
+          category?: string | null
+          created_at?: string
+          default_unit?: string | null
+          household_id?: string
+          id?: string
+          last_added_at?: string | null
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_items_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       comments: {
         Row: {
           body: string
