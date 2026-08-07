@@ -1,0 +1,124 @@
+/**
+ * The read half of the shopping list (issue #15, slice 1d): the week's ACTIVE
+ * grocery rows plus the household's staples catalog, in the shape the client
+ * component renders. Takes an INJECTED Supabase-like client (like `rollup-core`)
+ * so it is unit-tested without a live DB; the server component supplies the
+ * RLS-scoped cookie-session client.
+ *
+ * Security: no `household_id` filter and no service-role key — RLS scopes both
+ * reads to the caller's household (ADR 0003). `weekId` only narrows a read RLS
+ * has already fenced, so it can never reach another household's list.
+ *
+ * Degradation: a failed read yields empty arrays rather than throwing, so the
+ * page still renders (with its add forms and "rebuild from menu") instead of
+ * 500ing in the middle of a grocery aisle.
+ */
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import type { Database } from "@/lib/database.types";
+
+type DbClient = SupabaseClient<Database>;
+
+/** The columns the list UI needs — camelCase mapping of a `grocery_items` row. */
+export type GroceryRow = {
+  id: string;
+  name: string;
+  /** Optional: an unquantified item ("eggs") is valid — never coerce to 0/1. */
+  quantity: number | null;
+  unit: string | null;
+  /** Set when the row came from a slotted dish's ingredient ("from the menu"). */
+  ingredientId: string | null;
+  /** Set when the row was added from the staples catalog. */
+  catalogItemId: string | null;
+  haveIt: boolean;
+  checked: boolean;
+  edited: boolean;
+  position: number;
+  createdAt: string;
+};
+
+/** A staple offered as a one-tap quick-add chip. */
+export type CatalogRow = {
+  id: string;
+  name: string;
+  defaultUnit: string | null;
+};
+
+export type GroceryListSnapshot = {
+  items: GroceryRow[];
+  catalog: CatalogRow[];
+};
+
+/** Selected columns, shared with the client component's Realtime re-fetch. */
+export const GROCERY_ITEM_COLUMNS =
+  "id, name, quantity, unit, ingredient_id, catalog_item_id, have_it, checked, edited, position, created_at";
+
+type GroceryItemRow = {
+  id: string;
+  name: string;
+  quantity: number | null;
+  unit: string | null;
+  ingredient_id: string | null;
+  catalog_item_id: string | null;
+  have_it: boolean;
+  checked: boolean;
+  edited: boolean;
+  position: number;
+  created_at: string;
+};
+
+type CatalogItemRow = {
+  id: string;
+  name: string;
+  default_unit: string | null;
+};
+
+export function toGroceryRow(row: GroceryItemRow): GroceryRow {
+  return {
+    id: row.id,
+    name: row.name,
+    quantity: row.quantity,
+    unit: row.unit,
+    ingredientId: row.ingredient_id,
+    catalogItemId: row.catalog_item_id,
+    haveIt: row.have_it,
+    checked: row.checked,
+    edited: row.edited,
+    position: row.position,
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * Load the ACTIVE list (`purchased_at is null` — a completed trip's rows are
+ * archived, not shown) in stable shopping order, plus the staples catalog with
+ * the most-reached-for items first.
+ */
+export async function loadGroceryList(
+  supabase: Pick<DbClient, "from">,
+  { weekId }: { weekId: string },
+): Promise<GroceryListSnapshot> {
+  const { data: itemRows } = await supabase
+    .from("grocery_items")
+    .select(GROCERY_ITEM_COLUMNS)
+    .eq("week_id", weekId)
+    .is("purchased_at", null)
+    .order("position")
+    .order("created_at");
+
+  const { data: catalogRows } = await supabase
+    .from("catalog_items")
+    .select("id, name, default_unit")
+    .order("added_count", { ascending: false })
+    .order("name");
+
+  return {
+    items: ((itemRows ?? []) as unknown as GroceryItemRow[]).map(toGroceryRow),
+    catalog: ((catalogRows ?? []) as unknown as CatalogItemRow[]).map((row) => ({
+      id: row.id,
+      name: row.name,
+      defaultUnit: row.default_unit,
+    })),
+  };
+}
