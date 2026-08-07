@@ -40,8 +40,12 @@ export function isoDurationToMinutes(iso: unknown): number | null {
   );
 }
 
+// The `type` attribute may be quoted OR unquoted — `type="application/ld+json"`
+// and the bare `type=application/ld+json` (valid HTML5, emitted by Yoast and
+// minified WordPress pages) are both matched. `\b` after `json` avoids matching
+// e.g. `ld+jsonx`. (#95: quoted-only missed a huge share of real recipe blogs.)
 const JSONLD_SCRIPT_RE =
-  /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  /<script[^>]*type\s*=\s*["']?application\/ld\+json\b[^>]*>([\s\S]*?)<\/script>/gi;
 
 /** Expand a parsed JSON-LD value into candidate nodes (arrays + @graph inlined). */
 function flattenNodes(value: unknown): unknown[] {
