@@ -219,6 +219,79 @@ export type Database = {
           },
         ]
       }
+      grocery_items: {
+        Row: {
+          catalog_item_id: string | null
+          checked: boolean
+          created_at: string
+          edited: boolean
+          have_it: boolean
+          household_id: string
+          id: string
+          ingredient_id: string | null
+          name: string
+          position: number
+          purchased_at: string | null
+          quantity: number | null
+          unit: string | null
+          week_id: string
+        }
+        Insert: {
+          catalog_item_id?: string | null
+          checked?: boolean
+          created_at?: string
+          edited?: boolean
+          have_it?: boolean
+          household_id: string
+          id?: string
+          ingredient_id?: string | null
+          name: string
+          position?: number
+          purchased_at?: string | null
+          quantity?: number | null
+          unit?: string | null
+          week_id: string
+        }
+        Update: {
+          catalog_item_id?: string | null
+          checked?: boolean
+          created_at?: string
+          edited?: boolean
+          have_it?: boolean
+          household_id?: string
+          id?: string
+          ingredient_id?: string | null
+          name?: string
+          position?: number
+          purchased_at?: string | null
+          quantity?: number | null
+          unit?: string | null
+          week_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grocery_items_catalog_item_id_fkey"
+            columns: ["catalog_item_id"]
+            isOneToOne: false
+            referencedRelation: "catalog_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grocery_items_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grocery_items_week_id_household_id_fkey"
+            columns: ["week_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "weeks"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       households: {
         Row: {
           created_at: string
