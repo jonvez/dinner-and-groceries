@@ -18,6 +18,54 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Fast-path detector (#99): is this change docs-only? If so, the heavy gates
+  # (prod-build, rls, e2e) skip their expensive steps but STILL report success
+  # under the same check name — so branch protection stays satisfied while a
+  # docs-only PR goes green in seconds instead of paying the ~10-min suite.
+  # docs-only := every changed path is a Markdown file or under docs/. Anything
+  # under app/ lib/ supabase/ components/ e2e/ .github/ or a config file → full
+  # run (so a workflow change can never fast-path its own gates). Fails safe to
+  # a FULL run whenever the diff cannot be proven docs-only.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect docs-only change
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only diff
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Prove docs-only or fail safe to a full run.
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE_SHA" 2>/dev/null; then
+            echo "Base commit unavailable — running the full suite."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"
+          echo "Changed files:"
+          echo "$files"
+          if [ -z "$files" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Any path that is NOT a .md file and NOT under docs/ forces a full run.
+          if echo "$files" | grep -qvE '(^docs/|\.md$)'; then
+            echo "Non-docs paths changed — running the full suite."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Docs-only change — heavy gates will fast-path."
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
   # PR gate: lint + typecheck + unit tests. Any non-zero exit blocks merge.
   # ---------------------------------------------------------------------------
   verify:
@@ -55,11 +103,13 @@ jobs:
   # ---------------------------------------------------------------------------
   prod-build:
     name: Production build (Docker)
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Build the production image (no push) — mirrors the Cloud Run deploy build
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           docker build \
             --build-arg NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co \
@@ -77,16 +127,22 @@ jobs:
   # ---------------------------------------------------------------------------
   rls:
     name: RLS pgTAP (Supabase)
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # Every step below is guarded on the docs-only fast-path (#99): a docs-only
+      # diff skips the whole ephemeral-Supabase + pgTAP run, and the job still
+      # reports success under this required check name.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npm ci
 
       # The Google OAuth provider is enabled in supabase/config.toml (issue #5)
@@ -95,12 +151,14 @@ jobs:
       # harmless non-secret placeholders here. Real Google creds are a human/
       # Secret-Manager concern (see README "Google OAuth setup").
       - name: Start local Supabase stack
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase start
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
           SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
 
       - name: Apply migrations (clean reset)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase db reset --local
 
       # `supabase test db` pulls pg_prove from public.ecr.aws on demand; that pull
@@ -109,6 +167,7 @@ jobs:
       # cached. Best-effort: if all retries fail (sustained outage), the test step's
       # own pull is the final arbiter and fails the job legitimately.
       - name: Pre-pull pgTAP image (resilient to transient registry hiccups)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           for i in 1 2 3; do
             if docker pull public.ecr.aws/supabase/pg_prove:3.36; then break; fi
@@ -117,10 +176,11 @@ jobs:
           done
 
       - name: Run pgTAP RLS tests
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase test db --local
 
       - name: Stop local Supabase stack
-        if: ${{ always() }}
+        if: ${{ always() && needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase stop --no-backup
 
   # ---------------------------------------------------------------------------
@@ -144,16 +204,22 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     name: Playwright smoke E2E
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # Every step below is guarded on the docs-only fast-path (#99): a docs-only
+      # diff skips the whole build + ephemeral-Supabase + Playwright run, and the
+      # job still reports success under this required check name.
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npm ci
 
       # GoTrue wants the Google OAuth env present at boot (config.toml references
@@ -161,6 +227,7 @@ jobs:
       # email/password — so harmless non-secret placeholders suffice (same pattern
       # as the rls job).
       - name: Start ephemeral Supabase
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase start
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
@@ -171,6 +238,7 @@ jobs:
       # single source of truth, so the build can't drift from the stack the tests
       # run against. The service-role key is deliberately NOT exported (ADR 0003).
       - name: Export local Supabase env
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           eval "$(npx supabase status -o env)"
           {
@@ -179,11 +247,13 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Apply migrations (clean reset)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase db reset --local
 
       # NEXT_PUBLIC_* come from $GITHUB_ENV above (the running stack), so the
       # client bundle is inlined pointing at the ephemeral local Supabase.
       - name: Build (standalone)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npm run build
 
       # Guard against the exact class of bug this task exists to prevent: if the
@@ -191,6 +261,7 @@ jobs:
       # the Realtime socket) would have no backend and the authed flows would fail
       # in confusing ways. Assert the URL is actually baked into a client chunk.
       - name: Verify local Supabase URL is inlined into the client bundle
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           if ! grep -rqF "$NEXT_PUBLIC_SUPABASE_URL" .next/static/chunks; then
             echo "::error::Client bundle does not point at local Supabase — NEXT_PUBLIC_* was not inlined at build time."
@@ -199,19 +270,21 @@ jobs:
           echo "Client bundle correctly points at $NEXT_PUBLIC_SUPABASE_URL"
 
       - name: Install Playwright browsers
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx playwright install --with-deps chromium
 
       # The Playwright "setup" project seeds two users + one household against the
       # running stack and writes their storageState; the authed projects then run.
       - name: Run E2E (smoke + authed + live Realtime guard)
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npm run test:e2e
 
       - name: Stop ephemeral Supabase
-        if: ${{ always() }}
+        if: ${{ always() && needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase stop --no-backup
 
       - name: Upload Playwright report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
