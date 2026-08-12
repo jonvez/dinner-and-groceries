@@ -167,4 +167,33 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
 - **Kickoff→plan reconciliation** (fold resolutions into task bodies before dispatch) + **cost proxy** ("dispatches per story") added to `epic-run`.
 - **CI hardening** → issues **#98** (authenticated Docker Hub pulls / image cache — kills the pgTAP pull-rate flake) and **#99** (path-filtered fast-path so docs-only PRs skip the ~15-min E2E+pgTAP tax).
 - **Idle agents never terminate** (root of the stall + the exit warning): likely a harness limitation — flagged, not in-repo-fixable; the evt-0005 rules (idle = noise, never resume) are the working mitigation.
-- **PLAN.md status-mirroring recurrence** (topic 6): OPEN — proposed adding an "audit Active Context for status leakage" check to the session-end skill; not yet decided.
+- **PLAN.md status-mirroring recurrence** (topic 6): OPEN — proposed adding an "audit Active Context for status leakage" check to the session-end skill; not yet decided. **(RESOLVED 2026-08-12 — see below: delete the state-shaped subsection outright rather than keep auditing it.)**
+
+### 2026-08-12 — production deploy silently broken for weeks (deploy job non-required)
+
+- **Observation:** During Slice 1d acceptance Jon couldn't find `/grocery` on prod. Root cause: the **Cloud Run deploy job had been failing on *every* merge** (incl. pre-grocery) at the Docker `next build` — `Cannot find module './e2e/support/paths'` (playwright.config.ts imports it; `.dockerignore` strips `e2e/` but not the config). CI's standalone `typecheck` passed because `e2e/` exists there; only the *image* build failed. The deploy job was **not a required check**, so green required-checks let merges through while prod silently froze.
+- **Impact:** "Merged to main" ≠ "in production." Weeks of merges (recipes + grocery) never deployed; nobody noticed because the failing signal was invisible.
+- **Change (done):** one-line fix (`.dockerignore` the config) + a new **`Production build (Docker)`** CI job running the real image build, now a **required check**. Catches the whole "typecheck-green / image-build-red" class at the PR gate. Candidate default AC: *every user-facing feature ships only when the prod image builds green.*
+
+### 2026-08-12 — migrations never auto-reach cloud prod (manual `db push` footgun)
+
+- **Observation:** There is **no `supabase db push` anywhere in CI** — migrations are applied only to ephemeral CI Postgres for pgTAP/E2E. The cloud Supabase prod schema changes ONLY via a manual `supabase db push` (the bring-up runbook). So even with a fixed app deploy, `/grocery` would 500 until Jon ran the push by hand.
+- **Impact:** A merged, CI-green migration is **not live** until a human remembers a manual step that lives only in a runbook. Silent divergence between "schema in repo" and "schema in prod."
+- **Suggested change:** automate or explicitly gate the cloud migration push (a deploy-pipeline `db push` step with the access token, or a required manual runbook checkbox in the epic acceptance). Make "migrations applied to prod" part of the definition of *deployed*.
+
+### 2026-08-12 — no staging environment (raised for productization)
+
+- **Observation:** All work goes straight to prod (Cloud Run + cloud Supabase). No staging tier exists. A build gate catches image-build breakage but *cannot* catch migration-application, runtime env wiring, or real-Realtime issues before they hit prod.
+- **Impact:** No safe place to verify a full deploy (app + migrations + runtime) before production. Becomes acute once the app is productized (real users).
+- **Suggested change:** scope a staging environment (staging Cloud Run + staging Supabase + a post-merge smoke gate) — likely its own milestone/project in anticipation of productizing. Raised by Jon 2026-08-12.
+
+### 2026-08-12 — cost methodology: `/cost` is session-scoped, undercounts the subagent fleet
+
+- **Observation:** The epic-run cost model assumes the acceptance `/cost` delta captures the epic. It does not. `/cost` is **per-session**: it excludes Jon's concurrent projects (good — no cross-project contamination) but *also* excludes the ~12 **subagent sessions** (dev/review/security panes), which bill separately. The orchestrator delta for Slice 1d was only ~$24 / ~100k output while the true epic ran ~1.1–1.6M output across all sessions.
+- **Impact:** Anyone reading a single `/cost` delta as "epic cost" undercounts by ~10×. Recorded honestly in the Build-Team Epic Cost Log (main vs subagent columns).
+- **Suggested change:** epic-run Gate 3 should treat the **dispatch proxy (or a sum of `/cost` across orchestrator + subagent sessions)** as the real total, and state that the acceptance `/cost` delta is only the conductor's slice. Update the `epic-run` skill's cost section.
+
+### 2026-08-12 — PLAN.md Active Context: delete the state-shaped subsection (evt-0002 refinement)
+
+- **Observation:** Active Context drifted again — a stale "Current milestone: Slice 1c" line, the second such incident (after the stale Realtime constraint). The problem is structural: a subsection framed as **"Current Focus / milestone"** is a state-shaped container that invites status prose, which rots because the board is the real tracker.
+- **Decision (Jon, 2026-08-12):** **delete the "Current Focus / milestone" subsection outright** rather than keep auditing it. Active Context now holds ONLY durable, non-status context — environment/setup gotchas, production posture, conventions, blockers. "What's active now" = the board; milestone *strategy* = the Roadmap section. This **refines process-bus evt-0002** ("PLAN.md is not a status tracker") to its logical end: remove the fields that can only hold status. Broadcasting as a process-bus event.

@@ -49,20 +49,22 @@ school lunches, Apple sign-in + native app, marketplace, repurchase suggestions.
 
 ## Active Context
 
-### Current Focus
-**Live status / what's next: `ghpm list` (board #1) — not mirrored here.** Milestone strategy is in the
-roadmap above. The board column for each issue is authoritative; if anything below disagrees with the
-board, the board wins.
+> **Durable context only** — environment, setup gotchas, production posture, conventions, blockers.
+> **No "current focus" / milestone / status prose lives here** — it drifts, and this section has bitten us
+> twice (a stale Realtime constraint, then a stale "current milestone"). "What's active now" = `ghpm list`
+> / board #1; milestone *strategy* lives in the Roadmap section above. (Refines process-bus evt-0002.)
 
-**Production.** Deployed on Cloud Run (`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`), backed by
-the cloud Supabase prod project (ref `wcbjuobzeursmomcoefw`, Free tier). Posture of record: ADRs 0009
+### Production
+Deployed on Cloud Run (`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`), backed by the cloud
+Supabase prod project (ref `wcbjuobzeursmomcoefw`, Free tier). Posture of record: ADRs 0009
 (keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-prod) + 0011 (Realtime verified live two-client on
 cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-bringup.md`.
-
-**Current milestone: Slice 1c (recipes, free)** — the Slice 1b family-validation gate is cleared, so 1c is
-unblocked. Delivered as an epic-level autonomous run (kickoff → autonomous execution → acceptance); goal,
-ACs, and gate model live in `docs/superpowers/plans/2026-08-04-recipes-epic-run-brief.md`. **Board #1 is
-authoritative for all story/issue status** (merged / open / blocked) — not mirrored here.
+- **Migrations do NOT auto-reach cloud prod.** CI applies migrations only to ephemeral CI Postgres; the
+  cloud Supabase schema changes ONLY via a manual `supabase db push` (login → link `--project-ref
+  wcbjuobzeursmomcoefw` → push). A merged migration is NOT live until that runs — a real footgun.
+- **The prod deploy build is a required check** (`Production build (Docker)`): it runs the real image
+  `next build`, catching prod-only breakage the standalone typecheck misses (e.g. a `.dockerignore`-excluded
+  import). A red deploy = stale prod — don't let it go silently red.
 
 ### Environment & setup (durable gotchas)
 - **Local dev (Google sign-in):** start the stack with creds via `npm run db:start` (sources `.env.local`
@@ -76,7 +78,8 @@ authoritative for all story/issue status** (merged / open / blocked) — not mir
   2. Absolute redirects must derive their origin from `x-forwarded-host` (via `lib/http/request-origin.ts`),
      never `request.nextUrl.origin` — behind Cloud Run the latter is the container's internal `0.0.0.0:8080`.
 - **Branch protection on `main`:** required checks **"Lint, typecheck, unit tests" + "Playwright smoke E2E"
-  + "RLS pgTAP (Supabase)"**, strict, `enforce_admins: true`, force-push/deletion blocked. No required
+  + "RLS pgTAP (Supabase)" + "Production build (Docker)"**, strict, `enforce_admins: true`,
+  force-push/deletion blocked. No required
   *review* (single GitHub identity makes it unsatisfiable — bot/App upgrade path is the fix). **Consequence:
   all changes route through PRs, including docs.**
 - **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is
