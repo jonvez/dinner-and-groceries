@@ -241,3 +241,32 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   Agent-tool subagents ⇒ the `/cost` delta is the total; separate CLI sessions ⇒ use the dispatch
   proxy or sum across sessions. Logged in the Build-Team Epic Cost Log (row 4) as a supersede of
   row 3's caveat.
+
+### 2026-08-13 — strict branch protection roughly doubles wall-clock on a multi-PR epic
+
+- **Observation:** `main` requires checks to be **strict** (branch must be up to date before merge). In a
+  single-session epic that lands several PRs, only the first merges straight through: every subsequent
+  PR goes `mergeStateStatus=BEHIND` the moment a sibling merges, and needs
+  `gh pr update-branch` → a **full re-run of all four required checks** → merge. The heavy checks are
+  ~4-5 min (Playwright smoke E2E) and ~3 min (RLS pgTAP), so each trailing PR pays that tax twice.
+- **Impact:** measured this session — the Security Sweep (4 stories) and the Next 16 upgrade each hit it;
+  Story A (#128), Story B (#129), and #132 all required an update-branch + full re-verify cycle after a
+  sibling merged. Roughly **doubles wall-clock** on a 4-story epic, and it is pure waiting: the re-run
+  almost always reproduces the same green result, because the stories touch disjoint files.
+- **Also observed (separate, self-inflicted):** `gh pr merge --squash --delete-branch` on a merge that
+  branch protection **refuses** still deletes the head and closes the PR (see the 2026-08-13 entry
+  above). The rule adopted there — merge, confirm `state=MERGED`, *then* delete — is the mitigation.
+- **Candidate fixes (not yet decided — retro topic):**
+  1. **GitHub merge queue** — the purpose-built answer: batches and tests PRs against the projected
+     merge result, so trailing PRs don't each re-run serially. Needs evaluating against a single-identity
+     repo and the existing required-check set.
+  2. **Drop `strict`** — keep the four required checks but stop requiring up-to-date. Cheapest change;
+     trades a small semantic-conflict risk (green PRs that break once combined) for large time savings.
+     Arguably fine here, where stories are deliberately decomposed onto disjoint files.
+  3. **Sequence rather than parallelize** — land one story at a time. Simplest, but gives up the
+     parallelism that makes epic-run fast in the first place.
+  4. **Keep as-is** — accept the tax as the price of a genuinely always-green `main`.
+- **Recommendation to weigh at retro:** (2) is the cheapest real win and (1) is the correct long-term
+  answer if the project ever has more than one committer. Do NOT weaken `enforce_admins` or drop any
+  of the four required checks — the strictness that costs time is the *up-to-date* rule, not the checks
+  themselves, and the checks are what caught the prod-build breakage in the first place.
