@@ -81,7 +81,9 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   + "RLS pgTAP (Supabase)" + "Production build (Docker)"**, strict, `enforce_admins: true`,
   force-push/deletion blocked. No required
   *review* (single GitHub identity makes it unsatisfiable — bot/App upgrade path is the fix). **Consequence:
-  all changes route through PRs, including docs.**
+  all changes route through PRs, including docs** — but **docs-only PRs fast-path** the heavy gates (#99): a
+  `changes` job detects a docs-only diff (every path a `.md` or under `docs/`) and the prod-build/pgTAP/E2E
+  jobs skip their work while still reporting success, so a docs PR merges in under a minute instead of ~10.
 - **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
