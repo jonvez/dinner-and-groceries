@@ -150,9 +150,21 @@ jobs:
       # the OAuth flow, but GoTrue wants the vars present at boot, so we pass
       # harmless non-secret placeholders here. Real Google creds are a human/
       # Secret-Manager concern (see README "Google OAuth setup").
+      # Anonymous Docker Hub pulls occasionally hit `toomanyrequests: Rate
+      # exceeded`, hard-failing this (required) job on a transient, non-test
+      # failure. Retry with backoff, cleaning up between attempts, so a rate
+      # limit self-recovers instead of burning a re-run cycle. No-op on the
+      # happy path: a first-try success just breaks out of the loop.
       - name: Start local Supabase stack
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: npx supabase start
+        run: |
+          for attempt in 1 2 3; do
+            if npx supabase start; then break; fi
+            echo "supabase start failed (attempt $attempt) — cleaning up and retrying"
+            npx supabase stop --no-backup || true
+            sleep $((attempt * 15))
+            [ "$attempt" = 3 ] && { echo "supabase start failed after 3 attempts"; exit 1; }
+          done
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
           SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
@@ -226,9 +238,21 @@ jobs:
       # it via env()); the E2E flows never touch Google — sessions are seeded via
       # email/password — so harmless non-secret placeholders suffice (same pattern
       # as the rls job).
+      # Anonymous Docker Hub pulls occasionally hit `toomanyrequests: Rate
+      # exceeded`, hard-failing this (required) job on a transient, non-test
+      # failure. Retry with backoff, cleaning up between attempts, so a rate
+      # limit self-recovers instead of burning a re-run cycle. No-op on the
+      # happy path: a first-try success just breaks out of the loop.
       - name: Start ephemeral Supabase
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: npx supabase start
+        run: |
+          for attempt in 1 2 3; do
+            if npx supabase start; then break; fi
+            echo "supabase start failed (attempt $attempt) — cleaning up and retrying"
+            npx supabase stop --no-backup || true
+            sleep $((attempt * 15))
+            [ "$attempt" = 3 ] && { echo "supabase start failed after 3 attempts"; exit 1; }
+          done
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
           SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
