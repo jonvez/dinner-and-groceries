@@ -197,3 +197,47 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
 
 - **Observation:** Active Context drifted again — a stale "Current milestone: Slice 1c" line, the second such incident (after the stale Realtime constraint). The problem is structural: a subsection framed as **"Current Focus / milestone"** is a state-shaped container that invites status prose, which rots because the board is the real tracker.
 - **Decision (Jon, 2026-08-12):** **delete the "Current Focus / milestone" subsection outright** rather than keep auditing it. Active Context now holds ONLY durable, non-status context — environment/setup gotchas, production posture, conventions, blockers. "What's active now" = the board; milestone *strategy* = the Roadmap section. This **refines process-bus evt-0002** ("PLAN.md is not a status tracker") to its logical end: remove the fields that can only hold status. Broadcasting as a process-bus event.
+
+### 2026-08-13 — `gh pr merge --delete-branch` on a REFUSED merge closes the PR
+
+- **Observation:** Merging Story B (#49) with `gh pr merge 126 --squash --delete-branch` while branch
+  protection was still refusing the merge ("4 of 4 required status checks are expected" — the branch
+  was `BEHIND` after another story merged). The merge did **not** happen, but `--delete-branch` ran
+  anyway: it deleted the remote head, which **auto-closed PR #126**.
+- **Impact:** Lost a cycle. No work was lost (the commit was recoverable locally, rebased onto main,
+  reopened as #129 and merged) — but the failure mode is nasty: a *refused* merge still destroys the
+  PR, and if the local worktree had been pruned first the branch would have been much harder to find.
+- **Change (adopted):** **never pass `--delete-branch` speculatively.** Merge first, confirm
+  `state=MERGED`, delete after. Corollary for strict/up-to-date branch protection: when several PRs
+  land in one run, expect `mergeStateStatus=BEHIND` on the trailing ones — `gh pr update-branch <n>`,
+  wait for the re-run, then merge. Sequential, not batched.
+
+### 2026-08-13 — "clear the audit" is not always reachable: backport vs. mainline-only fixes
+
+- **Observation:** Story A's AC was "`npm audit` = 0". Bumping `next` 15.5.19 → **15.5.23** (a real
+  Vercel security **backport** — note the `backport` dist-tag) fixed the advisory that actually
+  mattered (**GHSA-955p-x3mx-jcvp**, unauthenticated disclosure of internal Server Function
+  endpoints, patched in 15.5.21) plus the moderate PostCSS one. But `npm audit` stayed red: ≥1
+  advisory is patched **only on the Next 16.x branch**, so the tool prescribes `next@16.3.0` — a
+  breaking major. No 15.5.x release reaches zero.
+- **Impact:** A "get to zero" AC silently smuggles in a **major framework upgrade**. Taking the
+  tool's advice inside an auto-merged patch sweep would have shipped a breaking change unplanned.
+- **Change (adopted):** for dependency stories, the AC is **"no *applicable, fixable-without-a-major*
+  advisory remains"**, plus an explicit exposure assessment for residuals; a required major upgrade
+  becomes **its own planned story** (here: **#127**, which also folds in #19). Also: read the GitHub
+  advisory's *patched versions* directly — `npm audit`'s "fix available via --force" names the
+  mainline fix and hides an available backport.
+
+### 2026-08-13 — cost methodology: Agent-tool subagents DO bill into the orchestrator's `/cost`
+
+- **Observation:** Slice 1d's retro concluded `/cost` misses the subagent fleet (they ran as separate
+  CLI panes/sessions). This epic dispatched subagents via the **in-process Agent tool** instead — and
+  they appear **in the orchestrator's own `/cost`**, as their own model rows (`claude-sonnet-5`
+  149.9k output, `claude-opus-5` 11.1k output).
+- **Impact:** The earlier "the `/cost` delta undercounts by ~10×" rule is **conditional, not
+  universal**. It holds for separately-launched sessions; it does **not** hold for Agent-tool
+  dispatches, where the delta is a near-complete epic total ($39.89 for 4 stories / 6 dispatches).
+- **Change (suggested):** `epic-run` Gate 3 should state the rule by **dispatch mechanism** —
+  Agent-tool subagents ⇒ the `/cost` delta is the total; separate CLI sessions ⇒ use the dispatch
+  proxy or sum across sessions. Logged in the Build-Team Epic Cost Log (row 4) as a supersede of
+  row 3's caveat.
