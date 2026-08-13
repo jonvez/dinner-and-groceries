@@ -143,10 +143,14 @@ export function ProposalPool({
   const rSig = reactionsSig(initialReactions);
   const cSig = commentsSig(initialComments);
   useEffect(() => {
+    // Sync from the server snapshot (external system), not deriving local
+    // render state — the blessed setState-in-effect case per the rule docs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReactions(reconcileByPk(initialReactions));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rSig]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setComments(reconcileByPk(initialComments));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cSig]);

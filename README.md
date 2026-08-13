@@ -94,7 +94,7 @@ How the pieces fit:
 
 | File | Role |
 | ---- | ---- |
-| [`middleware.ts`](./middleware.ts) | Next.js entry; runs on every matched route. |
+| [`proxy.ts`](./proxy.ts) | Next.js proxy entry; runs on every matched route. |
 | [`lib/supabase/middleware.ts`](./lib/supabase/middleware.ts) | `updateSession()` — refreshes the cookie session (`getUser()`, **verified**), looks up household membership, applies the routing decision. |
 | [`lib/auth/routing.ts`](./lib/auth/routing.ts) | Pure auth-boundary decision: gate protected routes, route a **no-member** user to `/join`, bounce signed-in users off `/login`. Unit-tested. |
 | [`lib/auth/redirect.ts`](./lib/auth/redirect.ts) | `safeRedirectPath()` — validates the OAuth `next` param (same-origin only) to prevent open redirects. Unit-tested. |
@@ -169,7 +169,7 @@ hosted Supabase project; never commit real secrets.
 ## Repo layout
 
 ```
-middleware.ts        # Next.js middleware entry -> updateSession() (auth gate)
+proxy.ts             # Next.js proxy entry -> updateSession() (auth gate)
 app/                 # Next.js App Router — routes, layouts, server actions
   layout.tsx
   page.tsx           # protected home (RLS read of the member's profile)

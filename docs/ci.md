@@ -64,7 +64,7 @@ Secrets are **never** committed. Two sources:
   - **Client bundle (build time):** Next.js inlines *static* `process.env.NEXT_PUBLIC_*`
     references at build, so the deploy job fetches the values and passes them to
     `docker build` as `--build-arg`s.
-  - **Server (runtime):** `middleware.ts` / `server-component.ts` call
+  - **Server (runtime):** `proxy.ts` / `server-component.ts` call
     `readSupabaseEnv()`, which reads `process.env` **dynamically** — dynamic reads
     are *not* inlined by the build, so the running container must carry them in its
     env, bound from Secret Manager on the `deploy-cloudrun` step.

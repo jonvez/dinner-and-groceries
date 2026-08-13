@@ -120,6 +120,9 @@ export function GroceryList({
   // channel already merged.
   const sig = itemsSig(initialItems);
   useEffect(() => {
+    // Sync from the server snapshot (external system), not deriving local
+    // render state — the blessed setState-in-effect case per the rule docs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setItems(sortItems(reconcileByPk(initialItems)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
