@@ -11,7 +11,9 @@
  * render — mirroring `lib/auth/redirect.ts`.
  *
  * The single safe shape is an absolute `http:`/`https:` URL. Anything else
- * (other schemes, relative, unparseable, empty) collapses to `null`.
+ * (other schemes, relative, unparseable, empty) collapses to `null`. On
+ * success, returns the normalized `parsed.href` (not the raw input) so the
+ * persisted/rendered string always matches what was actually validated.
  */
 export function safeHttpUrl(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
@@ -30,5 +32,5 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
   // The scheme is what a browser acts on; allow only the two safe web schemes.
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
 
-  return candidate;
+  return parsed.href;
 }
