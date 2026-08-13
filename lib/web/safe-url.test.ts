@@ -11,14 +11,33 @@ import { safeHttpUrl } from "./safe-url";
  * heavily-tested shape of `lib/auth/redirect.ts`.
  */
 describe("safeHttpUrl", () => {
-  it("accepts http and https URLs (returned trimmed)", () => {
+  it("accepts http and https URLs (returned as the normalized parsed.href)", () => {
     expect(safeHttpUrl("https://example.com/recipe")).toBe(
       "https://example.com/recipe",
     );
-    expect(safeHttpUrl("http://example.com")).toBe("http://example.com");
+    expect(safeHttpUrl("http://example.com")).toBe("http://example.com/");
     expect(safeHttpUrl("  https://example.com/r  ")).toBe(
       "https://example.com/r",
     );
+  });
+
+  it("normalizes the returned URL instead of echoing the raw input", () => {
+    // No path -> WHATWG parser adds the trailing slash.
+    expect(safeHttpUrl("https://example.com")).toBe("https://example.com/");
+    // Scheme and host are lowercased; path case is preserved.
+    expect(safeHttpUrl("HTTPS://Example.COM/Path")).toBe(
+      "https://example.com/Path",
+    );
+    // Unsafe characters in the path are percent-encoded.
+    expect(safeHttpUrl("http://example.com/a b")).toBe(
+      "http://example.com/a%20b",
+    );
+    // The WHATWG URL parser strips ASCII tab/newline before parsing — the
+    // returned value must be the normalized href, never the raw input with
+    // the control character still embedded.
+    const withTab = safeHttpUrl("ht\ttp://example.com");
+    expect(withTab).toBe("http://example.com/");
+    expect(withTab).not.toContain("\t");
   });
 
   it("rejects the XSS-bearing javascript: scheme", () => {
