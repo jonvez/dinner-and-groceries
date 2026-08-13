@@ -1,5 +1,5 @@
 /**
- * Next.js middleware entry. Runs on every matched request and delegates to
+ * Next.js proxy entry. Runs on every matched request and delegates to
  * `updateSession`, which refreshes the `@supabase/ssr` cookie session and
  * applies the auth-boundary routing decision (gate protected routes, route a
  * member-less user to the join flow). See `lib/supabase/middleware.ts`.
@@ -9,7 +9,7 @@ import type { NextRequest } from "next/server";
 
 import { updateSession } from "@/lib/supabase/middleware";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   return updateSession(request);
 }
 

@@ -64,6 +64,9 @@ export function RecipeIngestForm() {
 
   useEffect(() => {
     if (previewState === null) return;
+    // Sync from the server action result (external system) into local
+    // editable state — the blessed setState-in-effect case per the rule docs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFields({
       title: previewState.preview.title,
       imageUrl: previewState.preview.imageUrl ?? "",

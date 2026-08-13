@@ -368,7 +368,7 @@ jobs:
       # NEXT_PUBLIC_* are needed in TWO places: (1) the CLIENT bundle, where
       # `next build` inlines the *static* `process.env.NEXT_PUBLIC_*` references
       # at BUILD time (so they must be Docker build-args, fetched here); and
-      # (2) the SERVER at RUNTIME — middleware.ts / server-component.ts call
+      # (2) the SERVER at RUNTIME — proxy.ts / server-component.ts call
       # readSupabaseEnv() which reads process.env *dynamically*, and dynamic
       # reads are NOT inlined by the build, so the running container must carry
       # them in its env (bound from Secret Manager on the deploy step below).
