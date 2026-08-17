@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Dinner &amp; Groceries">
+  <rect width="512" height="512" fill="#C2410C"/>
+  <circle cx="256" cy="250" r="96" fill="#fff"/>
+  <circle cx="256" cy="250" r="64" fill="none" stroke="#C2410C" stroke-width="12"/>
+  <g fill="#fff">
+    <rect x="62" y="96" width="16" height="80" rx="8"/>
+    <rect x="86" y="96" width="16" height="80" rx="8"/>
+    <rect x="110" y="96" width="16" height="80" rx="8"/>
+    <rect x="62" y="168" width="64" height="28" rx="13"/>
+    <rect x="85" y="190" width="18" height="200" rx="9"/>
+  </g>
+  <g fill="#fff">
+    <path d="M386 96 q30 30 30 92 q0 30 -30 30 z"/>
+    <rect x="387" y="214" width="18" height="176" rx="9"/>
+  </g>
+</svg>
