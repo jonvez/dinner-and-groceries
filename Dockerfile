@@ -48,8 +48,9 @@ RUN groupadd --system --gid 1001 nodejs \
 # Standalone output carries its own trimmed node_modules + server.js.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Uncomment once a public/ dir exists:
-# COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+# Standalone output does NOT include public/ — without this the image builds
+# clean and every icon/manifest 404s in prod. Guarded by ci-deploy-static-assets.test.ts.
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 EXPOSE 8080
