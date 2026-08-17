@@ -230,6 +230,29 @@ npm run lint && npm run typecheck && npm test && npm run test:e2e
 
 - [ ] **Step 5: Commit**
 
+## Discovered during implementation
+
+**A third drop point the plan missed: the auth proxy gated the manifest.**
+`/manifest.webmanifest` is a Next *route*, not a file in `public/`, so it fell through the proxy's
+matcher and an anonymous request got `307 → /login`. The icons were fine (the matcher already
+excludes those file extensions). Safari fetches the manifest during "Add to Home Screen", so a
+signed-out install would have silently degraded to a page-screenshot icon with the wrong name — and
+it would have looked correct in every automated check that existed at the time.
+
+Fixed by adding `manifest\.webmanifest` to the matcher's exclusion list. That path serves only public
+branding (name, colors, icon paths) and no user data. `ci-deploy-static-assets.test.ts` reconstructs
+the live matcher and asserts both directions: install assets public, application routes still gated.
+
+Two process notes from the same debugging:
+
+- The new E2E assertions live in `e2e/smoke.spec.ts`, not a new `e2e/pwa.spec.ts` as planned. The
+  `smoke` project's `testMatch` is `/smoke\.spec\.ts$/`, so a new file would have been collected by
+  no project and silently never run.
+- **`reuseExistingServer` cost two false diagnoses.** Playwright reuses a live server on :3000
+  locally, so a rebuild is invisible until the old process is killed. Two "fixes" were evaluated
+  against a stale binary and appeared to fail; the original was correct. When an E2E result
+  contradicts a source change, check `lsof -nP -iTCP:3000 -sTCP:LISTEN` before editing anything.
+
 ## Verification / acceptance
 
 **Automated (CI):**

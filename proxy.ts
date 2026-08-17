@@ -19,7 +19,14 @@ export const config = {
      * Match all request paths except static assets and image-optimization
      * files. Auth-relevant routes (pages, the OAuth callback, sign-out) all
      * flow through, so the session is refreshed and gating is enforced.
+     *
+     * `manifest.webmanifest` is excluded deliberately (#82): it is a Next route,
+     * not a file in public/, so without this it is gated and a signed-out
+     * "Add to Home Screen" fetches a 307 to /login instead of the manifest —
+     * iOS then falls back to a page-screenshot icon. It carries only public
+     * branding (name, colors, icon paths) and no user data. Icons already pass
+     * through via the file-extension rule below.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -57,6 +57,67 @@ test("clicking Google sign-in does not throw a missing-env error (client env is 
 });
 
 /**
+ * Home-screen install assets (#82) are reachable BY A SIGNED-OUT VISITOR.
+ *
+ * Regression guard for a bug caught during implementation: the manifest is a
+ * Next route (not a file in public/), so the proxy matcher gated it and an
+ * anonymous request got a 307 to /login. Safari fetches the manifest while
+ * "Add to Home Screen" is being used, so a gated manifest silently degrades the
+ * install to a page-screenshot icon with the wrong name.
+ *
+ * This also guards the standalone packaging: public/ is NOT part of Next's
+ * standalone output, so if `start:standalone` stops copying it these 404.
+ */
+test("the manifest and iOS touch icon are served to a signed-out visitor", async ({
+  request,
+}) => {
+  const manifest = await request.get("/manifest.webmanifest", {
+    maxRedirects: 0,
+  });
+  expect(manifest.status()).toBe(200);
+
+  const json = await manifest.json();
+  expect(json.display).toBe("standalone");
+  expect(json.short_name).toBe("Dinner");
+  expect(json.start_url).toBe("/");
+
+  // The icon paths the manifest advertises must actually resolve.
+  for (const icon of json.icons) {
+    const res = await request.get(icon.src, { maxRedirects: 0 });
+    expect(res.status(), `${icon.src} should be served`).toBe(200);
+  }
+
+  // iOS uses this one, and it is referenced from the document head, not the
+  // manifest — so it needs its own assertion.
+  const apple = await request.get("/apple-touch-icon.png", { maxRedirects: 0 });
+  expect(apple.status()).toBe(200);
+  expect(apple.headers()["content-type"]).toContain("image/png");
+});
+
+/**
+ * The head carries the tags iOS needs to launch chrome-less. Next's
+ * `appleWebApp` metadata emits only the modern `mobile-web-app-capable`; iOS
+ * below 16.4 honors solely the legacy `apple-mobile-web-app-capable`, and that
+ * tag is what actually removes the URL bar.
+ */
+test("the document head carries the iOS standalone tags", async ({ page }) => {
+  await page.goto("/login");
+
+  await expect(
+    page.locator('link[rel="manifest"][href="/manifest.webmanifest"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('link[rel="apple-touch-icon"][href="/apple-touch-icon.png"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('meta[name="apple-mobile-web-app-capable"][content="yes"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('meta[name="apple-mobile-web-app-title"][content="Dinner"]'),
+  ).toHaveCount(1);
+});
+
+/**
  * Security headers (issue #55, phase 2) are actually served on a real response
  * — the issue's primary acceptance criterion ("inspect any page response
  * headers"). The CSP is now enforcing; HSTS is absent over local http (the E2E
