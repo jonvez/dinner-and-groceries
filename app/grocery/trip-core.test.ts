@@ -97,7 +97,7 @@ const now = () => NOW;
 
 const archivedRow = (
   o: Record<string, unknown> & { id: string; name: string },
-) => ({ ingredient_id: null, catalog_item_id: null, ...o });
+) => ({ ingredient_id: null, catalog_item_id: null, section_id: null, ...o });
 
 describe("completeTrip", () => {
   it("stamps purchased_at on only this week's checked, un-archived rows", async () => {
@@ -117,7 +117,7 @@ describe("completeTrip", () => {
           { op: "eq", column: "checked", value: true },
           { op: "is", column: "purchased_at", value: null },
         ],
-        returning: "id, name, ingredient_id, catalog_item_id",
+        returning: "id, name, ingredient_id, catalog_item_id, section_id",
       },
     ]);
   });
@@ -144,7 +144,10 @@ describe("completeTrip", () => {
     expect(result).toEqual({
       ok: true,
       archived: 4,
-      promotable: ["paper towels", "birthday candles"],
+      promotable: [
+        { name: "paper towels", sectionId: null },
+        { name: "birthday candles", sectionId: null },
+      ],
     });
   });
 
@@ -165,7 +168,11 @@ describe("completeTrip", () => {
       now,
     });
 
-    expect(result).toEqual({ ok: true, archived: 2, promotable: ["Paper Towels"] });
+    expect(result).toEqual({
+      ok: true,
+      archived: 2,
+      promotable: [{ name: "Paper Towels", sectionId: null }],
+    });
   });
 
   it("reports nothing archived when the cart is empty", async () => {
@@ -213,6 +220,7 @@ describe("promoteToCatalog", () => {
           name: "paper towels",
           added_count: 1,
           last_added_at: NOW.toISOString(),
+          section_id: null,
         },
       },
     ]);
@@ -284,6 +292,7 @@ describe("promoteToCatalog", () => {
           name: "Milk*",
           added_count: 1,
           last_added_at: NOW.toISOString(),
+          section_id: null,
         },
       },
     ]);

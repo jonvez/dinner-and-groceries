@@ -18,6 +18,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 
+import { loadSections, type SectionRow } from "./sections-core";
+
 type DbClient = SupabaseClient<Database>;
 
 /** The columns the list UI needs — camelCase mapping of a `grocery_items` row. */
@@ -36,6 +38,8 @@ export type GroceryRow = {
   edited: boolean;
   position: number;
   createdAt: string;
+  /** null renders as Unsorted — see the sections-core.ts header. */
+  sectionId: string | null;
 };
 
 /** A staple offered as a one-tap quick-add chip. */
@@ -48,11 +52,13 @@ export type CatalogRow = {
 export type GroceryListSnapshot = {
   items: GroceryRow[];
   catalog: CatalogRow[];
+  /** The household's aisles, in order — the client renders one group each. */
+  sections: SectionRow[];
 };
 
 /** Selected columns, shared with the client component's Realtime re-fetch. */
 export const GROCERY_ITEM_COLUMNS =
-  "id, name, quantity, unit, ingredient_id, catalog_item_id, have_it, checked, edited, position, created_at";
+  "id, name, quantity, unit, ingredient_id, catalog_item_id, have_it, checked, edited, position, created_at, section_id";
 
 type GroceryItemRow = {
   id: string;
@@ -66,6 +72,7 @@ type GroceryItemRow = {
   edited: boolean;
   position: number;
   created_at: string;
+  section_id: string | null;
 };
 
 type CatalogItemRow = {
@@ -87,6 +94,7 @@ export function toGroceryRow(row: GroceryItemRow): GroceryRow {
     edited: row.edited,
     position: row.position,
     createdAt: row.created_at,
+    sectionId: row.section_id,
   };
 }
 
@@ -107,6 +115,9 @@ export async function loadGroceryList(
     .order("position")
     .order("created_at");
 
+  // RLS scopes this to the caller's household, like the catalog read below.
+  const sections = await loadSections(supabase);
+
   const { data: catalogRows } = await supabase
     .from("catalog_items")
     .select("id, name, default_unit")
@@ -114,6 +125,7 @@ export async function loadGroceryList(
     .order("name");
 
   return {
+    sections,
     items: ((itemRows ?? []) as unknown as GroceryItemRow[]).map(toGroceryRow),
     catalog: ((catalogRows ?? []) as unknown as CatalogItemRow[]).map((row) => ({
       id: row.id,

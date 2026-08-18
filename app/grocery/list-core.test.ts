@@ -177,6 +177,7 @@ describe("loadGroceryList", () => {
     expect(await loadGroceryList(client, { weekId: "wk-1" })).toEqual({
       items: [],
       catalog: [],
+      sections: [],
     });
   });
 
@@ -189,6 +190,7 @@ describe("loadGroceryList", () => {
     expect(await loadGroceryList(client, { weekId: "wk-1" })).toEqual({
       items: [],
       catalog: [],
+      sections: [],
     });
   });
 });

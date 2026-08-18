@@ -128,6 +128,7 @@ const row = (o: Partial<GroceryRow> & { id: string; name: string }): GroceryRow 
   unit: null,
   ingredientId: null,
   catalogItemId: null,
+  sectionId: null,
   haveIt: false,
   checked: false,
   edited: false,

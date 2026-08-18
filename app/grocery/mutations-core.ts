@@ -27,6 +27,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 
+import { inheritSectionId, loadCatalogSectionIndex } from "./sections-core";
+
 type DbClient = SupabaseClient<Database>;
 
 export type MutationResult = { ok: true } | { ok: false; error: string };
@@ -67,7 +69,7 @@ export async function addCatalogItemToList(
 
   const { data: staple } = await supabase
     .from("catalog_items")
-    .select("id, name, default_unit, added_count")
+    .select("id, name, default_unit, added_count, section_id")
     .eq("id", input.catalogItemId)
     .maybeSingle();
 
@@ -83,6 +85,8 @@ export async function addCatalogItemToList(
     unit: staple.default_unit,
     catalog_item_id: staple.id,
     ingredient_id: null,
+    // The staple's DURABLE aisle, snapshotted onto the list row.
+    section_id: staple.section_id,
   });
   if (insertError) return { ok: false, error: GENERIC_ERROR };
 
@@ -104,6 +108,12 @@ export async function addCatalogItemToList(
  * Add a typed item with NO provenance — both feeder FKs null (the third feeder
  * of the three-feeder model). Quantity and unit are optional: "eggs" is a valid
  * list row and must never be coerced to a quantity of 1.
+ *
+ * Section inheritance (#137): if the typed name matches a known staple, the row
+ * lands in that staple's aisle instead of Unsorted — so typing "mozzarella"
+ * files itself under Dairy without anyone touching it. Only `section_id` is
+ * copied; `catalog_item_id` stays NULL, because setting it would change the
+ * row's provenance and hand it to the roll-up's protection rules.
  */
 export async function addAdHocItem(
   supabase: Pick<DbClient, "from">,
@@ -121,6 +131,10 @@ export async function addAdHocItem(
   // shopper a real message instead of a generic write failure.
   if (name === "") return { ok: false, error: BLANK_NAME_ERROR };
 
+  const catalogIndex = await loadCatalogSectionIndex(supabase, {
+    householdId: input.householdId,
+  });
+
   const { error } = await supabase.from("grocery_items").insert({
     household_id: input.householdId,
     week_id: input.weekId,
@@ -129,6 +143,7 @@ export async function addAdHocItem(
     unit: cleanText(input.unit),
     ingredient_id: null,
     catalog_item_id: null,
+    section_id: inheritSectionId(name, catalogIndex),
   });
   if (error) return { ok: false, error: GENERIC_ERROR };
 
@@ -166,5 +181,78 @@ export async function setChecked(
     .update({ checked: input.checked })
     .eq("id", input.id);
   if (error) return { ok: false, error: GENERIC_ERROR };
+  return { ok: true };
+}
+
+/**
+ * Move an item to a section — and make it stick (#137).
+ *
+ * This is the write-through that justifies the whole feature. The family's old
+ * workflow re-sorted the same items into the same groups on every single trip,
+ * because the grouping was never stored. So a move here updates BOTH:
+ *
+ *   1. the grocery row, so the list regroups immediately, and
+ *   2. the DURABLE staple in the catalog, so next week it arrives correct.
+ *
+ * The catalog row is found by `catalog_item_id` when the item came from a
+ * staple, and otherwise by a case-insensitive name match — a typed "mozzarella"
+ * still teaches the "Mozzarella" staple where it lives. An ad-hoc item with no
+ * matching staple simply has nothing durable to update yet; it carries its
+ * section into the catalog later, when the trip is completed and it is promoted.
+ *
+ * Step 2 is best-effort by design: if the durable update fails, the item has
+ * still moved on this trip. Reporting failure would imply the visible move did
+ * not happen, which is worse than a section that needs correcting once more.
+ *
+ * `sectionId` is NOT validated here against the household's sections — it does
+ * not need to be. The composite `(section_id, household_id)` FK makes a foreign
+ * section unstorable at the database, so a crafted id fails the write outright
+ * rather than being silently accepted.
+ */
+export async function setItemSection(
+  supabase: Pick<DbClient, "from">,
+  input: {
+    /** From the caller's VERIFIED session — never request input. */
+    householdId: string;
+    id: string;
+    /** null clears the section, which renders as Unsorted. */
+    sectionId: string | null;
+  },
+): Promise<MutationResult> {
+  // Read the row first: we need its name and provenance to find the staple to
+  // teach. RLS scopes this, so another household's id reads back nothing.
+  const { data: item } = await supabase
+    .from("grocery_items")
+    .select("id, name, catalog_item_id")
+    .eq("id", input.id)
+    .maybeSingle();
+
+  // Not found, or not ours → fail closed, exactly like addCatalogItemToList.
+  if (!item) return { ok: false, error: GENERIC_ERROR };
+
+  const { error } = await supabase
+    .from("grocery_items")
+    .update({ section_id: input.sectionId })
+    .eq("id", input.id);
+  if (error) return { ok: false, error: GENERIC_ERROR };
+
+  // ---- write-through to the durable staple (best-effort, see header) ----
+  let catalogItemId = (item as { catalog_item_id: string | null }).catalog_item_id;
+
+  if (catalogItemId === null) {
+    const index = await loadCatalogSectionIndex(supabase, {
+      householdId: input.householdId,
+    });
+    catalogItemId =
+      index.get((item as { name: string }).name.trim().toLowerCase())?.id ?? null;
+  }
+
+  if (catalogItemId !== null) {
+    await supabase
+      .from("catalog_items")
+      .update({ section_id: input.sectionId })
+      .eq("id", catalogItemId);
+  }
+
   return { ok: true };
 }
