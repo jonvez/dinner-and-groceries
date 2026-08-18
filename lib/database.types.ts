@@ -37,33 +37,33 @@ export type Database = {
       catalog_items: {
         Row: {
           added_count: number
-          category: string | null
           created_at: string
           default_unit: string | null
           household_id: string
           id: string
           last_added_at: string | null
           name: string
+          section_id: string | null
         }
         Insert: {
           added_count?: number
-          category?: string | null
           created_at?: string
           default_unit?: string | null
           household_id: string
           id?: string
           last_added_at?: string | null
           name: string
+          section_id?: string | null
         }
         Update: {
           added_count?: number
-          category?: string | null
           created_at?: string
           default_unit?: string | null
           household_id?: string
           id?: string
           last_added_at?: string | null
           name?: string
+          section_id?: string | null
         }
         Relationships: [
           {
@@ -72,6 +72,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "households"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "catalog_items_section_id_fkey"
+            columns: ["section_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "grocery_sections"
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -233,6 +240,7 @@ export type Database = {
           position: number
           purchased_at: string | null
           quantity: number | null
+          section_id: string | null
           unit: string | null
           week_id: string
         }
@@ -249,6 +257,7 @@ export type Database = {
           position?: number
           purchased_at?: string | null
           quantity?: number | null
+          section_id?: string | null
           unit?: string | null
           week_id: string
         }
@@ -265,6 +274,7 @@ export type Database = {
           position?: number
           purchased_at?: string | null
           quantity?: number | null
+          section_id?: string | null
           unit?: string | null
           week_id?: string
         }
@@ -284,11 +294,50 @@ export type Database = {
             referencedColumns: ["id", "household_id"]
           },
           {
+            foreignKeyName: "grocery_items_section_id_fkey"
+            columns: ["section_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "grocery_sections"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
             foreignKeyName: "grocery_items_week_id_household_id_fkey"
             columns: ["week_id", "household_id"]
             isOneToOne: false
             referencedRelation: "weeks"
             referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      grocery_sections: {
+        Row: {
+          created_at: string
+          household_id: string
+          id: string
+          name: string
+          position: number
+        }
+        Insert: {
+          created_at?: string
+          household_id: string
+          id?: string
+          name: string
+          position?: number
+        }
+        Update: {
+          created_at?: string
+          household_id?: string
+          id?: string
+          name?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grocery_sections_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -663,6 +712,13 @@ export type Database = {
         Returns: string
       }
       current_household_id: { Args: never; Returns: string }
+      default_grocery_sections: {
+        Args: never
+        Returns: {
+          section_name: string
+          section_position: number
+        }[]
+      }
       is_household_owner: { Args: never; Returns: boolean }
     }
     Enums: {
