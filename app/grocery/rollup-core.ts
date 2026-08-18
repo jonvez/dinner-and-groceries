@@ -25,6 +25,8 @@ import {
   type SlottedIngredient,
 } from "@/lib/grocery/rollup";
 
+import { inheritSectionId, loadCatalogSectionIndex } from "./sections-core";
+
 type DbClient = SupabaseClient<Database>;
 
 export type BuildGroceryListArgs = {
@@ -149,6 +151,13 @@ export async function buildGroceryList(
   }
 
   if (plan.toInsert.length > 0) {
+    // Dish-derived rows inherit an aisle from a known staple of the same name
+    // (#137), so a menu rebuild lands "leeks" under Produce rather than dumping
+    // the whole week's ingredients into Unsorted. Read once for the batch, for
+    // the same reason promoteToCatalog does — see the trip-core.ts header on why
+    // a per-name `ilike` is not safe with user-typed text.
+    const catalogIndex = await loadCatalogSectionIndex(supabase, { householdId });
+
     const { error } = await supabase.from("grocery_items").insert(
       plan.toInsert.map((row) => ({
         household_id: householdId,
@@ -157,6 +166,7 @@ export async function buildGroceryList(
         quantity: row.quantity,
         unit: row.unit,
         ingredient_id: row.ingredientId,
+        section_id: inheritSectionId(row.name, catalogIndex),
       })),
     );
     if (error) return { ok: false, error: GENERIC_ERROR };

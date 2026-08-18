@@ -59,6 +59,7 @@ import {
   type GroceryActionState,
 } from "./actions";
 import { toGroceryRow, type CatalogRow, type GroceryRow } from "./list-core";
+import type { PromotableItem } from "./trip-core";
 
 export type GroceryListProps = {
   weekId: string;
@@ -105,7 +106,7 @@ export function GroceryList({
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [candidates, setCandidates] = useState<string[]>([]);
+  const [candidates, setCandidates] = useState<PromotableItem[]>([]);
   const [accepted, setAccepted] = useState<Record<string, boolean>>({});
   // Held in a ref so the router's identity can never churn the subscription
   // below (a re-JOIN would drop events mid-aisle).
@@ -269,11 +270,15 @@ export function GroceryList({
         : `${result.archived} items checked off the list.`,
     );
     setCandidates(result.promotable);
-    setAccepted(Object.fromEntries(result.promotable.map((name) => [name, true])));
+    setAccepted(
+      Object.fromEntries(result.promotable.map((item) => [item.name, true])),
+    );
   }, [weekId]);
 
   const onPromote = useCallback(async () => {
-    const names = candidates.filter((name) => accepted[name]);
+    // Each accepted candidate carries the aisle it was filed into during the
+    // trip, so promotion stores the section alongside the staple (#137).
+    const names = candidates.filter((item) => accepted[item.name]);
     setError(null);
     setBusy(true);
     const result = await promoteToCatalogAction(names);
@@ -587,7 +592,7 @@ function PromotionPrompt({
   onDismiss,
   busy,
 }: {
-  candidates: string[];
+  candidates: PromotableItem[];
   accepted: Record<string, boolean>;
   onToggle: (name: string, on: boolean) => void;
   onConfirm: () => void;
@@ -601,7 +606,7 @@ function PromotionPrompt({
     >
       <p className="text-sm font-medium">Add these to your staples?</p>
       <ul className="space-y-1">
-        {candidates.map((name) => (
+        {candidates.map(({ name }) => (
           <li key={name} className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"

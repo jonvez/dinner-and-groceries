@@ -34,8 +34,11 @@ import type { Database } from "@/lib/database.types";
 
 type DbClient = SupabaseClient<Database>;
 
+/** A promotion candidate: the name the family used, plus the aisle they filed it in. */
+export type PromotableItem = { name: string; sectionId: string | null };
+
 export type CompleteTripResult =
-  | { ok: true; archived: number; promotable: string[] }
+  | { ok: true; archived: number; promotable: PromotableItem[] }
   | { ok: false; error: string };
 
 export type PromoteResult =
@@ -56,6 +59,7 @@ type ArchivedRow = {
   name: string;
   ingredient_id: string | null;
   catalog_item_id: string | null;
+  section_id: string | null;
 };
 
 /** A staple as read back for the case-insensitive name match. */
@@ -89,16 +93,19 @@ export async function completeTrip(
     .eq("week_id", input.weekId)
     .eq("checked", true)
     .is("purchased_at", null)
-    .select("id, name, ingredient_id, catalog_item_id");
+    .select("id, name, ingredient_id, catalog_item_id, section_id");
 
   if (error) return { ok: false, error: TRIP_ERROR };
 
   const rows = (data ?? []) as unknown as ArchivedRow[];
 
   // Distinct ad-hoc names, case-insensitive, keeping the first spelling the
-  // family used (that's the one they'll recognize in the catalog).
+  // family used (that's the one they'll recognize in the catalog). The section
+  // rides along (#137) so an item filed into an aisle in the store keeps that
+  // aisle when it becomes a staple — otherwise the shopper would file it once
+  // for the trip and again, permanently, next week.
   const seen = new Set<string>();
-  const promotable: string[] = [];
+  const promotable: PromotableItem[] = [];
   for (const row of rows) {
     if (row.ingredient_id !== null || row.catalog_item_id !== null) continue;
     const name = row.name.trim();
@@ -106,7 +113,7 @@ export async function completeTrip(
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    promotable.push(name);
+    promotable.push({ name, sectionId: row.section_id });
   }
 
   return { ok: true, archived: rows.length, promotable };
@@ -125,7 +132,8 @@ export async function promoteToCatalog(
   input: {
     /** From the caller's VERIFIED session — never request input. */
     householdId: string;
-    names: string[];
+    /** Plain strings stay supported; an item carries its aisle through too. */
+    names: (string | PromotableItem)[];
   } & Clock,
 ): Promise<PromoteResult> {
   const clock = input.now ?? (() => new Date());
@@ -147,17 +155,23 @@ export async function promoteToCatalog(
   );
 
   for (const raw of input.names ?? []) {
-    const name = typeof raw === "string" ? raw.trim() : "";
+    const isItem = typeof raw === "object" && raw !== null;
+    const name = (isItem ? (raw as PromotableItem).name : (raw as string) ?? "").trim();
     if (name === "") continue;
+    const sectionId = isItem ? (raw as PromotableItem).sectionId : null;
 
     const existing = byName.get(name.toLowerCase());
 
     if (existing) {
+      // An existing staple keeps its durable aisle unless this promotion
+      // actually carries one — a promotion must never blank a section the
+      // family already corrected.
       const { error } = await supabase
         .from("catalog_items")
         .update({
           added_count: (existing.added_count ?? 0) + 1,
           last_added_at: clock().toISOString(),
+          ...(sectionId !== null ? { section_id: sectionId } : {}),
         })
         .eq("id", existing.id);
       if (error) return { ok: false, error: PROMOTE_ERROR };
@@ -167,6 +181,7 @@ export async function promoteToCatalog(
         name,
         added_count: 1,
         last_added_at: clock().toISOString(),
+        section_id: sectionId,
       });
       // A unique violation means the other shopper promoted the same name
       // between our lookup and insert — the staple exists, which is the outcome

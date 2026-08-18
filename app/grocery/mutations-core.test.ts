@@ -5,6 +5,8 @@ import {
   addCatalogItemToList,
   setChecked,
   setHaveIt,
+  setItemSection,
+  GENERIC_ERROR,
 } from "./mutations-core";
 
 /**
@@ -33,7 +35,18 @@ type Recorded = {
   updates: { table: string; values: unknown; filters: Filter[] }[];
 };
 
-function makeClient(opts: { catalogItem?: QueryResult; insert?: QueryResult; update?: QueryResult } = {}) {
+function makeClient(
+  opts: {
+    /** `.maybeSingle()` on catalog_items — the staple being added. */
+    catalogItem?: QueryResult;
+    /** `.maybeSingle()` on grocery_items — the row being re-sectioned. */
+    groceryItem?: QueryResult;
+    /** The awaited household-scoped catalog read (the section index). */
+    catalogList?: QueryResult;
+    insert?: QueryResult;
+    update?: QueryResult;
+  } = {},
+) {
   const calls: Recorded = { selects: [], inserts: [], updates: [] };
   const ok: QueryResult = { data: null, error: null };
 
@@ -47,7 +60,20 @@ function makeClient(opts: { catalogItem?: QueryResult; insert?: QueryResult; upd
         },
         maybeSingle() {
           calls.selects.push({ table, columns, filters });
-          return Promise.resolve(opts.catalogItem ?? ok);
+          return Promise.resolve(
+            table === "grocery_items"
+              ? (opts.groceryItem ?? ok)
+              : (opts.catalogItem ?? ok),
+          );
+        },
+        // Awaiting the builder directly is the section-index read
+        // (`loadCatalogSectionIndex`), which takes the whole household's
+        // catalog in one round trip rather than one `ilike` per name.
+        then<T>(resolve: (r: QueryResult) => T) {
+          calls.selects.push({ table, columns, filters });
+          return Promise.resolve(
+            opts.catalogList ?? { data: [], error: null },
+          ).then(resolve);
         },
       };
       return builder;
@@ -195,6 +221,7 @@ describe("addAdHocItem", () => {
           unit: "packs",
           ingredient_id: null,
           catalog_item_id: null,
+          section_id: null,
         },
       },
     ]);
@@ -293,5 +320,180 @@ describe("setHaveIt / setChecked", () => {
       ok: false,
       error: "Could not update the list.",
     });
+  });
+});
+
+/**
+ * Sections (#137). The whole point of the feature is that a correction is made
+ * ONCE: the family's previous list re-sorted the same items into the same
+ * groups on every trip because the grouping was never stored.
+ */
+describe("section assignment", () => {
+  const catalog = (
+    rows: { id: string; name: string; section_id: string | null }[],
+  ) => ({ data: rows, error: null });
+
+  it("a typed item inherits the aisle of a staple with the same name", async () => {
+    const { client, calls } = makeClient({
+      catalogList: catalog([
+        { id: "c1", name: "Mozzarella", section_id: "sec-dairy" },
+      ]),
+    });
+
+    // Different capitalisation on purpose — matching mirrors the
+    // `(household_id, lower(name))` unique index, not the exact spelling.
+    const result = await addAdHocItem(client, {
+      householdId: "hh-1",
+      weekId: "wk-1",
+      name: "mozzarella",
+      quantity: null,
+      unit: null,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(calls.inserts[0].rows).toMatchObject({
+      name: "mozzarella",
+      section_id: "sec-dairy",
+      // Inheriting an aisle must NOT claim catalog provenance: that would hand
+      // the row to the roll-up's protection rules and change what a rebuild
+      // does with it.
+      catalog_item_id: null,
+      ingredient_id: null,
+    });
+  });
+
+  it("an unknown typed item lands unsectioned (renders as Unsorted)", async () => {
+    const { client, calls } = makeClient({
+      catalogList: catalog([{ id: "c1", name: "Mozzarella", section_id: "sec-dairy" }]),
+    });
+
+    await addAdHocItem(client, {
+      householdId: "hh-1",
+      weekId: "wk-1",
+      name: "gulfwax",
+      quantity: null,
+      unit: null,
+    });
+
+    expect(calls.inserts[0].rows).toMatchObject({ section_id: null });
+  });
+
+  it("adding a staple snapshots that staple's durable aisle onto the list row", async () => {
+    const { client, calls } = makeClient({
+      catalogItem: {
+        data: {
+          id: "c1",
+          name: "Milk",
+          default_unit: "gal",
+          added_count: 2,
+          section_id: "sec-dairy",
+        },
+        error: null,
+      },
+    });
+
+    await addCatalogItemToList(client, {
+      householdId: "hh-1",
+      weekId: "wk-1",
+      catalogItemId: "c1",
+      now,
+    });
+
+    expect(calls.inserts[0].rows).toMatchObject({
+      name: "Milk",
+      catalog_item_id: "c1",
+      section_id: "sec-dairy",
+    });
+  });
+
+  it("WRITES THROUGH: moving a catalog-fed row also re-aisles the staple", async () => {
+    const { client, calls } = makeClient({
+      groceryItem: {
+        data: { id: "g1", name: "Milk", catalog_item_id: "c1" },
+        error: null,
+      },
+    });
+
+    const result = await setItemSection(client, {
+      householdId: "hh-1",
+      id: "g1",
+      sectionId: "sec-frozen",
+    });
+
+    expect(result).toEqual({ ok: true });
+
+    // Both writes happened: the trip AND the durable staple.
+    expect(calls.updates).toEqual([
+      {
+        table: "grocery_items",
+        values: { section_id: "sec-frozen" },
+        filters: [{ op: "eq", column: "id", value: "g1" }],
+      },
+      {
+        table: "catalog_items",
+        values: { section_id: "sec-frozen" },
+        filters: [{ op: "eq", column: "id", value: "c1" }],
+      },
+    ]);
+  });
+
+  it("WRITES THROUGH by name when the row has no catalog provenance", async () => {
+    const { client, calls } = makeClient({
+      groceryItem: {
+        data: { id: "g1", name: "mozzarella", catalog_item_id: null },
+        error: null,
+      },
+      catalogList: catalog([
+        { id: "c9", name: "Mozzarella", section_id: null },
+      ]),
+    });
+
+    await setItemSection(client, {
+      householdId: "hh-1",
+      id: "g1",
+      sectionId: "sec-dairy",
+    });
+
+    expect(calls.updates[1]).toEqual({
+      table: "catalog_items",
+      values: { section_id: "sec-dairy" },
+      filters: [{ op: "eq", column: "id", value: "c9" }],
+    });
+  });
+
+  it("moves the row but teaches nothing when no staple matches yet", async () => {
+    const { client, calls } = makeClient({
+      groceryItem: {
+        data: { id: "g1", name: "gulfwax", catalog_item_id: null },
+        error: null,
+      },
+      catalogList: catalog([]),
+    });
+
+    const result = await setItemSection(client, {
+      householdId: "hh-1",
+      id: "g1",
+      sectionId: "sec-household",
+    });
+
+    // The trip still reflects the move; the aisle rides along to the catalog
+    // later, when the item is promoted at the end of the trip.
+    expect(result).toEqual({ ok: true });
+    expect(calls.updates).toHaveLength(1);
+    expect(calls.updates[0].table).toBe("grocery_items");
+  });
+
+  it("fails closed for a row that isn't ours (RLS reads back nothing)", async () => {
+    const { client, calls } = makeClient({ groceryItem: { data: null, error: null } });
+
+    const result = await setItemSection(client, {
+      householdId: "hh-1",
+      id: "someone-elses-row",
+      sectionId: "sec-dairy",
+    });
+
+    expect(result).toEqual({ ok: false, error: GENERIC_ERROR });
+    // Nothing was written at all — not even the grocery row.
+    expect(calls.updates).toHaveLength(0);
   });
 });
