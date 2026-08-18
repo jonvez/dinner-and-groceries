@@ -38,9 +38,9 @@ grant usage on schema tests to authenticated;
 grant execute on all functions in schema tests to authenticated;
 
 -- ---- seed one staple per household (privileged role: bypasses RLS) ----
-insert into public.catalog_items (id, household_id, name, default_unit, category) values
-  ('c1000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'milk',   'gal', 'dairy'),
-  ('c1000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'coffee', 'bag', 'pantry');
+insert into public.catalog_items (id, household_id, name, default_unit) values
+  ('c1000001-0000-0000-0000-000000000001', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'milk',   'gal'),
+  ('c1000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'coffee', 'bag');
 
 -- 1-2: RLS enabled + FORCED
 select is((select relrowsecurity      from pg_class where oid = 'public.catalog_items'::regclass), true, 'catalog_items has RLS enabled');
@@ -64,8 +64,10 @@ select lives_ok(
   'allow-same: H member inserts a catalog item into H');
 
 -- 7: allow-same update — the UPDATE policy's USING clause lets H's own rows through
-update public.catalog_items set category = 'x' where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-select is((select bool_and(category = 'x') from public.catalog_items where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+-- (was `category` until 20260817180000_grocery_sections_schema.sql retired that
+-- placeholder column in favour of `section_id`; `default_unit` stands in.)
+update public.catalog_items set default_unit = 'x' where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select is((select bool_and(default_unit = 'x') from public.catalog_items where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
   true, 'allow-same: H member''s UPDATE actually changes H''s catalog rows');
 
 -- 8: deny-cross update — WITH CHECK blocks re-homing a row into another household
