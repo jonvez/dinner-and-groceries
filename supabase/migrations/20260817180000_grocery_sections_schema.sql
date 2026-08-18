@@ -121,8 +121,11 @@ alter table public.catalog_items drop column category;
 -- are not padding: the family's real history includes windex, gulfwax, sidewalk
 -- salt, aleve, and acrylic paint. Every name is renameable in-app; this is a
 -- starting point, not a fixed taxonomy.
+-- Output columns are `section_name`/`section_position`, not `name`/`position`:
+-- `position` is a reserved keyword in a RETURNS TABLE clause (it parses as the
+-- POSITION() function) even though it is a legal column name on the table.
 create function public.default_grocery_sections()
-returns table (name text, position integer)
+returns table (section_name text, section_position integer)
 language sql
 immutable
 as $$
@@ -138,7 +141,7 @@ as $$
     ('Household',       90),
     ('Pharmacy',       100),
     ('Unsorted',       110)
-  ) as s(name, position);
+  ) as s(section_name, section_position);
 $$;
 
 -- Seeded by trigger rather than inside create_household() so that EVERY path
@@ -159,7 +162,7 @@ set search_path = ''
 as $$
 begin
   insert into public.grocery_sections (household_id, name, position)
-  select new.id, d.name, d.position
+  select new.id, d.section_name, d.section_position
   from public.default_grocery_sections() as d;
   return new;
 end;
@@ -173,7 +176,7 @@ create trigger households_seed_grocery_sections
 -- Backfill households that already exist. `on conflict do nothing` keeps this
 -- re-runnable and harmless if a household somehow already has a section.
 insert into public.grocery_sections (household_id, name, position)
-select h.id, d.name, d.position
+select h.id, d.section_name, d.section_position
 from public.households h
 cross join public.default_grocery_sections() as d
 on conflict do nothing;
