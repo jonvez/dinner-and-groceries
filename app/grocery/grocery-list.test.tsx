@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GroceryList, formatAmount, toChange } from "./grocery-list";
 import type { GroceryRow } from "./list-core";
+import type { SectionRow } from "./sections-core";
 
 /**
  * The live shopping list (issue #15). The data cores are exhaustively tested in
@@ -80,6 +81,9 @@ type ToggleFn = (id: string, value: boolean) => Promise<{ ok: true }>;
 const actions = vi.hoisted(() => ({
   setChecked: vi.fn<ToggleFn>(async () => ({ ok: true })),
   setHaveIt: vi.fn<ToggleFn>(async () => ({ ok: true })),
+  setItemSection: vi.fn<
+    (id: string, sectionId: string | null) => Promise<{ ok: true } | { error: string }>
+  >(async () => ({ ok: true })),
 }));
 
 vi.mock("./actions", () => ({
@@ -90,6 +94,8 @@ vi.mock("./actions", () => ({
   promoteToCatalogAction: async () => ({ ok: true, promoted: 0 }),
   setCheckedAction: (id: string, checked: boolean) => actions.setChecked(id, checked),
   setHaveItAction: (id: string, haveIt: boolean) => actions.setHaveIt(id, haveIt),
+  setItemSectionAction: (id: string, sectionId: string | null) =>
+    actions.setItemSection(id, sectionId),
 }));
 
 beforeEach(() => {
@@ -103,6 +109,8 @@ beforeEach(() => {
   rt.refresh.mockClear();
   actions.setChecked.mockClear();
   actions.setHaveIt.mockClear();
+  actions.setItemSection.mockClear();
+  actions.setItemSection.mockImplementation(async () => ({ ok: true }));
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -137,15 +145,25 @@ const row = (o: Partial<GroceryRow> & { id: string; name: string }): GroceryRow 
   ...o,
 });
 
-function renderList(items: GroceryRow[]) {
-  return render(
+const SECTIONS: SectionRow[] = [
+  { id: "s-produce", name: "Produce", position: 10 },
+  { id: "s-dairy", name: "Dairy & Eggs", position: 30 },
+  { id: "s-unsorted", name: "Unsorted", position: 110 },
+];
+
+function renderList(items: GroceryRow[], sections: SectionRow[] = SECTIONS) {
+  const props = (next: GroceryRow[]) => (
     <GroceryList
       weekId="wk-1"
       householdId="hh-1"
-      initialItems={items}
+      initialItems={next}
       catalog={[{ id: "c1", name: "Olive oil", defaultUnit: null }]}
-    />,
+      sections={sections}
+    />
   );
+  const view = render(props(items));
+  /** Push a fresh SERVER snapshot, as a `revalidatePath` round trip does. */
+  return { ...view, snapshot: (next: GroceryRow[]) => view.rerender(props(next)) };
 }
 
 const changePayload = (
@@ -166,6 +184,7 @@ const dbRow = (o: Record<string, unknown> & { id: string; name: string }) => ({
   position: 0,
   created_at: "2026-08-07T00:00:00.000Z",
   purchased_at: null,
+  section_id: null,
   ...o,
 });
 
@@ -312,5 +331,169 @@ describe("GroceryList", () => {
     await connected();
 
     expect(rt.refresh).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Aisle grouping (#138). The bucketing itself is exhaustively tested in
+ * `sections-core`; here we pin the WIRING — that a group renders as a labelled
+ * landmark, that the picker reflects and drives the durable write, and that a
+ * move applied on the other phone re-groups this one live.
+ */
+describe("GroceryList — aisles", () => {
+  const groupNames = () =>
+    screen.getAllByTestId("section-group").map((el) => el.dataset.name);
+
+  /** Choose an aisle in a row's picker, the way a tap on the chip does. */
+  const pickAisle = async (item: string, sectionId: string) => {
+    const picker = screen.getByLabelText(`Aisle for ${item}`);
+    await act(async () => {
+      fireEvent.change(picker, { target: { value: sectionId } });
+    });
+  };
+
+  it("renders one labelled group per non-empty section, in section order", async () => {
+    renderList([
+      row({ id: "1", name: "Milk", sectionId: "s-dairy" }),
+      row({ id: "2", name: "Kale", sectionId: "s-produce" }),
+    ]);
+    await connected();
+
+    expect(groupNames()).toEqual(["Produce", "Dairy & Eggs"]);
+    const produce = screen
+      .getAllByTestId("section-group")
+      .find((el) => el.dataset.name === "Produce")!;
+    expect(within(produce).getByText("Kale")).toBeTruthy();
+    // Each aisle is its own labelled region, so a screen reader can jump
+    // between them instead of walking one flat list of forty rows.
+    expect(produce.getAttribute("aria-labelledby")).toBeTruthy();
+  });
+
+  it("files an unsectioned row into Unsorted, at the end", async () => {
+    renderList([
+      row({ id: "1", name: "Windex", sectionId: null }),
+      row({ id: "2", name: "Kale", sectionId: "s-produce" }),
+    ]);
+    await connected();
+
+    expect(groupNames()).toEqual(["Produce", "Unsorted"]);
+  });
+
+  it("shows the item's current aisle in its picker", async () => {
+    renderList([row({ id: "1", name: "Milk", sectionId: "s-dairy" })]);
+    await connected();
+
+    const picker = screen.getByLabelText("Aisle for Milk") as HTMLSelectElement;
+    expect(picker.value).toBe("s-dairy");
+  });
+
+  it("selects Unsorted for a row with no section, rather than blanking", async () => {
+    renderList([row({ id: "1", name: "Windex", sectionId: null })]);
+    await connected();
+
+    const picker = screen.getByLabelText("Aisle for Windex") as HTMLSelectElement;
+    expect(picker.value).toBe("s-unsorted");
+  });
+
+  it("moves the row to the chosen aisle and writes it through", async () => {
+    renderList([row({ id: "1", name: "Milk", sectionId: null })]);
+    await connected();
+
+    await pickAisle("Milk", "s-dairy");
+
+    expect(actions.setItemSection).toHaveBeenCalledWith("1", "s-dairy");
+    // Optimistic: the row is under its new heading before the write settles.
+    await waitFor(() => expect(groupNames()).toEqual(["Dairy & Eggs"]));
+  });
+
+  it("sends the Unsorted section when it is picked back off an aisle", async () => {
+    renderList([row({ id: "1", name: "Milk", sectionId: "s-dairy" })]);
+    await connected();
+
+    await pickAisle("Milk", "s-unsorted");
+
+    expect(actions.setItemSection).toHaveBeenCalledWith("1", "s-unsorted");
+  });
+
+  it("rolls the row back to its old aisle when the write fails", async () => {
+    actions.setItemSection.mockImplementation(async () => ({ error: "Nope." }));
+    renderList([row({ id: "1", name: "Milk", sectionId: "s-produce" })]);
+    await connected();
+
+    await pickAisle("Milk", "s-dairy");
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Nope."));
+    expect(groupNames()).toEqual(["Produce"]);
+    expect(
+      (screen.getByLabelText("Aisle for Milk") as HTMLSelectElement).value,
+    ).toBe("s-produce");
+  });
+
+  it("re-groups live when the other phone files an item into an aisle", async () => {
+    renderList([row({ id: "1", name: "Milk", sectionId: null })]);
+    await connected();
+    expect(groupNames()).toEqual(["Unsorted"]);
+
+    act(() => {
+      rt.handler?.(
+        changePayload("UPDATE", dbRow({ id: "1", name: "Milk", section_id: "s-dairy" })),
+      );
+    });
+
+    await waitFor(() => expect(groupNames()).toEqual(["Dairy & Eggs"]));
+  });
+
+  it("keeps an in-flight aisle change when an OLDER server snapshot lands", async () => {
+    // Two moves in quick succession: the first one's `revalidatePath` snapshot
+    // was rendered before the second one committed, so adopting it wholesale
+    // would bounce the second row back to its old aisle and then forward again.
+    let settle: ((result: { ok: true }) => void) | undefined;
+    actions.setItemSection.mockImplementation(
+      () => new Promise((resolve) => { settle = resolve; }),
+    );
+    const { snapshot } = renderList([
+      row({ id: "1", name: "Milk", sectionId: null }),
+      row({ id: "2", name: "Kale", sectionId: null }),
+    ]);
+    await connected();
+
+    await pickAisle("Milk", "s-dairy");
+    expect(groupNames()).toEqual(["Dairy & Eggs", "Unsorted"]);
+
+    // Kale's snapshot lands: accurate about Kale, stale about Milk.
+    await act(async () => {
+      snapshot([
+        row({ id: "1", name: "Milk", sectionId: null }),
+        row({ id: "2", name: "Kale", sectionId: "s-produce" }),
+      ]);
+    });
+
+    expect(groupNames()).toEqual(["Produce", "Dairy & Eggs"]);
+    await act(async () => {
+      settle?.({ ok: true });
+    });
+  });
+
+  it("takes the server's word once the aisle write has settled", async () => {
+    const { snapshot } = renderList([row({ id: "1", name: "Milk", sectionId: "s-dairy" })]);
+    await connected();
+
+    // Nothing in flight, so a snapshot that disagrees wins — the server is the
+    // source of truth the moment we have no newer local write to protect.
+    await act(async () => {
+      snapshot([row({ id: "1", name: "Milk", sectionId: "s-produce" })]);
+    });
+
+    expect(groupNames()).toEqual(["Produce"]);
+  });
+
+  it("renders an ungrouped list when the household has no sections", async () => {
+    renderList([row({ id: "1", name: "Milk" })], []);
+    await connected();
+
+    expect(screen.queryAllByTestId("section-group")).toHaveLength(0);
+    expect(screen.getAllByTestId("grocery-item")).toHaveLength(1);
+    // Nothing to pick from, so no picker is offered.
+    expect(screen.queryByLabelText("Aisle for Milk")).toBeNull();
   });
 });

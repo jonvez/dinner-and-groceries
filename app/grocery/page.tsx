@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  *   1. Resolve the caller's household from the VERIFIED session.
  *   2. Resolve the CURRENT week in the household's timezone + week-start
  *      preference and lazily UPSERT its row (idempotent).
- *   3. Read the active list + the staples catalog.
+ *   3. Read the active list, the staples catalog, and the household's aisles.
  *   4. Hand them to the live client list.
  *
  * The list is deliberately "this week" only — a shopper standing in the store
@@ -45,9 +45,9 @@ export default async function GroceryPage() {
     : null;
   const weekId = week?.ok ? week.weekId : null;
 
-  const { items, catalog } = weekId
+  const { items, catalog, sections } = weekId
     ? await loadGroceryList(supabase, { weekId })
-    : { items: [], catalog: [] };
+    : { items: [], catalog: [], sections: [] };
 
   return (
     <>
@@ -66,6 +66,7 @@ export default async function GroceryPage() {
             householdId={actor.householdId}
             initialItems={items}
             catalog={catalog}
+            sections={sections}
           />
         ) : (
           <p className="text-destructive text-sm">

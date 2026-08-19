@@ -5,6 +5,7 @@ import {
   DUPLICATE_SECTION_ERROR,
   createSection,
   deleteSection,
+  groupBySection,
   inheritSectionId,
   loadCatalogSectionIndex,
   loadSections,
@@ -290,5 +291,83 @@ describe("deleteSection", () => {
     // Nothing touches grocery_items: the shopper's list is never deleted out
     // from under them because an aisle was renamed away.
     expect(calls.updates).toHaveLength(0);
+  });
+});
+
+describe("groupBySection", () => {
+  const sections = [
+    { id: "s-produce", name: "Produce", position: 10 },
+    { id: "s-dairy", name: "Dairy & Eggs", position: 30 },
+    { id: "s-unsorted", name: "Unsorted", position: 110 },
+  ];
+  const item = (id: string, sectionId: string | null) => ({ id, sectionId });
+
+  it("returns groups in section order, not item order", () => {
+    const groups = groupBySection(
+      [item("a", "s-dairy"), item("b", "s-produce")],
+      sections,
+    );
+
+    expect(groups.map((g) => g.name)).toEqual(["Produce", "Dairy & Eggs"]);
+    expect(groups[0].items.map((i) => i.id)).toEqual(["b"]);
+  });
+
+  it("preserves the incoming item order WITHIN a group", () => {
+    const groups = groupBySection(
+      [item("a", "s-produce"), item("b", "s-produce"), item("c", "s-produce")],
+      sections,
+    );
+
+    expect(groups[0].items.map((i) => i.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("hides an empty section — an aisle you aren't buying from is noise", () => {
+    const groups = groupBySection([item("a", "s-produce")], sections);
+
+    expect(groups).toHaveLength(1);
+    expect(groups.map((g) => g.name)).toEqual(["Produce"]);
+  });
+
+  it("files a NULL pointer into Unsorted, which sorts last", () => {
+    const groups = groupBySection(
+      [item("a", null), item("b", "s-produce")],
+      sections,
+    );
+
+    expect(groups.map((g) => g.name)).toEqual(["Produce", "Unsorted"]);
+    expect(groups[1].items.map((i) => i.id)).toEqual(["a"]);
+    // Collapsed onto the real section, so the row's picker shows "Unsorted"
+    // selected rather than sitting on a phantom id.
+    expect(groups[1].id).toBe("s-unsorted");
+  });
+
+  it("still renders a NULL pointer when the household has no Unsorted section", () => {
+    const groups = groupBySection([item("a", null)], [sections[0]]);
+
+    expect(groups).toEqual([{ id: null, name: "Unsorted", items: [item("a", null)] }]);
+  });
+
+  it("never drops an item whose section is unknown to this render", () => {
+    // A section deleted on the other phone: our items still carry the old
+    // pointer until the next server snapshot arrives. Losing the row mid-aisle
+    // would be the worst possible outcome, so it falls back to Unsorted.
+    const groups = groupBySection(
+      [item("a", "s-vanished"), item("b", "s-produce")],
+      sections,
+    );
+
+    expect(groups.flatMap((g) => g.items.map((i) => i.id)).sort()).toEqual(["a", "b"]);
+    expect(groups.at(-1)?.name).toBe("Unsorted");
+  });
+
+  it("returns one Unsorted group with no sections at all", () => {
+    const groups = groupBySection([item("a", null), item("b", "s-x")], []);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].items.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
+  it("returns nothing for an empty list", () => {
+    expect(groupBySection([], sections)).toEqual([]);
   });
 });
