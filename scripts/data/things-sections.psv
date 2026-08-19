@@ -1,0 +1,589 @@
+# Proposed aisle for every distinct name extracted from the Things "Groceries"
+# project (issue #121, epic #135). One offline pass — there is no runtime AI in
+# this app, by design.
+#
+# Format: name|section|confidence|notes        (`#` starts a comment line)
+#
+# The key is the name LOWERCASED, matching `catalog_items`' unique index on
+# (household_id, lower(name)). Names are kept VERBATIM — whitespace and case
+# normalization only. Compound names are NOT split: "Soy Sauces: Light, Dark
+# Sweet, and Dark" is a slightly long staple, which beats a mangled one.
+#
+# Confidence drives the review order in the Google Sheet: `low` first, so the
+# genuinely ambiguous dozen are read first and the obvious 500 are below them.
+# `notes` carries anything Jon should see — near-duplicates, quantities baked
+# into a name, and items that probably shouldn't be staples at all.
+A1|Pantry|medium|A1 steak sauce, presumably
+Act mouthwash|Pharmacy|high|
+Adobo|Pantry|high|
+Advil|Pharmacy|high|
+agave|Pantry|high|
+Aleve|Pharmacy|high|
+almond butter|Pantry|high|
+Almond flour|Pantry|high|
+almond milk|Dairy & Eggs|medium|Plant milks sit with dairy in most stores
+almonds|Snacks|medium|Could equally be Pantry (baking)
+Aluminum foil|Household|high|
+American cheese|Dairy & Eggs|high|
+american cheese x2|Dairy & Eggs|medium|Quantity baked into the name; same item as "American cheese"
+Ancho chile powder|Pantry|high|
+Ancho Chiles|Pantry|medium|Dried chiles, so pantry rather than produce
+anchovies|Pantry|high|
+antacid|Pharmacy|high|
+apple cider vinegar|Pantry|high|
+apples|Produce|high|
+Applesauce|Pantry|high|
+arborio rice|Pantry|high|
+Area|Unsorted|low|Not a grocery item — looks like a stray note. Consider Drop
+artist’s loft acrylic paint (needs paint studio)|Household|low|Not groceries at all. Consider Drop
+Artichoke hearts 12 oz|Pantry|medium|Size baked into the name
+arugula|Produce|high|
+Asparagus|Produce|high|
+avocado oil|Pantry|high|
+avocados|Produce|high|
+AW|Beverages|low|A&W root beer? Genuinely ambiguous
+Baby wipes|Household|medium|Could be Pharmacy depending on the store
+Bacon|Meat & Seafood|high|
+Baguette|Bakery|high|
+baking soda|Pantry|high|
+Balsamic|Pantry|high|
+Bamboo shoots|Pantry|high|
+bananas|Produce|high|
+Band aids|Pharmacy|high|
+barley|Pantry|high|
+Basil|Produce|medium|Fresh herb — "Dried basil" is a separate entry
+bay leaves|Pantry|high|
+Bbq chips|Snacks|high|
+beef broth|Pantry|high|
+Beef round|Meat & Seafood|high|
+beer|Beverages|high|
+beets|Produce|high|
+bell pepper|Produce|high|
+berries|Produce|high|
+Birthday wrapping paper|Household|high|Near-duplicate of "wrapping paper"
+Black beans|Pantry|high|
+black eyed peas|Pantry|high|
+Black pepper|Pantry|high|
+blue cheese|Dairy & Eggs|high|
+blueberries|Produce|high|
+Bob's red mill nutritional yeast|Pantry|high|
+bok choy|Produce|high|
+Bolognese|Pantry|medium|Jarred sauce, presumably
+boston lettuce|Produce|high|
+Boursin|Dairy & Eggs|high|
+brandy|Beverages|high|
+Bread|Bakery|high|
+Bread crumbs|Pantry|high|
+Bread flour|Pantry|high|
+broccoli|Produce|high|
+broccoli rabe|Produce|high|
+Brussels sprouts|Produce|high|
+Burrata|Dairy & Eggs|high|
+Butter|Dairy & Eggs|high|
+butter beans/large white beans|Pantry|high|
+buttermilk|Dairy & Eggs|high|
+cabbage|Produce|high|
+Cacao nibs|Pantry|high|
+canned diced tomato (15 oz)|Pantry|medium|Size baked into the name
+canned tomatoes|Pantry|high|
+cannellini|Pantry|high|
+cantaloupe|Produce|high|
+Car sponge|Household|high|
+carrots|Produce|high|
+cashews|Snacks|medium|Could equally be Pantry
+cat litter|Household|high|
+Catnip|Household|medium|Pet aisle
+cauliflower|Produce|high|
+celeriac|Produce|high|Same vegetable as "celery root"
+celery|Produce|high|
+celery root|Produce|high|Same vegetable as "celeriac"
+celery seed|Pantry|high|
+cellentani|Pantry|high|
+cereal|Pantry|high|
+challah|Bakery|high|
+champagne vinegar|Pantry|high|
+Charcuterie|Meat & Seafood|medium|Deli counter
+chard|Produce|high|
+Cheddar|Dairy & Eggs|high|Near-duplicate of "cheddar cheese"
+Cheddar bunnies|Snacks|high|
+cheddar cheese|Dairy & Eggs|high|Near-duplicate of "Cheddar"
+Cheese cracker sandwiches|Snacks|high|
+cheese sticks|Dairy & Eggs|medium|Snack cheese — could be Snacks
+Cheesy crackers|Snacks|high|
+Cherries|Produce|high|
+cherry tomatoes|Produce|high|
+chicken broth|Pantry|high|
+Chicken noodle soup|Pantry|high|
+chickory|Produce|medium|Spelling variant of "Chicory"
+chickpeas|Pantry|high|
+Chicory|Produce|medium|Spelling variant of "chickory"
+chiles|Produce|medium|Fresh or dried is unclear
+Chili powder|Pantry|high|
+chipotles en adobo|Pantry|high|
+Chips|Snacks|high|
+Choc blueberries|Snacks|medium|Same item as "Chocolate blueberries"
+Chocolate|Snacks|high|
+chocolate almonds|Snacks|high|
+chocolate bars|Snacks|high|
+Chocolate blueberries|Snacks|medium|Same item as "Choc blueberries"
+chocolate chips|Pantry|high|Baking aisle
+chocolate granola|Pantry|high|
+Chocolate pudding|Dairy & Eggs|medium|Refrigerated cups; could be Pantry if boxed
+chocolate sauce|Pantry|high|
+Chorizo 12oz|Meat & Seafood|medium|Size baked into the name
+Cider|Beverages|high|
+cider vinegar|Pantry|high|Same as "apple cider vinegar"
+Cigar biscuits|Snacks|medium|Pirouette-style rolled wafers
+cilantro|Produce|high|
+cinnamon|Pantry|high|
+Cinnamon life|Pantry|high|Breakfast cereal
+Cipro|Pharmacy|high|Prescription
+clam broth|Pantry|high|
+clams|Meat & Seafood|high|
+Cleaning supplies|Household|high|
+clementines|Produce|high|
+clorox bleach clean-up|Household|high|
+Clorox wipes|Household|high|
+cocojune|Dairy & Eggs|medium|Coconut yogurt brand
+coconut cream|Pantry|high|
+coconut flour|Pantry|high|
+coconut milk|Pantry|high|
+coconut oil|Pantry|high|
+Coffee|Beverages|medium|Often its own aisle rather than with drinks
+Coffee filters|Household|medium|Shelved with coffee in some stores
+Coke zero|Beverages|high|
+comet|Household|high|Scouring cleanser
+condensed milk|Pantry|high|
+coriander|Pantry|high|
+corn|Produce|high|
+corn flour|Pantry|high|
+corn husks|Pantry|medium|For tamales
+corn meal|Pantry|high|Spelling variant of "cornmeal"
+Corn muffins|Bakery|high|
+Corn tortillas|Bakery|medium|Tortillas move around by store
+cornmeal|Pantry|high|Spelling variant of "corn meal"
+Cornstarch|Pantry|high|
+cotija|Dairy & Eggs|high|
+cottage cheese|Dairy & Eggs|high|
+Cotton pads|Pharmacy|medium|Same item as "Cotton rounds"
+Cotton rounds|Pharmacy|medium|Same item as "Cotton pads"
+Cranberries|Produce|high|
+Cranberry juice|Beverages|high|
+cream|Dairy & Eggs|high|
+cream cheese|Dairy & Eggs|high|
+Crema|Dairy & Eggs|high|
+crescent roll dough|Dairy & Eggs|medium|Refrigerated dough case
+cucumber|Produce|high|
+Cultured coconut|Dairy & Eggs|medium|Coconut yogurt
+Cumin|Pantry|high|
+Cups|Household|medium|Paper cups, presumably
+currants|Pantry|medium|Dried fruit
+Curry leaves|Produce|medium|Fresh, when you can get them
+curry paste|Pantry|high|
+daikon|Produce|high|
+Dark brown sugar|Pantry|high|
+dark soy sauce|Pantry|high|
+dates|Produce|medium|Fresh or dried is unclear
+Dayquil|Pharmacy|high|
+Deli meat & cheese|Meat & Seafood|medium|Deli counter
+deodorant|Pharmacy|high|
+Dial soap|Pharmacy|medium|Personal care
+Differin gel|Pharmacy|high|
+Dill|Produce|medium|Fresh herb
+dish soap|Household|high|
+Ditalini|Pantry|high|
+Dr. Bronner's|Household|medium|Castile soap
+Dried basil|Pantry|high|
+Dried mango|Pantry|medium|Dried fruit, so pantry rather than produce
+Easy-off oven cleaner|Household|high|
+edamame|Frozen|medium|Usually frozen; sometimes fresh
+egg noodles|Pantry|high|
+eggs|Dairy & Eggs|high|
+el yucateco|Pantry|high|Hot sauce
+elbows|Pantry|high|Elbow macaroni
+emery board|Pharmacy|medium|
+emmental|Dairy & Eggs|high|
+endive|Produce|high|
+english muffins|Bakery|high|
+escarole|Produce|high|
+Eucerin|Pharmacy|high|
+Evaporated milk|Pantry|high|
+EVOO|Pantry|high|Olive oil
+Excedrin|Pharmacy|high|
+fennel|Produce|high|
+Fennel seed|Pantry|high|
+Feta|Dairy & Eggs|high|
+fettuccine|Pantry|high|
+fideo|Pantry|high|
+fingerling potatoes|Produce|high|
+Firm Tofu|Dairy & Eggs|medium|Refrigerated case
+fish|Meat & Seafood|high|
+Fish sauce|Pantry|high|
+flavored almonds|Snacks|high|
+Flowers|Produce|low|Floral department — not food. Consider Drop
+French bread|Bakery|high|
+Frosting|Pantry|high|
+Frozen corn|Frozen|high|
+frozen fruit|Frozen|high|
+Frozen mango|Frozen|high|
+frozen raspberries|Frozen|high|
+frozen shrimp|Frozen|high|
+Frozen spinach|Frozen|high|
+Frozen strawberries|Frozen|high|
+fryer|Meat & Seafood|low|A fryer chicken, or a kitchen appliance? Genuinely ambiguous
+galangal|Produce|high|
+Gallon plastic bags|Household|high|
+Garden stakes|Household|low|Garden centre — not groceries. Consider Drop
+Garlic|Produce|high|
+Gatorade|Beverages|high|
+Gelatin|Pantry|high|
+Gemelli|Pantry|high|
+GF pie crust|Frozen|medium|Gluten-free crusts are usually frozen
+ghee|Pantry|medium|Shelf-stable, but sometimes with dairy
+ginger|Produce|high|
+gluten-free oats|Pantry|high|
+Gnocchi|Pantry|high|
+Goji berries|Pantry|medium|Dried
+Graham crackers|Snacks|high|
+Granulated garlic|Pantry|high|
+granulated sugar|Pantry|high|
+grapefruit|Produce|high|
+green beans|Produce|high|
+Green Lentils|Pantry|high|
+Green onions|Produce|high|Same as "spring onions"
+Ground beef x6|Meat & Seafood|medium|Quantity baked into the name
+ground pork|Meat & Seafood|high|
+gruyere|Dairy & Eggs|high|
+Guajillos|Pantry|medium|Dried chiles
+gulfwax|Household|low|Paraffin canning wax — also listed as "paraffin wax"
+habanero Serrano|Produce|medium|Two chiles in one line
+habaneros|Produce|high|
+Ham|Meat & Seafood|high|
+ham hocks|Meat & Seafood|high|Also listed as "pig foot / ham hock"
+Hamburger buns|Bakery|high|
+hemp seeds|Pantry|high|
+herbs|Produce|medium|Generic — a category, not an item
+high-fat Dutch cocoa powder|Pantry|high|
+Hijiki|Pantry|medium|Dried seaweed
+holy basil (bai krapao)|Produce|high|
+Hondashi|Pantry|high|
+honey|Pantry|high|
+honeydew|Produce|high|
+Horseradish|Pantry|medium|Refrigerated jar in some stores
+hot chocolate|Beverages|medium|Could be Pantry
+hot dog buns|Bakery|high|
+hot dogs x2|Meat & Seafood|medium|Quantity baked into the name
+Hot fudge|Pantry|high|
+hot sauce|Pantry|high|
+Ice|Frozen|high|
+Ice cream|Frozen|high|
+Ice cream bars|Frozen|high|
+Ice x3|Frozen|medium|Quantity baked into the name; same item as "Ice"
+iceberg|Produce|high|
+Instant espresso powder|Beverages|medium|Often shelved with baking instead
+Jack cheese|Dairy & Eggs|high|
+Jalapenos|Produce|high|
+Japanese Short grain rice|Pantry|high|
+Jelly|Pantry|high|
+Juice boxes|Beverages|high|
+kale|Produce|high|
+Kens creamy Caesar with roasted garlic|Pantry|high|Salad dressing
+Ketchup|Pantry|high|
+keto bars|Snacks|high|
+kid toothbrushes|Pharmacy|high|
+kidney beans|Pantry|high|
+kids Listerine|Pharmacy|high|
+Kind bars|Snacks|high|
+king arthur AP flour|Pantry|high|
+Kombucha|Beverages|high|
+Lamp cover|Household|low|Not groceries. Consider Drop
+Lasagna noodles|Pantry|high|
+Laundry detergent|Household|high|
+Lays - plain|Snacks|high|
+leafy greens|Produce|high|
+Leeks|Produce|high|
+lemongrass|Produce|high|
+lemons & limes|Produce|high|
+lens wipes|Pharmacy|medium|
+lettuce|Produce|high|
+Light brown sugar|Pantry|high|
+light soy sauce|Pantry|high|
+linguine|Pantry|high|
+Lunch bags|Household|high|
+lychee|Produce|high|
+mac & cheese|Pantry|high|
+macadamias|Snacks|medium|Could equally be Pantry
+Macaroni|Pantry|high|
+madegood bars|Snacks|high|
+Madeira|Beverages|medium|Fortified wine, also used for cooking
+Magic shell|Pantry|medium|Ice cream topping
+manchego|Dairy & Eggs|high|
+mango|Produce|high|
+manicotti|Pantry|high|
+Marjoram|Pantry|medium|Dried, presumably
+Marmalade|Pantry|high|
+Marshmallows|Pantry|medium|Could be Snacks
+masa harina|Pantry|high|
+mascarpone|Dairy & Eggs|high|
+mayonnaise|Pantry|high|
+Medium Shells|Pantry|high|Pasta
+Melatonin|Pharmacy|high|
+Melinda's ghost pepper sauce|Pantry|high|
+Menu|Unsorted|low|Not a grocery item — a stray note. Consider Drop
+milk|Dairy & Eggs|high|
+Minasa|Pantry|low|Possibly "Maseca" masa flour — spelling unclear
+Mineral oil|Pharmacy|medium|
+Mini bowties|Pantry|high|Farfalle
+mini hot dogs|Meat & Seafood|medium|
+mini m&ms|Snacks|high|
+mint|Produce|high|
+Mirin|Pantry|high|
+miso|Dairy & Eggs|low|Refrigerated in some stores, shelf-stable in others
+molasses|Pantry|high|
+Monkfruit|Pantry|high|Sweetener
+Mop heads|Household|high|
+Mozzarella|Dairy & Eggs|high|
+mucinex DM|Pharmacy|high|
+Muffins|Bakery|high|
+Murphy's oil soap|Household|high|Duplicate of "murphy's oil soap" — the two differ only by apostrophe character
+murphy’s oil soap|Household|high|Duplicate of "Murphy's oil soap" — this one uses a curly apostrophe
+mushrooms|Produce|high|
+Mustard|Pantry|high|
+mustard greens|Produce|high|
+Mustard powder|Pantry|high|
+Nail polish remover|Pharmacy|medium|
+nicotine patches|Pharmacy|high|
+nutella|Pantry|high|
+Nuts|Snacks|medium|Generic — a category, not an item
+Nyquil|Pharmacy|high|
+oat flour|Pantry|high|
+Oatmeal|Pantry|high|
+Oats|Pantry|high|
+oaxaca|Dairy & Eggs|high|Oaxaca cheese
+olive oil|Pantry|high|
+olives|Pantry|high|
+Onion powder|Pantry|high|
+onions|Produce|high|
+orange juice|Beverages|high|
+oranges|Produce|high|
+Oregano|Pantry|high|
+oyster sauce|Pantry|high|
+Palm Sugar (Nam Tan Pip and Nam Tan Ma-phrao)|Pantry|high|Compound name kept verbatim
+Pancetta 6 oz|Meat & Seafood|medium|Size baked into the name
+panko|Pantry|high|
+Paper plates|Household|high|
+paper towels|Household|high|
+pappardelle|Pantry|high|
+paraffin wax|Household|medium|Same thing as "gulfwax"
+parchment paper|Household|high|
+Parmesan|Dairy & Eggs|high|
+parsley|Produce|high|
+parsnips 3|Produce|medium|Quantity baked into the name
+passion fruit|Produce|high|
+pasta|Pantry|high|
+Pea crisps|Snacks|high|
+Peaches|Produce|high|
+Peanut butter|Pantry|high|
+peanut oil|Pantry|high|
+Peanuts|Snacks|medium|Could equally be Pantry
+Pearl onions|Produce|medium|Often sold frozen
+Pears|Produce|high|
+peas|Produce|medium|Often sold frozen
+Pecans|Pantry|medium|Baking aisle more often than snacks
+pepcid|Pharmacy|high|
+pepitas|Pantry|medium|
+peppercorns / black pepper|Pantry|high|Same item as "Black pepper"
+Pepperoni|Meat & Seafood|high|
+Peppers|Produce|high|
+Pepto|Pharmacy|high|
+Pickled ginger|Pantry|high|
+Pickled jalapenos|Pantry|high|
+Pickles|Pantry|high|
+pig foot / ham hock|Meat & Seafood|high|Overlaps "ham hocks"
+pimientos|Pantry|high|
+pine nuts|Pantry|high|
+pineapple|Produce|high|
+pinto beans|Pantry|high|
+piquillo peppers|Pantry|high|
+pistachios|Snacks|medium|Could equally be Pantry
+pita|Bakery|high|
+pizza dough|Dairy & Eggs|low|Refrigerated dough case, but store-dependent
+plastic forks|Household|high|
+plastic spoons|Household|high|
+plastic wrap|Household|high|
+Plates|Household|medium|Paper plates, presumably — overlaps "Paper plates"
+poblano|Produce|high|
+pomegranates|Produce|high|
+popcorn|Snacks|high|
+poppy seeds|Pantry|high|
+popsicles|Frozen|high|
+Port wine|Beverages|high|
+pot sticker wraps|Frozen|low|Refrigerated or frozen depending on the store
+potatoes|Produce|high|
+Powdered sugar|Pantry|high|
+probiotic|Pharmacy|high|
+Protein z bars|Snacks|high|Overlaps "Z-bars" and "Zbars"
+provolone|Dairy & Eggs|high|
+Q-tips|Pharmacy|high|
+queso fresco|Dairy & Eggs|high|
+quinoa|Pantry|high|
+Radiatore|Pantry|high|Pasta
+radicchio|Produce|high|
+radish|Produce|high|
+Raisins|Pantry|high|
+Ramen|Pantry|high|
+Raos|Pantry|high|Jarred pasta sauce
+Raspberries|Produce|high|
+Raspberry preserves|Pantry|high|
+ravioli|Dairy & Eggs|low|Refrigerated or frozen depending on the store
+red cooking wine|Pantry|medium|Cooking wine sits with vinegars, not with drinks
+Red onion|Produce|high|
+red pepper flakes|Pantry|high|
+red potatoes|Produce|high|
+red wine vinegar|Pantry|high|
+relish|Pantry|high|
+rice|Pantry|high|
+rice noodles|Pantry|high|
+Rice wine vinegar|Pantry|high|
+Ricotta|Dairy & Eggs|high|
+Ritz|Snacks|high|
+rolled oats|Pantry|high|
+Rolls|Bakery|high|
+romaine lettuce|Produce|high|
+romano cheese|Dairy & Eggs|high|
+Rosemary|Produce|medium|Fresh herb
+Rx|Pharmacy|low|Reads like a prescription-pickup reminder, not an item. Consider Drop
+Sabor Mexicano salsa|Pantry|high|
+saffron|Pantry|high|
+sage leaves|Produce|medium|Fresh herb
+Sake|Beverages|high|
+Salsa|Pantry|high|
+salt|Pantry|high|
+Salt and vinegar chips: kettle|Snacks|high|
+salt pork|Meat & Seafood|high|
+Saltines|Snacks|high|
+Sausage|Meat & Seafood|high|
+sea salt|Pantry|high|
+Seafood stock|Pantry|high|
+Seaweed|Pantry|medium|Dried sheets, presumably
+Semolina|Pantry|high|Overlaps "semolina flour"
+semolina flour|Pantry|high|Overlaps "Semolina"
+serranos|Produce|high|
+shallots|Produce|high|
+Shaving cream|Pharmacy|high|
+sherry|Beverages|medium|Also used for cooking
+sherry vinegar|Pantry|high|
+shiitake|Produce|high|
+Short ribs|Meat & Seafood|high|
+shredded coconut|Pantry|high|
+shredded nori|Pantry|high|
+Sidewalk salt|Household|high|
+Silken tofu|Dairy & Eggs|medium|Refrigerated case
+sinbo rice noodles|Pantry|high|
+slider buns|Bakery|high|
+Small Flour tortillas|Bakery|medium|Tortillas move around by store
+Small yogurt|Dairy & Eggs|high|
+smoked spanish paprika|Pantry|high|
+smoked turkey|Meat & Seafood|high|
+Snack bags|Household|high|Zip bags, not food
+Snacks|Snacks|low|Generic — a category, not an item. Consider Drop
+snacks/bars|Snacks|low|Generic — a category, not an item. Consider Drop
+snow peas|Produce|high|
+soda|Beverages|high|
+soft scrub|Household|high|
+Somen|Pantry|high|
+sorghum flour|Pantry|high|
+Sour cream|Dairy & Eggs|high|
+Soy milk|Dairy & Eggs|medium|Plant milks sit with dairy in most stores
+soy sauce|Pantry|high|
+Soy Sauces: Light, Dark Sweet, and Dark (Si Io: Khao, Dam Wan, and Dam)|Pantry|high|Compound name kept verbatim rather than split
+Spaghetti|Pantry|high|
+Spinach|Produce|high|
+sponges|Household|high|
+spring onions|Produce|high|Same as "Green onions"
+sprinkles|Pantry|high|
+sriracha|Pantry|high|
+steel wool|Household|high|
+strawberries|Produce|high|
+stuffing|Pantry|high|
+Sun-dried tomatoes|Pantry|high|
+Sunchokes|Produce|high|
+sushi rice|Pantry|high|
+sweet potatoes|Produce|high|
+Swiss cheese|Dairy & Eggs|high|
+Syrup|Pantry|high|
+tabasco|Pantry|high|
+Taco shells|Pantry|high|
+tagliatelle|Pantry|high|
+tahini|Pantry|high|
+Tapatio|Pantry|high|Hot sauce
+tapioca starch|Pantry|high|
+Tartar sauce|Pantry|high|
+tea|Beverages|high|
+Thai basil|Produce|high|
+thai chiles|Produce|high|Spelling variant of "thai chilis"
+thai chilis|Produce|high|Spelling variant of "thai chiles"
+thick spaghetti|Pantry|high|
+Thin spaghetti|Pantry|high|
+thyme|Produce|medium|Fresh herb
+Tia lupita|Pantry|medium|Hot sauce / tortilla brand — which one is unclear
+Tilex mold & mildew|Household|high|
+Togarashi|Pantry|high|
+toilet paper|Household|high|
+tomatillos|Produce|high|
+Tomato juice|Beverages|high|
+Tomato paste|Pantry|high|
+tomato puree|Pantry|high|
+tomato soup|Pantry|high|
+tomatoes|Produce|high|
+Tonic water|Beverages|high|
+Toothpaste|Pharmacy|high|
+toothpick|Household|high|
+Tortellini|Dairy & Eggs|low|Refrigerated, dried, or frozen depending on the store
+tortilla chips|Snacks|high|
+Tortillas|Bakery|medium|Tortillas move around by store
+trail mix|Snacks|high|
+trash bags|Household|high|
+Truffle oil|Pantry|high|
+Tuna fish|Pantry|medium|Canned, presumably
+Turkey|Meat & Seafood|high|
+turmeric|Pantry|high|
+turnips|Produce|high|
+unsalted pork fat|Meat & Seafood|high|
+Unscented hand soap|Household|medium|Could be Pharmacy
+unsweetened coconut|Pantry|high|
+v-8|Beverages|high|
+Vanilla|Pantry|high|
+vanilla beans|Pantry|high|
+Vaseline|Pharmacy|high|
+vegetable broth|Pantry|high|Same as "Vegetable stock"
+Vegetable oil|Pantry|high|
+Vegetable stock|Pantry|high|Same as "vegetable broth"
+Vegetarian pie crust|Frozen|medium|
+veggie burgers|Frozen|medium|
+veggie dogs|Frozen|medium|Sometimes refrigerated instead
+vitamin D, B complex vitamins|Pharmacy|high|
+walnuts|Pantry|medium|Baking aisle more often than snacks
+Water|Beverages|high|
+watermelon|Produce|high|
+Wax paper|Household|high|
+wheat thins|Snacks|high|
+whipped cream|Dairy & Eggs|high|
+White beans|Pantry|high|
+white cooking wine|Pantry|medium|Cooking wine sits with vinegars, not with drinks
+white pepper|Pantry|high|
+white vinegar|Pantry|high|
+windex|Household|high|
+Wine|Beverages|high|
+Witch hazel|Pharmacy|high|
+wonton wrappers|Frozen|low|Refrigerated or frozen depending on the store
+Woolite|Household|high|
+Worcestershire sauce|Pantry|high|
+wrapping paper|Household|high|Overlaps "Birthday wrapping paper"
+yeast: saf-instant|Pantry|high|
+yogurt|Dairy & Eggs|high|
+Yukon Gold potatoes 1 1/2 lb|Produce|medium|Quantity baked into the name
+Z-bars|Snacks|high|Same as "Zbars"
+Zbars|Snacks|high|Same as "Z-bars"
+Ziploc quart|Household|high|
+Zucchini|Produce|high|
