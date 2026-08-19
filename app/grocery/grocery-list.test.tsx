@@ -152,15 +152,18 @@ const SECTIONS: SectionRow[] = [
 ];
 
 function renderList(items: GroceryRow[], sections: SectionRow[] = SECTIONS) {
-  return render(
+  const props = (next: GroceryRow[]) => (
     <GroceryList
       weekId="wk-1"
       householdId="hh-1"
-      initialItems={items}
+      initialItems={next}
       catalog={[{ id: "c1", name: "Olive oil", defaultUnit: null }]}
       sections={sections}
-    />,
+    />
   );
+  const view = render(props(items));
+  /** Push a fresh SERVER snapshot, as a `revalidatePath` round trip does. */
+  return { ...view, snapshot: (next: GroceryRow[]) => view.rerender(props(next)) };
 }
 
 const changePayload = (
@@ -438,6 +441,50 @@ describe("GroceryList — aisles", () => {
     });
 
     await waitFor(() => expect(groupNames()).toEqual(["Dairy & Eggs"]));
+  });
+
+  it("keeps an in-flight aisle change when an OLDER server snapshot lands", async () => {
+    // Two moves in quick succession: the first one's `revalidatePath` snapshot
+    // was rendered before the second one committed, so adopting it wholesale
+    // would bounce the second row back to its old aisle and then forward again.
+    let settle: ((result: { ok: true }) => void) | undefined;
+    actions.setItemSection.mockImplementation(
+      () => new Promise((resolve) => { settle = resolve; }),
+    );
+    const { snapshot } = renderList([
+      row({ id: "1", name: "Milk", sectionId: null }),
+      row({ id: "2", name: "Kale", sectionId: null }),
+    ]);
+    await connected();
+
+    await pickAisle("Milk", "s-dairy");
+    expect(groupNames()).toEqual(["Dairy & Eggs", "Unsorted"]);
+
+    // Kale's snapshot lands: accurate about Kale, stale about Milk.
+    await act(async () => {
+      snapshot([
+        row({ id: "1", name: "Milk", sectionId: null }),
+        row({ id: "2", name: "Kale", sectionId: "s-produce" }),
+      ]);
+    });
+
+    expect(groupNames()).toEqual(["Produce", "Dairy & Eggs"]);
+    await act(async () => {
+      settle?.({ ok: true });
+    });
+  });
+
+  it("takes the server's word once the aisle write has settled", async () => {
+    const { snapshot } = renderList([row({ id: "1", name: "Milk", sectionId: "s-dairy" })]);
+    await connected();
+
+    // Nothing in flight, so a snapshot that disagrees wins — the server is the
+    // source of truth the moment we have no newer local write to protect.
+    await act(async () => {
+      snapshot([row({ id: "1", name: "Milk", sectionId: "s-produce" })]);
+    });
+
+    expect(groupNames()).toEqual(["Produce"]);
   });
 
   it("renders an ungrouped list when the household has no sections", async () => {

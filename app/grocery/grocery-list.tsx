@@ -122,6 +122,20 @@ export function GroceryList({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<PromotableItem[]>([]);
+  // Item ids whose aisle write is still in flight. The picker is disabled while
+  // it is here, which both tells a shopper on bad signal that the change hasn't
+  // landed and stops a second rapid change from racing the first.
+  const [savingSection, setSavingSection] = useState<Record<string, true>>({});
+  // Mirrored in a ref so the snapshot-sync effect below can read it without
+  // taking it as a dependency (which would re-run the sync on every write).
+  const savingSectionRef = useRef<Record<string, true>>({});
+  const markSavingSection = useCallback((id: string, saving: boolean) => {
+    const next = { ...savingSectionRef.current };
+    if (saving) next[id] = true;
+    else delete next[id];
+    savingSectionRef.current = next;
+    setSavingSection(next);
+  }, []);
   const [accepted, setAccepted] = useState<Record<string, boolean>>({});
   // Held in a ref so the router's identity can never churn the subscription
   // below (a re-JOIN would drop events mid-aisle).
@@ -138,8 +152,23 @@ export function GroceryList({
   useEffect(() => {
     // Sync from the server snapshot (external system), not deriving local
     // render state — the blessed setState-in-effect case per the rule docs.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setItems(sortItems(reconcileByPk(initialItems)));
+    setItems((prev) => {
+      const next = sortItems(reconcileByPk(initialItems));
+      const saving = savingSectionRef.current;
+      if (Object.keys(saving).length === 0) return next;
+      // A snapshot in flight was rendered BEFORE the aisle writes that are
+      // still outstanding, so adopting it wholesale would visibly bounce a row
+      // back to its old aisle and then forward again. It isn't stale about the
+      // rest of the row, only about the pointer being written right now — so
+      // keep the optimistic pointer for exactly those rows and take the server's
+      // word for everything else. Their own revalidation lands moments later.
+      const optimistic = new Map(prev.map((r) => [r.id, r.sectionId]));
+      return next.map((r) =>
+        saving[r.id] && optimistic.has(r.id)
+          ? { ...r, sectionId: optimistic.get(r.id) ?? null }
+          : r,
+      );
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
@@ -266,13 +295,18 @@ export function GroceryList({
       if (sectionId === row.sectionId) return;
       setError(null);
       patch(row.id, { sectionId });
-      const result = await setItemSectionAction(row.id, sectionId);
-      if (result && "error" in result) {
-        patch(row.id, { sectionId: row.sectionId }); // roll back
-        setError(result.error);
+      markSavingSection(row.id, true);
+      try {
+        const result = await setItemSectionAction(row.id, sectionId);
+        if (result && "error" in result) {
+          patch(row.id, { sectionId: row.sectionId }); // roll back
+          setError(result.error);
+        }
+      } finally {
+        markSavingSection(row.id, false);
       }
     },
-    [patch],
+    [patch, markSavingSection],
   );
 
   const onAddStaple = useCallback(
@@ -426,6 +460,7 @@ export function GroceryList({
               row={row}
               sections={sections}
               groupId={null}
+              saving={savingSection[row.id] === true}
               onToggleChecked={onToggleChecked}
               onToggleHaveIt={onToggleHaveIt}
               onMoveToSection={onMoveToSection}
@@ -457,6 +492,7 @@ export function GroceryList({
                       row={row}
                       sections={sections}
                       groupId={group.id}
+                      saving={savingSection[row.id] === true}
                       onToggleChecked={onToggleChecked}
                       onToggleHaveIt={onToggleHaveIt}
                       onMoveToSection={onMoveToSection}
@@ -512,6 +548,7 @@ function GroceryItemRow({
   row,
   sections,
   groupId,
+  saving,
   onToggleChecked,
   onToggleHaveIt,
   onMoveToSection,
@@ -520,6 +557,8 @@ function GroceryItemRow({
   sections: SectionRow[];
   /** The aisle this row RENDERED under — see the picker's value below. */
   groupId: string | null;
+  /** True while this row's aisle write is in flight. */
+  saving: boolean;
   onToggleChecked: (row: GroceryRow, checked: boolean) => Promise<void>;
   onToggleHaveIt: (row: GroceryRow, haveIt: boolean) => Promise<void>;
   onMoveToSection: (row: GroceryRow, sectionId: string | null) => Promise<void>;
@@ -570,11 +609,12 @@ function GroceryItemRow({
         // another phone) shows as Unsorted instead of blanking the control.
         <select
           aria-label={`Aisle for ${row.name}`}
+          disabled={saving}
           value={groupId ?? ""}
           onChange={(e) =>
             void onMoveToSection(row, e.target.value === "" ? null : e.target.value)
           }
-          className="border-input text-muted-foreground basis-full rounded-full border bg-transparent px-2 py-1 text-xs sm:basis-auto"
+          className="border-input text-muted-foreground basis-full rounded-full border bg-transparent px-2 py-1 text-xs disabled:opacity-50 sm:basis-auto"
         >
           {groupId === null ? <option value="">Unsorted</option> : null}
           {sections.map((section) => (
