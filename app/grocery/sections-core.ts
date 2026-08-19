@@ -100,6 +100,66 @@ export function resolveSectionId(
   return unsorted?.id ?? null;
 }
 
+/** One rendered aisle: its identity, its label, and the rows filed into it. */
+export type SectionGroup<T> = {
+  /** null only when the household has no Unsorted section to collapse onto. */
+  id: string | null;
+  name: string;
+  items: T[];
+};
+
+/**
+ * Bucket the list into aisles for rendering, in the household's section order.
+ *
+ * Generic over the item so this stays free of `list-core` (which imports THIS
+ * module — a concrete `GroceryRow` here would close the cycle).
+ *
+ * Three rules, each of which exists to protect a shopper standing in a store:
+ *   - An EMPTY section is omitted. An aisle you are not buying from is noise on
+ *     a phone screen.
+ *   - A NULL pointer collapses onto Unsorted (`resolveSectionId`), so the row's
+ *     picker shows "Unsorted" selected rather than sitting on a phantom value.
+ *   - An UNKNOWN pointer — a section another phone deleted, still referenced by
+ *     rows in this render until the next server snapshot — falls back to
+ *     Unsorted rather than vanishing. Dropping a row mid-aisle is the worst
+ *     outcome available, so nothing is ever grouped out of existence.
+ *
+ * Input order is preserved within each group, so `loadGroceryList`'s
+ * position/created_at ordering still decides the order inside an aisle.
+ */
+export function groupBySection<T extends { sectionId: string | null }>(
+  items: T[],
+  sections: SectionRow[],
+): SectionGroup<T>[] {
+  const known = new Set(sections.map((section) => section.id));
+  const buckets = new Map<string | null, T[]>();
+  // The bucket unresolvable pointers fall into: the real Unsorted section when
+  // there is one, else a null-keyed group that still renders.
+  const fallback = resolveSectionId(null, sections);
+
+  for (const item of items) {
+    const resolved = resolveSectionId(item.sectionId, sections);
+    const key = resolved !== null && known.has(resolved) ? resolved : fallback;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item);
+    else buckets.set(key, [item]);
+  }
+
+  const groups: SectionGroup<T>[] = [];
+  for (const section of sections) {
+    const bucketed = buckets.get(section.id);
+    if (bucketed) groups.push({ id: section.id, name: section.name, items: bucketed });
+  }
+
+  // Only reachable when there is no Unsorted section to have collected them.
+  const orphans = buckets.get(null);
+  if (orphans) {
+    groups.push({ id: null, name: UNSORTED_SECTION_NAME, items: orphans });
+  }
+
+  return groups;
+}
+
 /**
  * `lower(name)` → the household's catalog row, for section inheritance. Read
  * ONCE per operation and matched in TypeScript, never as a per-name `ilike`:
