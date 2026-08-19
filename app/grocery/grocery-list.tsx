@@ -56,9 +56,12 @@ import {
   promoteToCatalogAction,
   setCheckedAction,
   setHaveItAction,
+  setItemSectionAction,
   type GroceryActionState,
 } from "./actions";
 import { toGroceryRow, type CatalogRow, type GroceryRow } from "./list-core";
+import { SectionEditor } from "./section-editor";
+import { groupBySection, type SectionRow } from "./sections-core";
 import type { PromotableItem } from "./trip-core";
 
 export type GroceryListProps = {
@@ -66,13 +69,23 @@ export type GroceryListProps = {
   householdId: string;
   initialItems: GroceryRow[];
   catalog: CatalogRow[];
+  /** The household's aisles, in order. Empty = the list renders ungrouped. */
+  sections: SectionRow[];
 };
 
 /** Stable signature so a re-render doesn't clobber Realtime-applied state. */
 function itemsSig(rows: GroceryRow[]): string {
   return rows
-    .map((r) => `${r.id}:${r.name}:${r.quantity}:${r.unit}:${r.haveIt}:${r.checked}`)
+    .map(
+      (r) =>
+        `${r.id}:${r.name}:${r.quantity}:${r.unit}:${r.haveIt}:${r.checked}:${r.sectionId}`,
+    )
     .join("|");
+}
+
+/** Same idea for the aisles, which the editor mutates optimistically. */
+function sectionsSig(rows: SectionRow[]): string {
+  return rows.map((r) => `${r.id}:${r.name}:${r.position}`).join("|");
 }
 
 /** Shopping order: explicit position first, then arrival. */
@@ -98,10 +111,12 @@ export function GroceryList({
   householdId,
   initialItems,
   catalog,
+  sections: initialSections,
 }: GroceryListProps) {
   const [items, setItems] = useState<GroceryRow[]>(() =>
     sortItems(reconcileByPk(initialItems)),
   );
+  const [sections, setSections] = useState<SectionRow[]>(initialSections);
   const [live, setLive] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +142,16 @@ export function GroceryList({
     setItems(sortItems(reconcileByPk(initialItems)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
+
+  // The aisles are edited optimistically below, so they need the same
+  // signature-keyed sync as the items: adopt the server's order when it
+  // actually changes, and never on a plain re-render.
+  const sectionSig = sectionsSig(initialSections);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSections(initialSections);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sectionSig]);
 
   // ---- Realtime: the other shopper's phone -------------------------------
   const wasDisconnected = useRef(false);
@@ -227,6 +252,29 @@ export function GroceryList({
     [patch],
   );
 
+  /**
+   * File an item into an aisle. Optimistic like the toggles — the row jumps to
+   * its new heading before the write settles, because a shopper mid-aisle on
+   * bad signal should never wait to see where something went.
+   *
+   * The write is DURABLE (`setItemSection` also teaches the staple, #137), so
+   * this is "file this permanently", not "nudge it for today" — hence the
+   * label on the control below.
+   */
+  const onMoveToSection = useCallback(
+    async (row: GroceryRow, sectionId: string | null) => {
+      if (sectionId === row.sectionId) return;
+      setError(null);
+      patch(row.id, { sectionId });
+      const result = await setItemSectionAction(row.id, sectionId);
+      if (result && "error" in result) {
+        patch(row.id, { sectionId: row.sectionId }); // roll back
+        setError(result.error);
+      }
+    },
+    [patch],
+  );
+
   const onAddStaple = useCallback(
     async (catalogItemId: string) => {
       setError(null);
@@ -300,6 +348,8 @@ export function GroceryList({
     [items],
   );
 
+  const groups = useMemo(() => groupBySection(items, sections), [items, sections]);
+
   return (
     <section aria-label="Shopping list" className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -366,21 +416,62 @@ export function GroceryList({
           Nothing on the list yet — rebuild it from this week&apos;s menu, tap a
           staple, or type something below.
         </p>
-      ) : (
+      ) : sections.length === 0 ? (
+        // No aisles configured (or the read failed): one flat list still beats
+        // no list at all in the middle of a store.
         <ul className="space-y-1">
           {items.map((row) => (
             <GroceryItemRow
               key={row.id}
               row={row}
+              sections={sections}
+              groupId={null}
               onToggleChecked={onToggleChecked}
               onToggleHaveIt={onToggleHaveIt}
+              onMoveToSection={onMoveToSection}
             />
           ))}
         </ul>
+      ) : (
+        <div className="space-y-4">
+          {groups.map((group) => {
+            const headingId = `aisle-${group.id ?? "unsorted"}`;
+            return (
+              <section
+                key={headingId}
+                data-testid="section-group"
+                data-name={group.name}
+                aria-labelledby={headingId}
+                className="space-y-1"
+              >
+                <h3
+                  id={headingId}
+                  className="bg-background text-muted-foreground sticky top-0 z-10 py-1 text-xs font-semibold tracking-wide uppercase"
+                >
+                  {group.name}
+                </h3>
+                <ul className="space-y-1">
+                  {group.items.map((row) => (
+                    <GroceryItemRow
+                      key={row.id}
+                      row={row}
+                      sections={sections}
+                      groupId={group.id}
+                      onToggleChecked={onToggleChecked}
+                      onToggleHaveIt={onToggleHaveIt}
+                      onMoveToSection={onMoveToSection}
+                    />
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
       )}
 
       <StapleChips catalog={catalog} busy={busy} onAdd={onAddStaple} />
       <AdHocForm weekId={weekId} />
+      <SectionEditor sections={sections} onSectionsChange={setSections} />
     </section>
   );
 }
@@ -419,12 +510,19 @@ export function toChange(
 
 function GroceryItemRow({
   row,
+  sections,
+  groupId,
   onToggleChecked,
   onToggleHaveIt,
+  onMoveToSection,
 }: {
   row: GroceryRow;
+  sections: SectionRow[];
+  /** The aisle this row RENDERED under — see the picker's value below. */
+  groupId: string | null;
   onToggleChecked: (row: GroceryRow, checked: boolean) => Promise<void>;
   onToggleHaveIt: (row: GroceryRow, haveIt: boolean) => Promise<void>;
+  onMoveToSection: (row: GroceryRow, sectionId: string | null) => Promise<void>;
 }) {
   const amount = formatAmount(row.quantity, row.unit);
   const muted = row.haveIt || row.checked;
@@ -433,7 +531,7 @@ function GroceryItemRow({
     <li
       data-testid="grocery-item"
       data-name={row.name}
-      className="border-border flex items-center gap-3 rounded-md border p-2 text-left"
+      className="border-border flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border p-2 text-left"
     >
       <input
         type="checkbox"
@@ -463,6 +561,29 @@ function GroceryItemRow({
       >
         {row.haveIt ? "Got it already" : "We have it"}
       </button>
+      {sections.length > 0 ? (
+        // A native <select> on purpose: iOS renders it as a full-width wheel at
+        // the bottom of the screen — a thumb-reachable sheet we get for free —
+        // and it is keyboard- and screen-reader-complete with nothing to build.
+        // Its value is the group the row RENDERED under, not `row.sectionId`,
+        // so a pointer at a section this render doesn't know about (deleted on
+        // another phone) shows as Unsorted instead of blanking the control.
+        <select
+          aria-label={`Aisle for ${row.name}`}
+          value={groupId ?? ""}
+          onChange={(e) =>
+            void onMoveToSection(row, e.target.value === "" ? null : e.target.value)
+          }
+          className="border-input text-muted-foreground basis-full rounded-full border bg-transparent px-2 py-1 text-xs sm:basis-auto"
+        >
+          {groupId === null ? <option value="">Unsorted</option> : null}
+          {sections.map((section) => (
+            <option key={section.id} value={section.id}>
+              {section.name}
+            </option>
+          ))}
+        </select>
+      ) : null}
     </li>
   );
 }
