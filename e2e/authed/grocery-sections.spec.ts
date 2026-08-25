@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
+
+import { SEED_FIXTURE } from "../support/paths";
 
 /**
  * Aisles, end to end (issue #138, epic #135).
@@ -164,4 +167,35 @@ test("the move picker and the aisle reorder are both reachable and operable by k
   await moveDown.focus();
   await page.keyboard.press("Enter");
   await expect(rows.first()).toHaveAttribute("data-name", first);
+});
+
+/**
+ * The rolling list (2026-08-24). A whole week of the family's additions vanished
+ * when the week rolled over on a Monday morning: the rows were never deleted,
+ * just filtered out of the read, which to the people shopping is
+ * indistinguishable from losing them.
+ *
+ * This is the only test that can catch a regression of it. Every other grocery
+ * test adds its item "now", so the item always belongs to the current week and
+ * a week-scoped read looks perfectly healthy. The fixture item is seeded three
+ * weeks back on purpose (`e2e/support/seed.ts`).
+ */
+test("an item from an earlier week is still on the list", async ({ page }) => {
+  const { carriedOverItem } = JSON.parse(
+    readFileSync(SEED_FIXTURE, "utf8"),
+  ) as { carriedOverItem: string };
+
+  await page.goto("/grocery");
+  await expect(page.getByRole("heading", { name: "Groceries" })).toBeVisible();
+
+  await expect(page.getByRole("checkbox", { name: carriedOverItem })).toBeVisible();
+
+  // And it behaves like any other row — it can be filed into an aisle, which
+  // proves it is a first-class item and not merely rendered.
+  await fileInto(page, carriedOverItem, PRODUCE);
+  await page.reload();
+  await expect(groupContaining(page, carriedOverItem)).toHaveAttribute(
+    "data-name",
+    PRODUCE,
+  );
 });

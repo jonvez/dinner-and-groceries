@@ -51,6 +51,15 @@ export type SeededHousehold = {
   householdId: string;
   storageStateA: StorageState;
   storageStateB: StorageState;
+  /**
+   * Name of a grocery item seeded into a PAST week. The shopping list is a
+   * rolling list — an item nobody bought is still needed — so this must be
+   * visible on `/grocery` today. Week-scoping the read is what silently hid a
+   * whole week of the family's additions at the Monday boundary, and no test
+   * that adds an item "now" can ever catch that: the row has to predate the
+   * current week, which only a seed can arrange.
+   */
+  carriedOverItem: string;
 };
 
 /** Build an `@supabase/ssr` server client backed by an in-memory cookie jar. */
@@ -121,6 +130,34 @@ export async function seedHousehold(opts: SeedOptions): Promise<SeededHousehold>
     throw new Error("seed: user B joined a different household than expected");
   }
 
+  // --- A grocery item stranded in an EARLIER week ---------------------------
+  // Written as user A through RLS, exactly as the app would: no service-role,
+  // no admin client. `weeks` is upserted on its (household_id, start_date)
+  // natural key, the same one `getOrCreateWeek` uses.
+  const carriedOverItem = `E2E Carried Over ${suffix}`;
+  const pastWeekStart = pastWeekStartDate();
+
+  const { data: pastWeek, error: weekError } = await a.client
+    .from("weeks")
+    .upsert(
+      { household_id: created.householdId, start_date: pastWeekStart },
+      { onConflict: "household_id,start_date" },
+    )
+    .select("id")
+    .single();
+  if (weekError || !pastWeek) {
+    throw new Error(`seed: could not open past week: ${weekError?.message ?? "no row"}`);
+  }
+
+  const { error: itemError } = await a.client.from("grocery_items").insert({
+    household_id: created.householdId,
+    week_id: pastWeek.id,
+    name: carriedOverItem,
+  });
+  if (itemError) {
+    throw new Error(`seed: could not seed the carried-over item: ${itemError.message}`);
+  }
+
   const expiresUnixSec = Math.floor(Date.now() / 1000) + COOKIE_TTL_SEC;
   const toState = (store: Map<string, string>): StorageState =>
     sessionCookiesToStorageState(snapshot(store), {
@@ -133,5 +170,20 @@ export async function seedHousehold(opts: SeedOptions): Promise<SeededHousehold>
     householdId: created.householdId,
     storageStateA: toState(a.store),
     storageStateB: toState(b.store),
+    carriedOverItem,
   };
+}
+
+/**
+ * A Monday at least three weeks back, as `YYYY-MM-DD`. Three, not one, so the
+ * fixture is unambiguously in a past week no matter which day the suite runs on
+ * or which week-start the household prefers.
+ */
+function pastWeekStartDate(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 21);
+  // Wind back to the Monday on or before that date (week_start_day defaults to
+  // Monday); any day would do, but a real week start keeps the row realistic.
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
 }

@@ -2,7 +2,7 @@ import fs from "node:fs";
 
 import { test as setup, expect } from "@playwright/test";
 
-import { AUTH_DIR, STORAGE_STATE_A, STORAGE_STATE_B } from "./support/paths";
+import { AUTH_DIR, SEED_FIXTURE, STORAGE_STATE_A, STORAGE_STATE_B } from "./support/paths";
 import { seedHousehold } from "./support/seed";
 
 /**
@@ -29,7 +29,7 @@ setup("seed two users in one household and persist their sessions", async () => 
   // over plain http), so the domain is the app host and Secure must be off.
   const domain = new URL(process.env.E2E_BASE_URL ?? "http://127.0.0.1").hostname;
 
-  const { storageStateA, storageStateB, householdId } = await seedHousehold({
+  const { storageStateA, storageStateB, householdId, carriedOverItem } = await seedHousehold({
     url,
     anonKey,
     domain,
@@ -37,8 +37,10 @@ setup("seed two users in one household and persist their sessions", async () => 
   });
 
   expect(householdId).toBeTruthy();
+  expect(carriedOverItem).toBeTruthy();
 
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   fs.writeFileSync(STORAGE_STATE_A, JSON.stringify(storageStateA, null, 2));
   fs.writeFileSync(STORAGE_STATE_B, JSON.stringify(storageStateB, null, 2));
+  fs.writeFileSync(SEED_FIXTURE, JSON.stringify({ carriedOverItem }, null, 2));
 });

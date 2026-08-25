@@ -46,6 +46,12 @@ export type ExistingGroceryItem = {
   haveIt: boolean;
   checked: boolean;
   edited: boolean;
+  /**
+   * The week this row was CREATED in — provenance, not scope. Since the list
+   * stopped being week-scoped, the planner sees unbought rows from earlier
+   * weeks; this is what keeps a rebuild from deleting them.
+   */
+  weekId: string;
 };
 
 export type RolledUpInsert = {
@@ -100,6 +106,15 @@ type DesiredRow = {
 export function planRollup(
   slotted: SlottedIngredient[],
   existing: ExistingGroceryItem[],
+  /**
+   * The week being rebuilt. Rows created in ANY week take part in dedupe and
+   * protection — otherwise last week's unbought leeks and this week's slotted
+   * leeks would both sit on the list — but only rows from THIS week may be
+   * deleted. Explicit rather than inferred: getting it wrong silently destroys
+   * a row the family still needs, which is the failure this whole change set
+   * exists to prevent.
+   */
+  { weekId }: { weekId: string },
 ): RollupPlan {
   // 1) Aggregate the week's slotting into the rows we WANT, keyed by
   //    (normalized name, exact unit). Insertion order is preserved, so the
@@ -156,6 +171,9 @@ export function planRollup(
   //    any duplicates of such a key — are the ONLY rows we ever delete.
   const toDelete: string[] = [];
   for (const row of [...autoByKey.values(), ...autoDuplicates]) {
+    // Another week's row is never ours to delete: this rebuild knows nothing
+    // about the menu that produced it.
+    if (row.weekId !== weekId) continue;
     if (!desired.has(dedupeKey(row.name, row.unit))) toDelete.push(row.id);
   }
 

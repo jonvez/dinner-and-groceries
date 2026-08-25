@@ -198,21 +198,24 @@ describe("formatAmount", () => {
 });
 
 describe("toChange", () => {
-  it("drops a row from another week", () => {
-    expect(toChange(changePayload("INSERT", dbRow({ id: "g1", name: "x", week_id: "wk-2" })), "wk-1")).toBeNull();
+  it("keeps a row from another week — the list is rolling, not week-scoped", () => {
+    // Dropping these is what would have made a carried-over item's live
+    // check-off invisible on the other phone until a reload.
+    expect(
+      toChange(changePayload("INSERT", dbRow({ id: "g1", name: "x", week_id: "wk-2" }))),
+    ).toEqual({ type: "INSERT", row: expect.objectContaining({ id: "g1", name: "x" }) });
   });
 
   it("treats an archived row as a removal from the active list", () => {
     expect(
       toChange(
         changePayload("UPDATE", dbRow({ id: "g1", name: "x", purchased_at: "2026-08-07T19:00:00Z" })),
-        "wk-1",
       ),
     ).toEqual({ type: "DELETE", id: "g1" });
   });
 
   it("maps a DELETE by primary key", () => {
-    expect(toChange(changePayload("DELETE", {}, { id: "g1" }), "wk-1")).toEqual({
+    expect(toChange(changePayload("DELETE", {}, { id: "g1" }))).toEqual({
       type: "DELETE",
       id: "g1",
     });

@@ -1,7 +1,6 @@
 import { AppNav } from "@/components/app-nav";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 import { currentWeekStart } from "@/lib/week/boundary";
-import { formatWeekRange } from "@/lib/week/labels";
 import { getOrCreateWeek, loadWeekSettings } from "@/lib/week/open-week";
 
 import { resolveGroceryActor } from "./actor";
@@ -25,8 +24,16 @@ export const dynamic = "force-dynamic";
  *   3. Read the active list, the staples catalog, and the household's aisles.
  *   4. Hand them to the live client list.
  *
- * The list is deliberately "this week" only — a shopper standing in the store
- * wants today's list, not week navigation (that's the board's job).
+ * The list is a ROLLING list, not a weekly one. It shows everything the
+ * household still has to buy, whenever it was added; an item leaves only when
+ * someone buys it (complete trip) or removes it. Scoping the read to the
+ * current week is what made a whole week's additions vanish at the Monday
+ * boundary — the rows were intact, merely unreachable, which to the family is
+ * indistinguishable from losing them.
+ *
+ * The week is still resolved here, because it is still needed: new rows record
+ * the week they were created in, and "rebuild from menu" syncs against THIS
+ * week's slotted dishes. It just no longer decides what the list shows.
  */
 export default async function GroceryPage() {
   const supabase = await createServerComponentClient();
@@ -45,8 +52,10 @@ export default async function GroceryPage() {
     : null;
   const weekId = week?.ok ? week.weekId : null;
 
+  // The read needs no week; the GATE is still `weekId`, because without a week
+  // row the client cannot add anything and the error state below is correct.
   const { items, catalog, sections } = weekId
-    ? await loadGroceryList(supabase, { weekId })
+    ? await loadGroceryList(supabase)
     : { items: [], catalog: [], sections: [] };
 
   return (
@@ -56,7 +65,7 @@ export default async function GroceryPage() {
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">Groceries</h1>
           <p className="text-muted-foreground text-sm">
-            {formatWeekRange(weekStart)}
+            Everything you still need to buy
           </p>
         </header>
 
