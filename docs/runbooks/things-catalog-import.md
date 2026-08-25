@@ -76,7 +76,27 @@ entirely — use it for the handful of things that are not staples (`Menu`,
 > guarantee than a dropdown, since it cannot be bypassed by pasting. To add a
 > dropdown anyway: select `E2:E`, then Data → Data validation → range `I2:I13`.
 
-Export the reviewed sheet back to TSV before step 4.
+Export the reviewed sheet back to TSV before step 4 — or let the tooling do it:
+`get_drive_file_download_url` with `export_format: "csv"` writes the sheet
+straight to disk, which beats retyping 574 names by hand.
+
+**Two things the review will produce that the generator handles explicitly:**
+
+* **A section typed in the wrong case** (`frozen` for `Frozen`). Forgiven and
+  *reported*, because no two sections differ only in case so the correction is
+  unambiguous. It is never applied silently — a quiet fix here is how you stop
+  noticing the review surface has no validation.
+* **An edited NAME.** The Name column is meant to be read-only, but tidying
+  `Chorizo 12oz` to `Chorizo` is a good edit and worth keeping. Declare it:
+
+  ```bash
+  --rename "Chorizo 12oz=>Chorizo"
+  ```
+
+  Renames are declared on the command line, never inferred from the sheet, so
+  each one lands in the runbook and the commit message. Inferring them (by row
+  position, say) would work right up until someone sorts the spreadsheet, and
+  would then rewrite staples silently.
 
 ## 4. Generate the seed
 

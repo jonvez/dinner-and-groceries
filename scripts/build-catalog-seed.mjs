@@ -47,12 +47,21 @@ const SECTIONS = [
 const DROP = "Drop";
 
 function parseArgs(argv) {
-  const args = { extract: null, reviewed: null, out: null };
+  const args = { extract: null, reviewed: null, out: null, renames: new Map() };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--extract") args.extract = argv[++i];
     else if (argv[i] === "--reviewed") args.reviewed = argv[++i];
     else if (argv[i] === "--out") args.out = argv[++i];
-    else throw new Error(`Unknown argument: ${argv[i]}`);
+    else if (argv[i] === "--rename") {
+      // "old name=>new name". Renames are declared on the COMMAND LINE, never
+      // inferred from the sheet, so every one of them lands in the runbook and
+      // the commit message. Inferring them (by row position, say) would work
+      // right up until someone sorts the spreadsheet, and would then rewrite
+      // staples silently.
+      const [from, to] = String(argv[++i] ?? "").split("=>");
+      if (!from || !to) throw new Error('--rename expects "old name=>new name"');
+      args.renames.set(from.trim().toLowerCase(), to.trim());
+    } else throw new Error(`Unknown argument: ${argv[i]}`);
   }
   for (const required of ["extract", "reviewed", "out"]) {
     if (!args[required]) throw new Error(`--${required} is required`);
@@ -76,6 +85,7 @@ function parseReviewed(path) {
 
   const byKey = new Map();
   const problems = [];
+  const corrections = [];
   lines.slice(1).forEach((line, index) => {
     const cells = line.split("\t");
     const name = (cells[nameCol] ?? "").trim();
@@ -89,44 +99,63 @@ function parseReviewed(path) {
     // The Sheet has no enforced dropdown, so this is the real gate: a typo'd
     // section would otherwise resolve to nothing and quietly file the item in
     // Unsorted, which reads exactly like a correct import.
-    if (section !== DROP && !SECTIONS.includes(section)) {
+    //
+    // Case is forgiven, because "frozen" can only mean "Frozen" — there are no
+    // two sections differing only in case, so the correction is unambiguous.
+    // It is REPORTED rather than applied quietly: a silent fix here is how you
+    // stop noticing that the review surface has no validation.
+    const canonical =
+      section === DROP
+        ? DROP
+        : SECTIONS.find((s) => s.toLowerCase() === section.toLowerCase());
+    if (!canonical) {
       problems.push(`${path}:${row}: "${name}" has unknown section ${JSON.stringify(section)}`);
       return;
+    }
+    if (canonical !== section) {
+      corrections.push(`${name}: ${JSON.stringify(section)} -> ${JSON.stringify(canonical)}`);
     }
     const key = name.toLowerCase();
     if (byKey.has(key)) {
       problems.push(`${path}:${row}: duplicate row for "${name}"`);
       return;
     }
-    byKey.set(key, section);
+    byKey.set(key, canonical);
   });
 
-  return { byKey, problems };
+  return { byKey, problems, corrections };
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const extract = JSON.parse(readFileSync(args.extract, "utf8"));
-  const { byKey, problems } = parseReviewed(args.reviewed);
+  const { byKey, problems, corrections } = parseReviewed(args.reviewed);
 
   const rows = [];
   const dropped = [];
   const seen = new Set();
 
+  const renamed = [];
   for (const item of extract.names) {
-    const key = item.name.toLowerCase();
+    // A declared rename means the sheet carries a tidier name for this staple
+    // ("Chorizo 12oz" -> "Chorizo"). The extract row still supplies the counts;
+    // only the label changes.
+    const finalName = args.renames.get(item.name.toLowerCase()) ?? item.name;
+    if (finalName !== item.name) renamed.push(`${item.name} -> ${finalName}`);
+
+    const key = finalName.toLowerCase();
     const section = byKey.get(key);
     if (section === undefined) {
-      problems.push(`extracted name has no reviewed row: ${JSON.stringify(item.name)}`);
+      problems.push(`extracted name has no reviewed row: ${JSON.stringify(finalName)}`);
       continue;
     }
     seen.add(key);
     if (section === DROP) {
-      dropped.push(item.name);
+      dropped.push(finalName);
       continue;
     }
     rows.push({
-      name: item.name,
+      name: finalName,
       section,
       timesBought: item.timesBought,
       lastBought: item.lastBought,
@@ -248,6 +277,12 @@ commit;
   const bySection = new Map();
   for (const row of rows) bySection.set(row.section, (bySection.get(row.section) ?? 0) + 1);
 
+  if (corrections.length > 0) {
+    console.error(`Case      ${corrections.length} section name(s) corrected: ${corrections.join("; ")}`);
+  }
+  if (renamed.length > 0) {
+    console.error(`Renamed   ${renamed.join("; ")}`);
+  }
   console.error(`Staples   ${rows.length}`);
   console.error(`Dropped   ${dropped.length}${dropped.length ? `: ${dropped.join(", ")}` : ""}`);
   console.error(
