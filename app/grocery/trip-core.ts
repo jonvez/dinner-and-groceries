@@ -84,13 +84,14 @@ export async function completeTrip(
   // RLS scopes this to the caller's household; the explicit `household_id`
   // filter is defense in depth (and keeps this symmetric with
   // `promoteToCatalog`, so no reader assumes a fence that isn't there). The
-  // remaining filters narrow it to "this week's cart". `RETURNING` gives us the
-  // count AND the candidates in one round trip, with no read-then-write race.
+  // remaining filters narrow it to "the cart" — everything ticked off and not
+  // already archived, from ANY week, because the list is a rolling one and the
+  // shopper just put all of it in the car. `RETURNING` gives us the count AND
+  // the candidates in one round trip, with no read-then-write race.
   const { data, error } = await supabase
     .from("grocery_items")
     .update({ purchased_at: clock().toISOString() })
     .eq("household_id", input.householdId)
-    .eq("week_id", input.weekId)
     .eq("checked", true)
     .is("purchased_at", null)
     .select("id, name, ingredient_id, catalog_item_id, section_id");

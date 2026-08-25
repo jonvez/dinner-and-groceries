@@ -81,18 +81,21 @@ const itemRow = (o: Record<string, unknown> & { id: string; name: string }) => (
 });
 
 describe("loadGroceryList", () => {
-  it("reads only this week's un-purchased rows, in shopping order", async () => {
+  it("reads every un-purchased row, in shopping order — NOT just this week's", async () => {
+    // The list is a rolling list. Scoping it to the current week silently hid
+    // everything the family added before the week rolled over (2026-08-24):
+    // the rows were never deleted, just unreachable, which reads as data loss.
     const { client, selects } = makeClient({});
 
-    await loadGroceryList(client, { weekId: "wk-1" });
+    await loadGroceryList(client);
 
     const items = selects.find((s) => s.table === "grocery_items");
     expect(items?.filters).toEqual([
-      { op: "eq", column: "week_id", value: "wk-1" },
       { op: "is", column: "purchased_at", value: null },
       { op: "order", column: "position", options: undefined },
       { op: "order", column: "created_at", options: undefined },
     ]);
+    expect(items?.filters.some((f) => f.column === "week_id")).toBe(false);
     // No manual household filter — RLS scopes the read (ADR 0003).
     expect(items?.filters.some((f) => f.column === "household_id")).toBe(false);
   });
@@ -100,7 +103,7 @@ describe("loadGroceryList", () => {
   it("reads the staples catalog most-used first, then alphabetically", async () => {
     const { client, selects } = makeClient({});
 
-    await loadGroceryList(client, { weekId: "wk-1" });
+    await loadGroceryList(client);
 
     const catalog = selects.find((s) => s.table === "catalog_items");
     expect(catalog?.columns).toContain("default_unit");
@@ -135,7 +138,7 @@ describe("loadGroceryList", () => {
       },
     });
 
-    const { items, catalog } = await loadGroceryList(client, { weekId: "wk-1" });
+    const { items, catalog } = await loadGroceryList(client);
 
     expect(items).toEqual([
       {
@@ -162,7 +165,7 @@ describe("loadGroceryList", () => {
       items: { data: [itemRow({ id: "g1", name: "eggs" })], error: null },
     });
 
-    const { items } = await loadGroceryList(client, { weekId: "wk-1" });
+    const { items } = await loadGroceryList(client);
 
     expect(items[0].quantity).toBeNull();
     expect(items[0].unit).toBeNull();
@@ -174,7 +177,7 @@ describe("loadGroceryList", () => {
       catalog: { data: null, error: null },
     });
 
-    expect(await loadGroceryList(client, { weekId: "wk-1" })).toEqual({
+    expect(await loadGroceryList(client)).toEqual({
       items: [],
       catalog: [],
       sections: [],
@@ -187,7 +190,7 @@ describe("loadGroceryList", () => {
       catalog: { data: null, error: { message: "permission denied" } },
     });
 
-    expect(await loadGroceryList(client, { weekId: "wk-1" })).toEqual({
+    expect(await loadGroceryList(client)).toEqual({
       items: [],
       catalog: [],
       sections: [],

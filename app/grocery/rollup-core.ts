@@ -67,6 +67,7 @@ type GroceryItemRow = {
   have_it: boolean;
   checked: boolean;
   edited: boolean;
+  week_id: string;
 };
 
 /**
@@ -102,6 +103,7 @@ function toExistingItem(row: GroceryItemRow): ExistingGroceryItem {
     haveIt: row.have_it,
     checked: row.checked,
     edited: row.edited,
+    weekId: row.week_id,
   };
 }
 
@@ -123,17 +125,26 @@ export async function buildGroceryList(
 
   // Only the ACTIVE list: purchased/archived rows are a past trip, out of the
   // roll-up's scope, and must never be revived or deleted by a rebuild.
+  //
+  // Deliberately NOT filtered by week. The list stopped being week-scoped (the
+  // 2026-08-24 rollover bug), so a row the family added weeks ago and still
+  // hasn't bought is on the list today and must take part in dedupe and
+  // protection — otherwise slotting a dish that needs leeks would add a SECOND
+  // "Leeks" line beside the one already sitting there. `planRollup` is told
+  // which week is being rebuilt so it still only ever deletes rows from THAT
+  // week; reading wider must not mean deleting wider.
   const { data: itemRows, error: itemsError } = await supabase
     .from("grocery_items")
-    .select("id, name, quantity, unit, ingredient_id, catalog_item_id, have_it, checked, edited")
-    .eq("week_id", weekId)
+    .select(
+      "id, name, quantity, unit, ingredient_id, catalog_item_id, have_it, checked, edited, week_id",
+    )
     .is("purchased_at", null);
   if (itemsError) return { ok: false, error: GENERIC_ERROR };
 
   const slotted = flattenSlottedIngredients((slotRows ?? []) as unknown as SlotEmbedRow[]);
   const existing = ((itemRows ?? []) as unknown as GroceryItemRow[]).map(toExistingItem);
 
-  const plan = planRollup(slotted, existing);
+  const plan = planRollup(slotted, existing, { weekId });
 
   // Refresh surviving auto-rows first, then drop stale ones, then insert the
   // new arrivals — so a rebuild never briefly shows a duplicate row.

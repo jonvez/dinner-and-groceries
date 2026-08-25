@@ -26,12 +26,24 @@ const auto = (o: Partial<ExistingGroceryItem> & { id: string }): ExistingGrocery
   haveIt: false,
   checked: false,
   edited: false,
+  weekId: "wk-current",
   ...o,
 });
 
+
+/**
+ * `planRollup` with the week under rebuild defaulted — it only matters to the
+ * cross-week tests at the bottom, which pass it explicitly.
+ */
+const rollup = (
+  slotted: Parameters<typeof planRollup>[0],
+  existing: Parameters<typeof planRollup>[1],
+  weekId = "wk-current",
+) => planRollup(slotted, existing, { weekId });
+
 describe("planRollup", () => {
   it("sums same normalized-name + same unit into one row", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "Flour", quantity: 2, unit: "cup" },
         { ingredientId: "i2", name: "flour", quantity: 1, unit: "cup" },
@@ -43,7 +55,7 @@ describe("planRollup", () => {
   });
 
   it("merges case / plural / whitespace variants of the same name", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "Chicken Breasts", quantity: 2, unit: null },
         { ingredientId: "i2", name: "  chicken   breast ", quantity: 1, unit: null },
@@ -56,7 +68,7 @@ describe("planRollup", () => {
   });
 
   it("lists un-mergeable units separately", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "flour", quantity: 2, unit: "cup" },
         { ingredientId: "i2", name: "flour", quantity: 100, unit: "g" },
@@ -67,7 +79,7 @@ describe("planRollup", () => {
   });
 
   it("keeps quantity null when every contributor is null (optional qty)", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "eggs", quantity: null, unit: null },
         { ingredientId: "i2", name: "Eggs", quantity: null, unit: null },
@@ -78,7 +90,7 @@ describe("planRollup", () => {
   });
 
   it("sums only present quantities; a null contributes nothing (never 1)", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "milk", quantity: 1, unit: "cup" },
         { ingredientId: "i2", name: "milk", quantity: null, unit: "cup" },
@@ -89,7 +101,7 @@ describe("planRollup", () => {
   });
 
   it("merges an unmerged null-unit with a real unit never (distinct keys)", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "salt", quantity: null, unit: null },
         { ingredientId: "i2", name: "salt", quantity: 1, unit: "tsp" },
@@ -100,7 +112,7 @@ describe("planRollup", () => {
   });
 
   it("treats an empty-string unit and an absent unit as the SAME key", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "eggs", quantity: 2, unit: "" },
         { ingredientId: "i2", name: "eggs", quantity: 6, unit: null },
@@ -113,7 +125,7 @@ describe("planRollup", () => {
 
   it("never collides a name-with-spaces against a multi-word unit", () => {
     // "chicken" + "fl oz" and "chicken fl" + "oz" must stay two rows.
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "chicken", quantity: 1, unit: "fl oz" },
         { ingredientId: "i2", name: "chicken fl", quantity: 1, unit: "oz" },
@@ -125,12 +137,12 @@ describe("planRollup", () => {
 
   it("rolls a dish slotted twice up twice (caller passes its lines per slotting)", () => {
     const line = { ingredientId: "i1", name: "onion", quantity: 1, unit: null };
-    const p = planRollup([line, line], []);
+    const p = rollup([line, line], []);
     expect(p.toInsert).toEqual([{ name: "onion", quantity: 2, unit: null, ingredientId: "i1" }]);
   });
 
   it("updates an untouched auto-row's quantity in place (not added/removed)", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "flour", quantity: 3, unit: "cup" }],
       [auto({ id: "g1", name: "flour", quantity: 2, unit: "cup", ingredientId: "iOld" })],
     );
@@ -141,7 +153,7 @@ describe("planRollup", () => {
   });
 
   it("leaves a surviving auto-row alone when quantity is unchanged", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "flour", quantity: 2, unit: "cup" }],
       [auto({ id: "g1", name: "flour", quantity: 2, unit: "cup" })],
     );
@@ -151,7 +163,7 @@ describe("planRollup", () => {
   });
 
   it("clears a surviving auto-row's quantity when the slotting is now unquantified", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "flour", quantity: null, unit: "cup" }],
       [auto({ id: "g1", name: "flour", quantity: 2, unit: "cup" })],
     );
@@ -159,7 +171,7 @@ describe("planRollup", () => {
   });
 
   it("deletes an untouched auto-row whose source is no longer slotted", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "flour", quantity: 2, unit: "cup" }],
       [
         auto({ id: "g1", name: "flour", quantity: 2, unit: "cup" }),
@@ -171,7 +183,7 @@ describe("planRollup", () => {
   });
 
   it("deletes EVERY stale untouched auto-row sharing a no-longer-slotted key", () => {
-    const p = planRollup(
+    const p = rollup(
       [],
       [
         auto({ id: "g1", name: "sugar", quantity: 1, unit: "cup" }),
@@ -183,7 +195,7 @@ describe("planRollup", () => {
   });
 
   it("refreshes only one of duplicate auto-rows for a still-slotted key (never deletes it)", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "sugar", quantity: 3, unit: "cup" }],
       [
         auto({ id: "g1", name: "sugar", quantity: 1, unit: "cup" }),
@@ -197,7 +209,7 @@ describe("planRollup", () => {
   it.each(["edited", "checked", "haveIt"] as const)(
     "never deletes a %s row even when its source is gone",
     (flag) => {
-      const p = planRollup(
+      const p = rollup(
         [],
         [auto({ id: "g1", name: "sugar", quantity: 1, unit: "cup", [flag]: true })],
       );
@@ -207,14 +219,14 @@ describe("planRollup", () => {
   );
 
   it("never deletes an ad-hoc row (ingredientId null)", () => {
-    const p = planRollup([], [auto({ id: "g1", name: "chips", ingredientId: null })]);
+    const p = rollup([], [auto({ id: "g1", name: "chips", ingredientId: null })]);
     expect(p.toDelete).toHaveLength(0);
   });
 
   it.each(["edited", "checked", "haveIt"] as const)(
     "does not insert/update an auto-row for a key a %s row owns — merge not clobber",
     (flag) => {
-      const p = planRollup(
+      const p = rollup(
         [{ ingredientId: "i1", name: "flour", quantity: 3, unit: "cup" }],
         [auto({ id: "g1", name: "flour", quantity: 5, unit: "cup", [flag]: true })],
       );
@@ -227,7 +239,7 @@ describe("planRollup", () => {
   );
 
   it("does not insert an auto-row for a key an ad-hoc row owns", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "chips", quantity: 1, unit: null }],
       [auto({ id: "g1", name: "chips", ingredientId: null })],
     );
@@ -236,7 +248,7 @@ describe("planRollup", () => {
   });
 
   it("does not let a protected row shield a DIFFERENT key from being inserted", () => {
-    const p = planRollup(
+    const p = rollup(
       [{ ingredientId: "i1", name: "flour", quantity: 3, unit: "g" }],
       [auto({ id: "g1", name: "flour", quantity: 5, unit: "cup", edited: true })],
     );
@@ -245,7 +257,7 @@ describe("planRollup", () => {
   });
 
   it("still deletes an untouched auto-row that shares a name with a protected row", () => {
-    const p = planRollup(
+    const p = rollup(
       [],
       [
         auto({ id: "g1", name: "flour", quantity: 5, unit: "cup", edited: true }),
@@ -256,13 +268,13 @@ describe("planRollup", () => {
   });
 
   it("inserts a brand-new auto-row and counts it added", () => {
-    const p = planRollup([{ ingredientId: "i1", name: "butter", quantity: 1, unit: "stick" }], []);
+    const p = rollup([{ ingredientId: "i1", name: "butter", quantity: 1, unit: "stick" }], []);
     expect(p.added).toBe(1);
     expect(p.toInsert[0].ingredientId).toBe("i1");
   });
 
   it("returns an empty plan for an empty week and an empty list", () => {
-    expect(planRollup([], [])).toEqual({
+    expect(rollup([], [])).toEqual({
       toInsert: [],
       toUpdate: [],
       toDelete: [],
@@ -272,7 +284,7 @@ describe("planRollup", () => {
   });
 
   it("reports added/removed as the sizes of the insert/delete sets", () => {
-    const p = planRollup(
+    const p = rollup(
       [
         { ingredientId: "i1", name: "butter", quantity: 1, unit: "stick" },
         { ingredientId: "i2", name: "basil", quantity: null, unit: null },
@@ -286,5 +298,71 @@ describe("planRollup", () => {
     expect(p.removed).toBe(p.toDelete.length);
     expect(p.added).toBe(2);
     expect(p.removed).toBe(2);
+  });
+});
+
+/**
+ * Rolling list (the 2026-08-24 week-rollover bug): the shopping list is no
+ * longer scoped to one week, so the planner now sees unbought rows from EARLIER
+ * weeks too. Two rules follow, and they pull in opposite directions — which is
+ * why `weekId` has to be explicit rather than inferred.
+ */
+describe("planRollup — rows from other weeks", () => {
+  const thisWeek = "wk-current";
+  const lastWeek = "wk-previous";
+
+  it("never deletes an auto-row belonging to another week", () => {
+    // Rebuilding THIS week's menu must not reach back and delete an ingredient
+    // the family still hasn't bought from last week's menu. Before the rolling
+    // list this was impossible (the read was week-scoped); now it is the whole
+    // risk, and it would turn a hiding bug into a deleting one.
+    const p = rollup(
+      [],
+      [auto({ id: "old", name: "Leeks", weekId: lastWeek })],
+      thisWeek,
+    );
+
+    expect(p.toDelete).toEqual([]);
+    expect(p.removed).toBe(0);
+  });
+
+  it("still deletes an untouched auto-row of its OWN week", () => {
+    const p = rollup(
+      [],
+      [auto({ id: "mine", name: "Leeks", weekId: thisWeek })],
+      thisWeek,
+    );
+
+    expect(p.toDelete).toEqual(["mine"]);
+    expect(p.removed).toBe(1);
+  });
+
+  it("dedupes against another week's row instead of adding a second one", () => {
+    // The leeks are already on the list, unbought, from last week. Slotting a
+    // dish that needs leeks must NOT produce a second "Leeks" row — a shopper
+    // reading the aisle sees one line per thing they need.
+    const p = rollup(
+      [{ ingredientId: "i1", name: "Leeks", quantity: 2, unit: null }],
+      [auto({ id: "old", name: "Leeks", quantity: 1, unit: null, weekId: lastWeek })],
+      thisWeek,
+    );
+
+    expect(p.toInsert).toEqual([]);
+    expect(p.added).toBe(0);
+    // It is refreshed in place, so the quantity reflects this week's menu.
+    expect(p.toUpdate).toEqual([{ id: "old", quantity: 2, ingredientId: "i1" }]);
+  });
+
+  it("lets a protected row from another week claim its key", () => {
+    // "We have it" said last week still means we have it today.
+    const p = rollup(
+      [{ ingredientId: "i1", name: "Leeks", quantity: 2, unit: null }],
+      [auto({ id: "old", name: "Leeks", haveIt: true, weekId: lastWeek })],
+      thisWeek,
+    );
+
+    expect(p.toInsert).toEqual([]);
+    expect(p.toUpdate).toEqual([]);
+    expect(p.toDelete).toEqual([]);
   });
 });

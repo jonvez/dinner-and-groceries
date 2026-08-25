@@ -100,7 +100,7 @@ const archivedRow = (
 ) => ({ ingredient_id: null, catalog_item_id: null, section_id: null, ...o });
 
 describe("completeTrip", () => {
-  it("stamps purchased_at on only this week's checked, un-archived rows", async () => {
+  it("stamps purchased_at on every checked, un-archived row — any week", async () => {
     const { client, calls } = makeClient({ archived: { data: [], error: null } });
 
     await completeTrip(client, { householdId: "hh-1", weekId: "wk-1", now });
@@ -113,7 +113,8 @@ describe("completeTrip", () => {
           // Explicit household fence (defense in depth over RLS), mirroring
           // `promoteToCatalog`.
           { op: "eq", column: "household_id", value: "hh-1" },
-          { op: "eq", column: "week_id", value: "wk-1" },
+          // No week filter: finishing a trip clears everything you ticked off,
+          // whenever it was added. A rolling list has no "this week" to scope to.
           { op: "eq", column: "checked", value: true },
           { op: "is", column: "purchased_at", value: null },
         ],

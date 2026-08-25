@@ -93,13 +93,15 @@ const groceryRow = (o: Record<string, unknown> & { id: string; name: string }) =
   have_it: false,
   checked: false,
   edited: false,
+  // The week under rebuild, so a row is deletable unless a test opts out.
+  week_id: "wk-1",
   ...o,
 });
 
 const ARGS = { householdId: "hh-1", weekId: "wk-1" };
 
 describe("buildGroceryList", () => {
-  it("reads this week's slots and only the un-purchased grocery rows", async () => {
+  it("reads this week's slots, but EVERY un-purchased grocery row", async () => {
     const { client, calls } = makeClient({
       slots: { data: [], error: null },
       groceryItems: { data: [], error: null },
@@ -111,11 +113,40 @@ describe("buildGroceryList", () => {
     expect(slotSelect?.columns).toContain("slot_dishes");
     expect(slotSelect?.filters).toEqual([{ op: "eq", column: "week_id", value: "wk-1" }]);
 
+    // The list is rolling, so a row added weeks ago is still on it and must
+    // take part in dedupe — otherwise slotting a dish that needs leeks adds a
+    // SECOND "Leeks" line beside the one already there. Reading wider is safe
+    // only because planRollup is told which week may be deleted from.
     const listSelect = calls.selects.find((s) => s.table === "grocery_items");
     expect(listSelect?.filters).toEqual([
-      { op: "eq", column: "week_id", value: "wk-1" },
       { op: "is", column: "purchased_at", value: null },
     ]);
+    expect(listSelect?.filters.some((f) => f.column === "week_id")).toBe(false);
+    expect(listSelect?.columns).toContain("week_id");
+  });
+
+  it("never deletes an un-bought auto-row created in an EARLIER week", async () => {
+    // The regression guard for the fix itself: reading every week must not mean
+    // deleting every week. Without this, rebuilding a menu would silently
+    // destroy ingredients the family added before the week rolled over — a
+    // strictly worse bug than the hiding one this replaced.
+    const { client, calls } = makeClient({
+      slots: { data: [], error: null },
+      groceryItems: {
+        data: [
+          groceryRow({ id: "g-old", name: "leeks", week_id: "wk-0" }),
+          groceryRow({ id: "g-now", name: "chard", week_id: "wk-1" }),
+        ],
+        error: null,
+      },
+    });
+
+    const result = await buildGroceryList(client, ARGS);
+
+    expect(calls.deletes).toEqual([
+      { table: "grocery_items", filters: [{ op: "in", column: "id", value: ["g-now"] }] },
+    ]);
+    expect(result).toEqual({ ok: true, added: 0, removed: 1 });
   });
 
   it("rolls a dish slotted twice up twice and inserts household/week-scoped rows", async () => {

@@ -13,3 +13,10 @@ export const STORAGE_STATE_A = path.join(AUTH_DIR, "user-a.json");
 
 /** Second member of the SAME household (joins via invite; the Realtime observer). */
 export const STORAGE_STATE_B = path.join(AUTH_DIR, "user-b.json");
+
+/**
+ * Names the seed minted that a spec has to know about — currently the grocery
+ * item stranded in a past week. Written by the setup project beside the session
+ * files, and gitignored with them.
+ */
+export const SEED_FIXTURE = path.join(AUTH_DIR, "fixture.json");

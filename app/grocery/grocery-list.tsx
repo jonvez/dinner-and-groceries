@@ -214,7 +214,7 @@ export function GroceryList({
             filter: `household_id=eq.${householdId}`,
           },
           (payload) => {
-            const change = toChange(payload, weekId);
+            const change = toChange(payload);
             if (change) setItems((prev) => sortItems(mergeChange(prev, change)));
           },
         )
@@ -513,11 +513,16 @@ export function GroceryList({
 }
 
 /**
- * Map a raw Postgres Changes payload to a PK-keyed change, applying the week
- * scope. A row that arrives ARCHIVED (`purchased_at` set) is treated as a
- * removal — that's how the other shopper's "complete trip" empties this phone's
- * active list. DELETE payloads carry the full old row (REPLICA IDENTITY FULL),
- * but we only need the PK.
+ * Map a raw Postgres Changes payload to a PK-keyed change. A row that arrives
+ * ARCHIVED (`purchased_at` set) is treated as a removal — that's how the other
+ * shopper's "complete trip" empties this phone's active list. DELETE payloads
+ * carry the full old row (REPLICA IDENTITY FULL), but we only need the PK.
+ *
+ * There is NO week scope here, deliberately. This used to drop any row whose
+ * `week_id` differed from the page's week; once the list became rolling that
+ * would have silently discarded live edits to every carried-over item, so the
+ * other phone's check-off would not appear until a reload. The channel is
+ * already household-filtered and RLS-gated, which is the scope that matters.
  */
 export function toChange(
   payload: {
@@ -525,7 +530,6 @@ export function toChange(
     new: Record<string, unknown>;
     old: Record<string, unknown>;
   },
-  weekId: string,
 ): RealtimeChange<GroceryRow> | null {
   if (payload.eventType === "DELETE") {
     const id = payload.old?.id;
@@ -535,7 +539,6 @@ export function toChange(
 
   const row = payload.new as Record<string, unknown>;
   if (typeof row?.id !== "string") return null;
-  if (row.week_id !== weekId) return null;
   if (row.purchased_at != null) return { type: "DELETE", id: row.id };
 
   return {

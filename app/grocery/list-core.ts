@@ -1,13 +1,12 @@
 /**
- * The read half of the shopping list (issue #15, slice 1d): the week's ACTIVE
- * grocery rows plus the household's staples catalog, in the shape the client
+ * The read half of the shopping list (issue #15, slice 1d): the household's
+ * ACTIVE grocery rows plus its staples catalog, in the shape the client
  * component renders. Takes an INJECTED Supabase-like client (like `rollup-core`)
  * so it is unit-tested without a live DB; the server component supplies the
  * RLS-scoped cookie-session client.
  *
- * Security: no `household_id` filter and no service-role key — RLS scopes both
- * reads to the caller's household (ADR 0003). `weekId` only narrows a read RLS
- * has already fenced, so it can never reach another household's list.
+ * Security: no `household_id` filter and no service-role key — RLS scopes every
+ * read here to the caller's household (ADR 0003).
  *
  * Degradation: a failed read yields empty arrays rather than throwing, so the
  * page still renders (with its add forms and "rebuild from menu") instead of
@@ -102,15 +101,23 @@ export function toGroceryRow(row: GroceryItemRow): GroceryRow {
  * Load the ACTIVE list (`purchased_at is null` — a completed trip's rows are
  * archived, not shown) in stable shopping order, plus the staples catalog with
  * the most-reached-for items first.
+ *
+ * "Active" spans every week: see the note on the read below.
  */
 export async function loadGroceryList(
   supabase: Pick<DbClient, "from">,
-  { weekId }: { weekId: string },
 ): Promise<GroceryListSnapshot> {
+  // Deliberately NOT scoped to `weekId`. The shopping list is a ROLLING list:
+  // an item nobody bought is still needed tomorrow, and the week it was typed
+  // in is provenance, not scope. Filtering here is what made everything added
+  // before a week boundary vanish (2026-08-24) — the rows were intact, just
+  // unreachable, which to the family is indistinguishable from losing them.
+  // The week is still resolved by the page — new rows record it, and the menu
+  // roll-up still uses it — but this read takes no `weekId` at all, so nobody
+  // can reintroduce the scope by quietly passing one.
   const { data: itemRows } = await supabase
     .from("grocery_items")
     .select(GROCERY_ITEM_COLUMNS)
-    .eq("week_id", weekId)
     .is("purchased_at", null)
     .order("position")
     .order("created_at");
