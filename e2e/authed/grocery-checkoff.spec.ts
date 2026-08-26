@@ -16,7 +16,8 @@ import { STORAGE_STATE_A, STORAGE_STATE_B } from "../support/paths";
  *      new migration's REPLICA IDENTITY FULL is what makes the household_id
  *      filter + RLS match on that change image).
  *   4. The ad-hoc item is OFFERED for the staples catalog; accepting it makes it
- *      a one-tap staple chip.
+ *      findable from the add field's autocomplete (#148 — a chip is reserved
+ *      for staples bought repeatedly, not for a first purchase).
  *
  * Determinism (no fixed sleeps): the channel reports "Live" as soon as its JOIN
  * is acked, but Postgres-Changes delivery only starts once replication is
@@ -96,12 +97,16 @@ test("a check-off propagates live, and completing the trip archives + offers pro
     await expect(prompt).toBeVisible();
     await expect(prompt.getByText(item)).toBeVisible();
 
-    // Accepting is an explicit step; then it's a one-tap staple.
+    // Accepting is an explicit step; then it's findable by typing (#148).
+    // It does NOT become a "Buy again" chip yet — that row is for things bought
+    // repeatedly, and this has been bought once.
     await prompt.getByRole("button", { name: "Add to staples" }).click();
     await expect(prompt).toBeHidden();
+
+    await actor.getByLabel("Item", { exact: true }).fill(item.slice(0, 12));
     await expect(
-      actor.getByRole("button", { name: `+ ${item}` }),
-    ).toBeVisible({ timeout: REALTIME_TIMEOUT });
+      actor.getByTestId("staple-suggestion").filter({ hasText: item }),
+    ).toHaveCount(1, { timeout: REALTIME_TIMEOUT });
   } finally {
     await actorCtx.close();
     await observerCtx.close();

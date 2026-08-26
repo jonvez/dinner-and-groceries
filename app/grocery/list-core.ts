@@ -41,11 +41,18 @@ export type GroceryRow = {
   sectionId: string | null;
 };
 
-/** A staple offered as a one-tap quick-add chip. */
+/** A staple, offered as an autocomplete suggestion and (once earned) a chip. */
 export type CatalogRow = {
   id: string;
   name: string;
   defaultUnit: string | null;
+  /**
+   * How many times the app has added this staple to a list. A real signal —
+   * bumped by `addCatalogItemToList` and `promoteToCatalog` — but note the
+   * values IMPORTED from Things are an artifact of that tool's workflow, not
+   * purchases, and are reset at the #148 deploy (see the issue).
+   */
+  addedCount: number;
 };
 
 export type GroceryListSnapshot = {
@@ -78,6 +85,7 @@ type CatalogItemRow = {
   id: string;
   name: string;
   default_unit: string | null;
+  added_count: number | null;
 };
 
 export function toGroceryRow(row: GroceryItemRow): GroceryRow {
@@ -127,7 +135,7 @@ export async function loadGroceryList(
 
   const { data: catalogRows } = await supabase
     .from("catalog_items")
-    .select("id, name, default_unit")
+    .select("id, name, default_unit, added_count")
     .order("added_count", { ascending: false })
     .order("name");
 
@@ -138,6 +146,7 @@ export async function loadGroceryList(
       id: row.id,
       name: row.name,
       defaultUnit: row.default_unit,
+      addedCount: row.added_count ?? 0,
     })),
   };
 }
