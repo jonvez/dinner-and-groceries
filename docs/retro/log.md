@@ -270,3 +270,33 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   answer if the project ever has more than one committer. Do NOT weaken `enforce_admins` or drop any
   of the four required checks — the strictness that costs time is the *up-to-date* rule, not the checks
   themselves, and the checks are what caught the prod-build breakage in the first place.
+
+### 2026-08-26 — I declared prod writes "blocked on Jon" without checking what my tools could do
+
+- **Observation:** across several turns I reported that applying the #140 migration and the #121 catalog
+  seed to cloud prod "needs a human with database credentials; nothing in the repo or the agent
+  environment has them," and handed over `psql` commands. That was wrong. The Supabase CLI has
+  **`supabase db query --linked -f <file>`**, which executes a SQL file against the linked project
+  through the **Management API using the existing `supabase login` token** — no database password, no
+  connection string, no tunnel. I only found it because Jon asked "do I need an SSH tunnel or what",
+  which pushed me to read `supabase db --help` instead of reasoning from an assumption.
+- **Root cause:** I inferred the constraint from one data point — no `DATABASE_URL` in the environment —
+  and never checked the tool surface. `supabase db push` needs a DB password, so I generalized "prod
+  writes need a password" from the one prod-write command I had previously used. The assumption was
+  never tested; it was just never contradicted, because nothing had asked it to be.
+- **Impact:** low in absolute terms (two merged changes sat unapplied for a week, one of them a security
+  hardening), but the shape is the expensive kind: a **self-imposed blocker that hands work back to the
+  human**. Jon spent a turn asking about tunnelling that he should never have needed to spend, and the
+  #140 grants fix — the whole point of which was to stop a leak — sat merged-but-inert while prod kept
+  granting `MAINTAIN` to `anon`/`authenticated` on 13 tables.
+- **What made the difference:** running `--help` on the tool I was already using. Thirty seconds.
+- **Rule adopted:** *before telling the human that something is blocked on them, enumerate the tool
+  surface for it.* "I don't have credentials" is a claim about capability and must be verified like any
+  other claim — read `--help`, list subcommands, check the MCP tool list. Declaring a blocker is a
+  conclusion, not a starting assumption, and it is one the human cannot easily audit: they have no way to
+  see that a capability existed and went unused. This is the same class of error as the stale-dev-server
+  and vacuous-test failures earlier in the epic — **an unverified belief that happens to go unchallenged.**
+- **Related, and reinforcing:** when the capability was finally used, `supabase db push` printed a
+  pgdelta certificate stack trace and then `Finished supabase db push.` The state was verified directly
+  afterwards (migration recorded, `MAINTAIN` leak 13 → 0, default ACL clean, 0 tables missing SELECT)
+  rather than trusting "Finished" — the same rule as the 2026-08-19 push. Keep doing that.
