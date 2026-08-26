@@ -103,11 +103,18 @@ test("an aisle filed on one trip is still that aisle on the next one", async ({
   await prompt.getByRole("button", { name: "Add to staples" }).click();
 
   // --- The next trip ------------------------------------------------------
-  const chip = page.getByRole("button", { name: `+ ${item}` });
-  await expect(chip).toBeVisible();
-  await chip.click();
+  // Re-add it the way the next trip actually would: type it, take the
+  // suggestion the promotion just created, and add it.
+  const field = page.getByLabel("Item", { exact: true });
+  await field.fill(item.slice(0, 12));
+  const suggestion = page.getByTestId("staple-suggestion").filter({ hasText: item });
+  await expect(suggestion).toHaveCount(1);
+  await suggestion.click();
+  await expect(field).toHaveValue(item);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
 
   // Filed once, still filed. Nobody re-sorts this item by hand again.
+  await expect(page.getByRole("checkbox", { name: item })).toBeVisible();
   await expect(groupContaining(page, item)).toHaveAttribute("data-name", PRODUCE);
 });
 
@@ -198,4 +205,89 @@ test("an item from an earlier week is still on the list", async ({ page }) => {
     "data-name",
     PRODUCE,
   );
+});
+
+/**
+ * Staple autocomplete (#148). The matcher and the ARIA wiring are unit-tested;
+ * what only a browser proves is that the whole path works against the real
+ * catalog — type, arrow, choose, add — and that choosing a suggestion does not
+ * submit the form out from under you.
+ */
+test("typing suggests staples, and choosing one adds it without submitting early", async ({
+  page,
+}) => {
+  const staple = `E2E Staple ${randomUUID().slice(0, 8)}`;
+
+  // Give the household a staple to find: add it, buy it, promote it.
+  await page.goto("/grocery");
+  await addItem(page, staple);
+  await page.getByRole("checkbox", { name: staple }).check();
+  await page.getByRole("button", { name: "Complete trip" }).click();
+  const prompt = page.getByTestId("promotion-prompt");
+  await expect(prompt).toBeVisible();
+  await prompt.getByRole("button", { name: "Add to staples" }).click();
+  await expect(prompt).toBeHidden();
+
+  // --- Type, and the staple is suggested -----------------------------------
+  const field = page.getByLabel("Item", { exact: true });
+  await field.click();
+  // A single character is enough — there is no three-character wait.
+  await field.fill(staple.slice(0, 1));
+  const suggestions = page.getByTestId("staple-suggestion");
+  await expect(suggestions.first()).toBeVisible();
+  await expect(field).toHaveAttribute("aria-expanded", "true");
+
+  // Narrow to exactly ours, then choose it from the keyboard.
+  await field.fill(staple.slice(0, 12));
+  const mine = suggestions.filter({ hasText: staple });
+  await expect(mine).toHaveCount(1);
+
+  await page.keyboard.press("ArrowDown");
+  // Focus must still be in the input, never in the list.
+  await expect(field).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(field).toHaveValue(staple);
+  await expect(suggestions).toHaveCount(0);
+  // Enter chose the suggestion; it must NOT have added the item yet.
+  await expect(page.getByTestId("grocery-item").filter({ hasText: staple })).toHaveCount(0);
+
+  // --- Adding is still a deliberate press ----------------------------------
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: staple })).toBeVisible();
+});
+
+test("a staple bought ONCE does not earn a chip; bought twice it does", async ({
+  page,
+}) => {
+  // Straddles the boundary deliberately. Asserting "no chips in a fresh
+  // household" would pass at any threshold — every count is 0 — so it would not
+  // notice the gate being lowered. Promoting exactly once puts a staple at
+  // added_count = 1, which is the only state that tells 1 apart from 2.
+  const item = `E2E Habit ${randomUUID().slice(0, 8)}`;
+  const chip = page.getByRole("button", { name: `+ ${item}` });
+
+  const buyAndPromote = async () => {
+    await addItem(page, item);
+    await page.getByRole("checkbox", { name: item }).check();
+    await page.getByRole("button", { name: "Complete trip" }).click();
+    const prompt = page.getByTestId("promotion-prompt");
+    await expect(prompt).toBeVisible();
+    await prompt.getByRole("button", { name: "Add to staples" }).click();
+    await expect(prompt).toBeHidden();
+  };
+
+  await page.goto("/grocery");
+  await expect(page.getByRole("heading", { name: "Groceries" })).toBeVisible();
+
+  // --- Bought once: findable by typing, but not a habit yet ---------------
+  await buyAndPromote();
+  await page.reload();
+  await expect(chip).toHaveCount(0);
+
+  // --- Bought again: now it has earned its place --------------------------
+  await buyAndPromote();
+  await page.reload();
+  await expect(chip).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Buy again" })).toBeVisible();
 });

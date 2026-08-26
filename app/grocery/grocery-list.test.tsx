@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GroceryList, formatAmount, toChange } from "./grocery-list";
-import type { GroceryRow } from "./list-core";
+import type { CatalogRow, GroceryRow } from "./list-core";
 import type { SectionRow } from "./sections-core";
 
 /**
@@ -145,6 +145,14 @@ const row = (o: Partial<GroceryRow> & { id: string; name: string }): GroceryRow 
   ...o,
 });
 
+/**
+ * A small staples catalog. `addedCount` matters now: the chip row only renders
+ * staples bought CHIP_MIN_ADDED_COUNT+ times, and autocomplete ranks by it.
+ */
+const CATALOG: CatalogRow[] = [
+  { id: "c1", name: "Olive oil", defaultUnit: null, addedCount: 0 },
+];
+
 const SECTIONS: SectionRow[] = [
   { id: "s-produce", name: "Produce", position: 10 },
   { id: "s-dairy", name: "Dairy & Eggs", position: 30 },
@@ -157,7 +165,7 @@ function renderList(items: GroceryRow[], sections: SectionRow[] = SECTIONS) {
       weekId="wk-1"
       householdId="hh-1"
       initialItems={next}
-      catalog={[{ id: "c1", name: "Olive oil", defaultUnit: null }]}
+      catalog={CATALOG}
       sections={sections}
     />
   );

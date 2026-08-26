@@ -133,7 +133,12 @@ describe("loadGroceryList", () => {
         error: null,
       },
       catalog: {
-        data: [{ id: "c1", name: "Olive oil", default_unit: "bottle" }],
+        data: [
+          { id: "c1", name: "Olive oil", default_unit: "bottle", added_count: 3 },
+          // A row that predates the column default: null must read as 0, never
+          // NaN, because the chip threshold and suggestion ranking compare it.
+          { id: "c2", name: "Salt", default_unit: null, added_count: null },
+        ],
         error: null,
       },
     });
@@ -156,7 +161,8 @@ describe("loadGroceryList", () => {
       },
     ]);
     expect(catalog).toEqual([
-      { id: "c1", name: "Olive oil", defaultUnit: "bottle" },
+      { id: "c1", name: "Olive oil", defaultUnit: "bottle", addedCount: 3 },
+      { id: "c2", name: "Salt", defaultUnit: null, addedCount: 0 },
     ]);
   });
 

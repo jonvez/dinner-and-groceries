@@ -61,6 +61,7 @@ import {
 } from "./actions";
 import { toGroceryRow, type CatalogRow, type GroceryRow } from "./list-core";
 import { SectionEditor } from "./section-editor";
+import { StapleCombobox } from "./staple-combobox";
 import { groupBySection, type SectionRow } from "./sections-core";
 import type { PromotableItem } from "./trip-core";
 
@@ -506,7 +507,7 @@ export function GroceryList({
       )}
 
       <StapleChips catalog={catalog} busy={busy} onAdd={onAddStaple} />
-      <AdHocForm weekId={weekId} />
+      <AdHocForm weekId={weekId} catalog={catalog} />
       <SectionEditor sections={sections} onSectionsChange={setSections} />
     </section>
   );
@@ -631,6 +632,31 @@ function GroceryItemRow({
   );
 }
 
+/**
+ * A staple must be bought at least this many times before it is worth a chip.
+ * One purchase is a thing that happened; two is the beginning of a habit, which
+ * is what this row is for.
+ */
+export const CHIP_MIN_ADDED_COUNT = 2;
+
+/** How many chips, matching the autocomplete cap so the screen has one rule. */
+export const MAX_CHIPS = 5;
+
+/**
+ * The handful of staples this family reaches for repeatedly (#148).
+ *
+ * This used to render the WHOLE catalog, which was fine at four staples and
+ * unusable at the 492 the Things import brought in — 492 chips is a wall, not a
+ * shortcut. Typing (see `StapleCombobox`) is the way to reach the long tail
+ * now; this row is only for the few things you buy over and over.
+ *
+ * It renders NOTHING until a staple has actually earned its place. The
+ * `added_count` values carried in from Things are an artifact of how that app
+ * was used — a repeatedly-bought item was one task toggled, not many rows — so
+ * ranking by them today would put windex and Aleve at the top of a grocery
+ * screen. Counts are reset at this feature's deploy, so the row starts empty
+ * and fills itself in as real trips accumulate.
+ */
 function StapleChips({
   catalog,
   busy,
@@ -640,20 +666,29 @@ function StapleChips({
   busy: boolean;
   onAdd: (catalogItemId: string) => Promise<void>;
 }) {
-  if (catalog.length === 0) return null;
+  const chips = useMemo(
+    () =>
+      catalog
+        .filter((staple) => staple.addedCount >= CHIP_MIN_ADDED_COUNT)
+        .sort((a, b) => b.addedCount - a.addedCount || a.name.localeCompare(b.name))
+        .slice(0, MAX_CHIPS),
+    [catalog],
+  );
+
+  if (chips.length === 0) return null;
   return (
     <div className="space-y-1.5">
       <h3 className="text-muted-foreground text-xs font-medium uppercase">
-        Staples
+        Buy again
       </h3>
       <div className="flex flex-wrap gap-1.5">
-        {catalog.map((staple) => (
+        {chips.map((staple) => (
           <button
             key={staple.id}
             type="button"
             disabled={busy}
             onClick={() => void onAdd(staple.id)}
-            className="border-input rounded-full border px-3 py-1 text-sm disabled:opacity-60"
+            className="border-input rounded-full border px-3 py-1.5 text-sm disabled:opacity-60"
           >
             + {staple.name}
           </button>
@@ -663,7 +698,7 @@ function StapleChips({
   );
 }
 
-function AdHocForm({ weekId }: { weekId: string }) {
+function AdHocForm({ weekId, catalog }: { weekId: string; catalog: CatalogRow[] }) {
   // `weekId` is bound HERE, in a client component, so treat it as client-
   // supplied: the action re-derives `household_id` from the verified session and
   // never trusts this value for authorization. It only narrows a statement RLS
@@ -675,9 +710,21 @@ function AdHocForm({ weekId }: { weekId: string }) {
     null,
   );
   const formRef = useRef<HTMLFormElement>(null);
+  // The name and unit are CONTROLLED because picking a suggestion writes to
+  // both; `form.reset()` cannot clear controlled inputs, so success clears
+  // them explicitly and reset() is left to handle the uncontrolled quantity.
+  const [name, setName] = useState("");
+  const [unit, setUnit] = useState("");
 
   useEffect(() => {
-    if (state && "ok" in state) formRef.current?.reset();
+    if (state && "ok" in state) {
+      formRef.current?.reset();
+      // Syncing to the action's result (an external system), not deriving
+      // render state — the blessed setState-in-effect case per the rule docs.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setName("");
+      setUnit("");
+    }
   }, [state]);
 
   return (
@@ -686,22 +733,22 @@ function AdHocForm({ weekId }: { weekId: string }) {
         Add something else
       </h3>
       <div className="flex flex-wrap items-end gap-2">
-        <div className="flex flex-1 flex-col gap-1">
-          <label className="sr-only" htmlFor="grocery-name">
-            Item
-          </label>
-          <input
-            id="grocery-name"
-            name="name"
-            maxLength={200}
-            required
-            placeholder="Paper towels"
-            className="border-input bg-background rounded-md border px-3 py-1.5 text-sm"
-          />
-        </div>
+        <StapleCombobox
+          name="name"
+          label="Item"
+          value={name}
+          onChange={setName}
+          // Picking a staple prefills its usual unit, so the common case is one
+          // choice rather than three fields.
+          onPick={(suggestion) => {
+            if (suggestion.defaultUnit) setUnit(suggestion.defaultUnit);
+          }}
+          catalog={catalog}
+          disabled={pending}
+        />
         <div className="flex flex-col gap-1">
-          <label className="sr-only" htmlFor="grocery-quantity">
-            Quantity (optional)
+          <label htmlFor="grocery-quantity" className="text-muted-foreground text-xs font-medium">
+            Quantity
           </label>
           <input
             id="grocery-quantity"
@@ -710,19 +757,19 @@ function AdHocForm({ weekId }: { weekId: string }) {
             min="0"
             step="any"
             inputMode="decimal"
-            placeholder="Qty"
             className="border-input bg-background w-20 rounded-md border px-2 py-1.5 text-sm"
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="sr-only" htmlFor="grocery-unit">
-            Unit (optional)
+          <label htmlFor="grocery-unit" className="text-muted-foreground text-xs font-medium">
+            Unit
           </label>
           <input
             id="grocery-unit"
             name="unit"
             maxLength={40}
-            placeholder="Unit"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
             className="border-input bg-background w-24 rounded-md border px-2 py-1.5 text-sm"
           />
         </div>
