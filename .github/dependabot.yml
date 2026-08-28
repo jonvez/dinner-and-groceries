@@ -1,0 +1,46 @@
+# Dependabot version updates.
+#
+# Security updates and alerts are enabled at the repository level (Settings ->
+# Advanced Security) and are NOT configured here -- they need no config file.
+# This file governs routine currency only.
+#
+# Grouping is deliberate. Every PR against this repo triggers the full CI suite
+# (Docker build, Supabase + pgTAP, Playwright E2E). Ungrouped updates would open
+# a PR per package, burn hours of CI a week, and produce a review queue nobody
+# reads carefully -- unread merges are worse than no automation.
+#
+# Majors are intentionally NOT grouped: each gets its own PR and its own blast
+# radius. That encodes the `product`-tier rule from the deps-refresh design spec
+# (rig: docs/superpowers/specs/2026-08-28-deps-refresh-design.md) in config
+# rather than relying on anyone to remember it.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      prod-minor-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
