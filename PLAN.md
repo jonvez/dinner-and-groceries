@@ -62,6 +62,13 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
 - **Migrations do NOT auto-reach cloud prod.** CI applies migrations only to ephemeral CI Postgres; the
   cloud Supabase schema changes ONLY via a manual `supabase db push` (login → link `--project-ref
   wcbjuobzeursmomcoefw` → push). A merged migration is NOT live until that runs — a real footgun.
+- **Applying SQL to cloud prod needs no database password.** `npx supabase db query --linked -f <file>`
+  runs a SQL file against the linked project through the **Management API on the existing
+  `supabase login` token** — no connection string, no tunnel. (`db push` is the one that wants the DB
+  password.) Verified over that transport: `begin;` / `do $$ … $$` / `commit;` all execute, and a
+  `raise exception` propagates and exits non-zero — so a script's own transactional guards stay real
+  rather than being silently swallowed. Worth knowing before concluding a prod write is blocked on a
+  credential nobody has.
 - **The prod deploy build is a required check** (`Production build (Docker)`): it runs the real image
   `next build`, catching prod-only breakage the standalone typecheck misses (e.g. a `.dockerignore`-excluded
   import). A red deploy = stale prod — don't let it go silently red.
@@ -84,6 +91,17 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   all changes route through PRs, including docs** — but **docs-only PRs fast-path** the heavy gates (#99): a
   `changes` job detects a docs-only diff (every path a `.md` or under `docs/`) and the prod-build/pgTAP/E2E
   jobs skip their work while still reporting success, so a docs PR merges in under a minute instead of ~10.
+- **Stop the local Supabase stack when you finish working** — `npm run db:stop`. It is ELEVEN containers
+  behind a 4 GB Docker VM reservation, and nothing restarts or reaps it, so it silently stays up for days
+  across sessions (observed: 3–11 days continuous, spanning days nobody touched this project). On a 16 GB
+  machine that is the single largest process, and it contributes to macOS jetsam sweeps that kill hundreds
+  of processes daily — including the MCP servers Claude sessions depend on, which is one cause of the
+  MemPalace disconnects that need `/mcp reconnect`. Stopping it is free: local data is preserved in a
+  Docker volume, `npm run db:start` restores it, and the stack is only needed for `db:reset`, pgTAP, and
+  the authed Playwright suite. Prod is cloud Supabase, so nothing user-facing depends on it being up.
+  Reclaim is gradual (the VM balloon returns pages over ~30s), and container-stop alone leaves Docker
+  Desktop's own VM overhead — quit Docker Desktop too for the full amount, at the cost of an admin
+  password prompt next start.
 - **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
