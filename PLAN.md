@@ -62,6 +62,13 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
 - **Migrations do NOT auto-reach cloud prod.** CI applies migrations only to ephemeral CI Postgres; the
   cloud Supabase schema changes ONLY via a manual `supabase db push` (login → link `--project-ref
   wcbjuobzeursmomcoefw` → push). A merged migration is NOT live until that runs — a real footgun.
+- **Applying SQL to cloud prod needs no database password.** `npx supabase db query --linked -f <file>`
+  runs a SQL file against the linked project through the **Management API on the existing
+  `supabase login` token** — no connection string, no tunnel. (`db push` is the one that wants the DB
+  password.) Verified over that transport: `begin;` / `do $$ … $$` / `commit;` all execute, and a
+  `raise exception` propagates and exits non-zero — so a script's own transactional guards stay real
+  rather than being silently swallowed. Worth knowing before concluding a prod write is blocked on a
+  credential nobody has.
 - **The prod deploy build is a required check** (`Production build (Docker)`): it runs the real image
   `next build`, catching prod-only breakage the standalone typecheck misses (e.g. a `.dockerignore`-excluded
   import). A red deploy = stale prod — don't let it go silently red.
