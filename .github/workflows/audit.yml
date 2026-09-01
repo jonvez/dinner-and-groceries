@@ -1,0 +1,44 @@
+name: audit
+
+# Weekly dependency audit, separate from ci.yml on purpose.
+#
+# ci.yml has no event guards on verify/prod-build/rls/e2e, so adding a
+# `schedule:` trigger there would run the full ~20-minute suite — Docker build,
+# Supabase + pgTAP, Playwright — every week to learn nothing. This workflow runs
+# only the check that actually needs a cron.
+#
+# Currency (are we behind?) is handled by grouped weekly Dependabot version
+# updates, configured in .github/dependabot.yml. This covers the other half:
+# are we vulnerable, right now, in what is already locked.
+on:
+  schedule:
+    - cron: '0 9 * * 1' # weekly, Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      # SHA-pinned to match this repo's convention; the trailing comment is the
+      # tag these resolve to. Verify any bump against the upstream tag ref
+      # rather than trusting a version comment.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit
+        run: npm audit --audit-level=moderate
