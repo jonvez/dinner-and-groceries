@@ -300,3 +300,45 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   pgdelta certificate stack trace and then `Finished supabase db push.` The state was verified directly
   afterwards (migration recorded, `MAINTAIN` leak 13 → 0, default ACL clean, 0 tables missing SELECT)
   rather than trusting "Finished" — the same rule as the 2026-08-19 push. Keep doing that.
+
+### 2026-09-01 — an issue sat "Done" on the board and OPEN as an issue for six days
+
+- **Observation:** #121 (the Things → catalog import) was moved to the board's **Done** column on
+  2026-08-26, immediately after its seed was applied and verified in cloud prod. The GitHub issue stayed
+  **open** until 2026-09-01, when a session-end audit happened to notice. Six days of the two disagreeing.
+- **Root cause — and it is not "somebody forgot `Closes #121`".** That was my first diagnosis and it is
+  wrong. The issue had five steps; its last PR (#146, merged 2026-08-25) was step 4, and its body said
+  *"Step 4 of #121"* because that was **accurate** — step 5 was applying the seed to cloud prod, which had
+  not happened yet. No PR could have auto-closed this issue, because at the moment the final PR merged the
+  work genuinely was not finished. **The completing action was a manual prod apply, not a merge.**
+- **The class this belongs to:** any issue whose final step happens **outside a PR** — a manual
+  `supabase db push`, a seed applied with `db query --linked`, a DNS change, a dashboard setting, a
+  device-QA pass — has no auto-close hook. Those are precisely the issues where "done" ends up recorded in
+  a side channel (a board column, a chat message, a session recap) rather than on the issue itself. #140
+  and #82 have the same shape; #82 is *still* open having been confirmed working on a real phone weeks ago.
+- **The uncomfortable part:** `CLAUDE.md` and this repo's PLAN.md both justify keeping status OUT of
+  PLAN.md on the grounds that *"status lives in the tracker, which updates automatically and can't drift."*
+  That claim is now falsified in a small but real way. The tracker has **two representations** — the board
+  column and the issue's open/closed state — and nothing reconciles them. They drifted from each other for
+  six days. This is **not** an argument for putting status back into PLAN.md prose (that failure mode was
+  worse and is well documented above); it is an argument that "the tracker can't drift" needs qualifying to
+  "the tracker can't drift *from reality*, but its two views can drift from *each other*."
+- **Why it actually bit:** `gh issue list --state open` is what a human or an agent reaches for to answer
+  "what is left?". It listed #121 and #135 as outstanding work that was in fact finished and deployed. The
+  divergence does not sit quietly — it actively misinforms the next session, which is the same failure
+  shape as a stale PLAN.md line, just relocated.
+- **Candidate fixes (retro topic — not yet decided):**
+  1. **Close the issue as part of the manual step, not the merge.** Whatever runbook covers the out-of-band
+     action (`docs/runbooks/things-catalog-import.md`, the prod-bringup runbook) ends with "close the
+     tracking issue with the verification output". Cheapest, and puts the close next to the evidence.
+  2. **A reconciliation check** — a small script diffing the board's Done column against open issues, run
+     at session-end or on a schedule, reporting only disagreements. Catches every variant, including ones
+     nobody anticipated, rather than relying on discipline at the moment of the manual step.
+  3. **Make `ghpm move --status done` close the issue.** Correct in spirit but it is an upstream tool
+     change, and "done" on a board does not always mean "issue resolved" for every workflow.
+  4. **Treat the issue's open/closed state as the source of truth and the column as a view.** Biggest
+     change; would mean the board stops being the thing consulted for status.
+- **Recommendation to weigh at retro:** (1) and (2) together — the discipline where the work happens, plus
+  a mechanical net for when the discipline slips, which is exactly the pairing that worked for the
+  default-privileges guard. Do **not** adopt (3) alone: it fixes the one path that happened to bite and
+  leaves every other out-of-band completion silently diverging.
