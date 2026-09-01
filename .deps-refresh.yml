@@ -1,0 +1,96 @@
+# Dependency-refresh policy for dinner-and-groceries.
+#
+# Consumed by the `deps-refresh` skill, which is the required procedure for any
+# dependency upgrade here — a failing audit, a Dependabot PR, or a routine
+# lockfile refresh. This file supplies the facts so the procedure stops being a
+# series of judgement calls made under time pressure.
+#
+# It exists because on 2026-08-29 a batch of Dependabot PRs was landed by hand
+# before this file (or the skill) existed. That pass got the important calls
+# right — it caught TypeScript 7 and ESLint 10 breaking on upstream ecosystem
+# lag, and it noticed a crypto stack entering the tree transitively — but it
+# noticed the additions by eyeballing a diff, which is exactly the check that
+# fails silently when someone is tired or the diff is long.
+
+ecosystem: npm
+
+# ---------------------------------------------------------------------------
+# tier: product
+# ---------------------------------------------------------------------------
+# `product`, not `convenience`, and deliberately so. This app is deployed on
+# Cloud Run against a real Supabase project and is used by an actual family to
+# shop for actual food; breakage lands on someone standing in a store. The repo
+# already runs at product rigor everywhere else — four required checks, strict
+# branch protection with enforce_admins, RLS proven in pgTAP, ADRs for posture
+# decisions, and a mandatory third-party-security-review before adopting
+# anything that runs with Jon's credentials.
+#
+# The consequences worth knowing before you hit an unexpected STOP:
+#   * a security fix ships ALONE and FIRST, never batched with a routine refresh;
+#   * major bumps get one PR each (Dependabot already does this);
+#   * ANY new package in the lock diff — even dev-only — stops the pass and
+#     routes through `third-party-security-review`. That gate is the point: it
+#     is what surfaced @noble/*, jose and eciesjs arriving under a Supabase CLI
+#     bump. Dev-only still means "runs on Jon's machine and in CI with his
+#     credentials", which is precisely the blast radius the review exists for;
+#   * expensive gates must be green before merge, and merging needs a human ack
+#     unless the PR qualifies for auto-merge (zero additions, zero majors, all
+#     gates green).
+#
+# If this proves too heavy in practice, change this one line to `convenience`
+# rather than quietly skipping steps.
+tier: product
+
+gates:
+  # Fast, local, no network, no Docker. Run these before pushing anything.
+  cheap:
+    - npm run lint
+    - npm run typecheck
+    - npm test
+
+  # Slow, and the ones that actually catch dependency breakage. These are the
+  # four required checks on `main`, so CI runs them on every PR — watch them to
+  # green rather than re-running everything locally. Running them locally needs
+  # a live local Supabase (`npm run db:start`); remember `npm run db:stop`
+  # afterwards, see PLAN.md.
+  expensive:
+    - npm run build # the real prod build; catches prod-only breakage
+    - npx playwright test --workers=1 # smoke + authed, real browser
+    - npx supabase test db # RLS pgTAP against real Postgres
+
+# ---------------------------------------------------------------------------
+# smoke
+# ---------------------------------------------------------------------------
+# Mandatory, and NOT satisfied by the unit suite. `npm test` mocks the Supabase
+# client entirely — 600+ tests pass without a database, a browser, or a socket
+# existing, which is what makes them fast and is also what makes them blind to
+# a dependency upgrade that breaks the real thing. A bad @supabase/ssr or Next
+# bump would sail straight through.
+#
+# This command is the closest thing here to "the real entrypoint against the
+# real world": it builds the actual standalone artifact the Cloud Run image
+# ships, boots it, and drives it in a real browser against a real Postgres with
+# a real Realtime WebSocket and real RLS. Requires `npm run db:start` first.
+smoke:
+  command: npm run build && npx playwright test --project=authed --workers=1
+  why: >
+    Exercises the shipped standalone build against a live Supabase — real auth
+    cookies, real RLS, real Realtime socket. The unit suite mocks all three, so
+    it is the only gate that would catch a runtime dependency breaking for real.
+
+# ---------------------------------------------------------------------------
+# Notes for whoever runs the next pass
+# ---------------------------------------------------------------------------
+# * Strict branch protection means every merge puts the remaining PRs BEHIND,
+#   each needing `gh pr update-branch` (or `@dependabot rebase` when the
+#   lockfile conflicts) plus a FULL re-run of all four checks. Landing four PRs
+#   costs roughly four serial CI cycles. Sequence deliberately: merge
+#   workflow-only PRs first, npm/lockfile PRs last, since only the latter
+#   conflict with each other.
+# * NEVER run `ghpm intake --apply "status:…"` to board a dependency issue — it
+#   sweeps every unboarded open issue in the repo. Use `gh issue create`, then
+#   add that one issue.
+# * GitHub Action pins are full commit SHAs, not tags. On any Action bump,
+#   verify the SHA against the upstream tag ref
+#   (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`) rather than trusting
+#   Dependabot's trailing version comment — a wrong SHA is invisible otherwise.
