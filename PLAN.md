@@ -91,6 +91,13 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   all changes route through PRs, including docs** — but **docs-only PRs fast-path** the heavy gates (#99): a
   `changes` job detects a docs-only diff (every path a `.md` or under `docs/`) and the prod-build/pgTAP/E2E
   jobs skip their work while still reporting success, so a docs PR merges in under a minute instead of ~10.
+- **The `supabase` CLI is pinned at 2.107.0 — do not bump it without reading #164.** Under 2.116.0 the
+  LOCAL stack loses role isolation and five pgTAP guards fail: `anon` can execute the `SECURITY DEFINER`
+  bootstraps (`create_household`, `accept_invite`) that `household_bootstrap.sql` explicitly revoked from
+  public, `anon` can SELECT from 13 public tables, and a non-owner member can self-promote to owner. The
+  same schema passes on 2.107.0, so this is the CLI's role provisioning, not our migrations. **Cloud prod
+  is unaffected** — it does not care which CLI runs locally — but RLS pgTAP is a required check and is what
+  makes ADR 0003's "RLS is the security boundary" claim verifiable, so the bump stays blocked.
 - **Stop the local Supabase stack when you finish working** — `npm run db:stop`. It is ELEVEN containers
   behind a 4 GB Docker VM reservation, and nothing restarts or reaps it, so it silently stays up for days
   across sessions (observed: 3–11 days continuous, spanning days nobody touched this project). On a 16 GB
@@ -110,6 +117,10 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
 ### Conventions
 - Board ops go through the `ghpm` wrapper / `github-project-board` skill — never hand-roll `gh`/GraphQL.
 - Command hygiene: no `cd`-compounds (use `git -C`); explicit `git add` paths.
+- Dependency upgrades go through the **`deps-refresh` skill**, which reads the committed
+  `.deps-refresh.yml` (`tier: product`). Never hand-roll one: the tier means any NEW package in the lock
+  diff — even dev-only — stops the pass for a `third-party-security-review`, and expensive gates must be
+  green before merge.
 - Persona agents are global + dispatchable. Things is **not** used for this project (board is the tracker).
 
 ### Blockers
