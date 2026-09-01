@@ -303,6 +303,15 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
 
 ### 2026-09-01 — an issue sat "Done" on the board and OPEN as an issue for six days
 
+- **RECURRENCE — see 2026-07-22 "Board-Done drifted from issue-Open" above.** The same class was logged
+  six weeks earlier, covering four issues (#46, #50/#51/#52). Its suggested change was *"every PR body
+  carries a `Closes #NN`… where a parent tracking issue is delivered by several PRs, close it explicitly
+  at slice-end."* That change was never adopted as a mechanism, and note that **it would not have
+  prevented this case**: `Closes #NN` cannot fire when the completing action is a manual prod apply rather
+  than a merge, and "close it explicitly at slice-end" is precisely the discipline that slipped. Two
+  independent occurrences six weeks apart, with a written fix sitting between them, is the argument for a
+  mechanical reconciliation rather than another restatement of the habit.
+
 - **Observation:** #121 (the Things → catalog import) was moved to the board's **Done** column on
   2026-08-26, immediately after its seed was applied and verified in cloud prod. The GitHub issue stayed
   **open** until 2026-09-01, when a session-end audit happened to notice. Six days of the two disagreeing.
