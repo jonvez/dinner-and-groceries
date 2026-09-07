@@ -8,19 +8,38 @@
  * and writes a transactional SQL file for a human to read before anything
  * touches prod. Applying it is a separate, deliberate step.
  *
- * ## Run it (three steps)
+ * ## Handle the export like the data it is
+ *
+ * The export has no `where` and the transport bypasses RLS, so the json file is
+ * EVERY household's ingredient rows in plaintext — cross-tenant data at rest.
+ * Keep it out of `/tmp` (world-readable by default on macOS, and never cleaned
+ * up), give it 0600, and delete both it and the generated `.sql` as soon as the
+ * run is done. The steps below do that; don't shorten them back to `/tmp`.
+ *
+ * ## Run it (four steps)
+ *
+ *   0. Private working directory, owner-only:
+ *        install -d -m 700 ~/.dng-backfill-170
+ *        umask 077        # everything written below lands 0600
  *
  *   1. Export (read-only):
  *        npx supabase db query --linked -f scripts/backfill/export-ingredient-rows.sql
- *      Save the returned json array to a file, e.g. /tmp/170-ingredients.json.
+ *      Save the returned json array to ~/.dng-backfill-170/ingredients.json.
  *
  *   2. Generate + REVIEW:
  *        node scripts/backfill/generate-ingredient-name-backfill.mjs \
- *          --in /tmp/170-ingredients.json --out /tmp/170-backfill.sql
- *        less /tmp/170-backfill.sql     # every row it would rewrite is listed
+ *          --in ~/.dng-backfill-170/ingredients.json \
+ *          --out ~/.dng-backfill-170/backfill.sql
+ *        less ~/.dng-backfill-170/backfill.sql   # every row it would rewrite is listed
  *
  *   3. Apply (only after the parser fix is merged AND deployed):
- *        npx supabase db query --linked -f /tmp/170-backfill.sql
+ *        npx supabase db query --linked -f ~/.dng-backfill-170/backfill.sql
+ *      Read the result set it returns: planned / repaired / skipped. Expect
+ *      repaired = planned and skipped = 0; anything else means the guards
+ *      declined rows, and the run needs looking at rather than repeating.
+ *
+ *   4. Clean up — BOTH files carry the same data:
+ *        rm -rf ~/.dng-backfill-170
  *
  * Requires Node with TypeScript type-stripping (>= 22.18 / >= 23.6; older 22.x:
  * add `--experimental-strip-types`), because it imports the app's parser

@@ -6,12 +6,24 @@
 --
 --   npx supabase db query --linked -f scripts/backfill/export-ingredient-rows.sql
 --
--- Copy the returned json array into a file (e.g. /tmp/170-ingredients.json), then:
+-- WHAT COMES BACK: there is no `where` here and the transport bypasses RLS, so
+-- this returns EVERY household's ingredient rows. Treat the file as cross-tenant
+-- data at rest: keep it out of /tmp (world-readable by default on macOS, never
+-- cleaned up), 0600, and delete it when the run is done.
+--
+--   install -d -m 700 ~/.dng-backfill-170
+--   umask 077
+--
+-- Copy the returned json array into ~/.dng-backfill-170/ingredients.json, then:
 --
 --   node scripts/backfill/generate-ingredient-name-backfill.mjs \
---     --in /tmp/170-ingredients.json --out /tmp/170-backfill.sql
+--     --in ~/.dng-backfill-170/ingredients.json \
+--     --out ~/.dng-backfill-170/backfill.sql
 --
--- Review /tmp/170-backfill.sql, then apply it the same way (`db query --linked -f`).
+-- Review backfill.sql, apply it the same way (`db query --linked -f`), then
+-- delete BOTH files — the generated .sql carries the same rows:
+--
+--   rm -rf ~/.dng-backfill-170
 select coalesce(
          json_agg(
            json_build_object(
