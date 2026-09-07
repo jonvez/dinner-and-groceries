@@ -148,6 +148,36 @@ describe("createRealtimeAuthenticator", () => {
     expect(d.schedule).not.toHaveBeenCalled();
   });
 
+  // Callers need to know whether the socket is actually authenticated: an
+  // anon socket JOINs fine but RLS delivers nothing, so the UI must be able to
+  // say "Live updates paused" instead of lying about being live (issue #114).
+  it("start() reports TRUE when a token was applied to the socket", async () => {
+    const auth = createRealtimeAuthenticator(deps());
+    await expect(auth.start()).resolves.toBe(true);
+  });
+
+  it("start() reports FALSE when no token could be fetched", async () => {
+    const auth = createRealtimeAuthenticator(deps({ getToken: vi.fn(async () => null) }));
+    await expect(auth.start()).resolves.toBe(false);
+  });
+
+  it("start() reports FALSE when stop() raced the in-flight fetch", async () => {
+    let resolveToken!: (v: { token: string; expiresAt: number | null }) => void;
+    const d = deps({
+      getToken: vi.fn(
+        () =>
+          new Promise<{ token: string; expiresAt: number | null }>((r) => {
+            resolveToken = r;
+          }),
+      ),
+    });
+    const auth = createRealtimeAuthenticator(d);
+    const started = auth.start();
+    auth.stop();
+    resolveToken({ token: "late", expiresAt: null });
+    await expect(started).resolves.toBe(false);
+  });
+
   it("stop() cancels the pending refresh and suppresses a late setAuth", async () => {
     let resolveToken!: (v: { token: string; expiresAt: number | null }) => void;
     const getToken = vi.fn(

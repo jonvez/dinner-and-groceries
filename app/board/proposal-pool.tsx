@@ -17,11 +17,24 @@
  *     so we scope by the week's proposal ids) is applied to incoming INSERT/UPDATE
  *     rows; DELETEs are applied by PK and are naturally week-scoped because local
  *     state only ever holds this week's rows.
- *   - On a drop + reconnect, we re-FETCH the authoritative snapshot and
- *     `reconcileByPk` — the server is the source of truth, so state converges with
- *     no lost or duplicated rows.
+ *   - On a drop + reconnect we ask the SERVER to re-render the authoritative
+ *     snapshot (`router.refresh()`), and the sig-keyed effect below
+ *     `reconcileByPk`s the new props — the server is the source of truth, so
+ *     state converges with no lost or duplicated rows. It has to be a server
+ *     re-render, NOT a read on the browser client: auth cookies are httpOnly
+ *     (ADR 0008), so the browser client has no session, and `realtime.setAuth`
+ *     authenticates only the SOCKET. A browser-client read runs as anon, RLS
+ *     denies it (42501), and the swallowed error would blank the board
+ *     (issue #114).
+ *
+ * The socket is authenticated AS THE SIGNED-IN USER before subscribing
+ * (`createRealtimeAuthenticator` + `fetchRealtimeToken`, issue #44/ADR 0008).
+ * If no token could be applied the channel still JOINs (it only needs the
+ * apikey) but RLS delivers nothing — so the status says "Live updates paused"
+ * rather than lying about being live. No service-role key exists on any path.
  */
 
+import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/browser";
@@ -116,6 +129,17 @@ export function ProposalPool({
     reconcileByPk(initialComments),
   );
   const [live, setLive] = useState(false);
+  // An anon socket JOINs fine but RLS delivers nothing (#44), so "Live" means
+  // BOTH subscribed and authenticated as the signed-in user.
+  const [socketAuthed, setSocketAuthed] = useState(false);
+
+  // Held in a ref so the router's identity can never churn the subscription
+  // below (a re-JOIN would drop events).
+  const router = useRouter();
+  const routerRef = useRef(router);
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   const proposalIds = useMemo(
     () => new Set(proposals.map((p) => p.id)),
@@ -176,27 +200,11 @@ export function ProposalPool({
       setAuth: (token) => supabase.realtime.setAuth(token),
     });
 
-    // Pull the authoritative snapshot after a (re)connect: the server is truth,
-    // so a drop + reconnect converges with no lost/dup state (reconcileByPk).
-    async function refetch() {
-      const { data: rx } = await supabase
-        .from("reactions")
-        .select("id, proposal_id, member_id, kind")
-        .in("proposal_id", proposalIdList);
-      if (rx) setReactions(reconcileByPk(rx as ReactionRow[]));
-
-      const { data: cm } = await supabase
-        .from("comments")
-        .select("id, proposal_id, member_id, body, created_at")
-        .in("proposal_id", proposalIdList)
-        .order("created_at", { ascending: true });
-      if (cm) setComments(reconcileByPk(cm as CommentRow[]));
-    }
-
     async function setup() {
       // Authenticate first so the channel's initial JOIN carries the user's JWT.
-      await authenticator.start();
+      const authed = await authenticator.start();
       if (cancelled) return;
+      setSocketAuthed(authed);
       channel = subscribe();
     }
 
@@ -234,7 +242,10 @@ export function ProposalPool({
             setLive(true);
             if (wasDisconnected.current) {
               wasDisconnected.current = false;
-              void refetch();
+              // Re-render the RLS-scoped snapshot ON THE SERVER; the sig-keyed
+              // effect above reconciles the new props. (A browser-client read
+              // would run as anon and blank the board — see the file header.)
+              if (!cancelled) routerRef.current.refresh();
             }
           } else if (
             status === "CHANNEL_ERROR" ||
@@ -266,7 +277,7 @@ export function ProposalPool({
           aria-live="polite"
           data-testid="realtime-status"
         >
-          {live ? "Live" : "Live updates paused"}
+          {live && socketAuthed ? "Live" : "Live updates paused"}
         </span>
       </div>
 
