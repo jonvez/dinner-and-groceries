@@ -75,7 +75,14 @@ vi.mock("@/lib/supabase/browser", () => ({
     const from = () => {
       throw new Error("the browser client must not read data (no session)");
     };
-    return { channel, from, removeChannel: rt.removeChannel, realtime };
+    // The real client emits CLOSED as a channel is torn down. The fake does the
+    // same, so a deliberate TEARDOWN can be told apart from a dropped socket —
+    // conflating them made a re-subscribe look like a reconnect (#114 review).
+    const removeChannel = (ch: unknown) => {
+      rt.subscribeCb?.("CLOSED");
+      return rt.removeChannel(ch);
+    };
+    return { channel, from, removeChannel, realtime };
   },
 }));
 
@@ -519,6 +526,34 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
 
   it("does not refresh on the FIRST subscribe (only after a drop)", async () => {
     renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    expect(rt.refresh).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when a proposal-set change re-subscribes the channel", async () => {
+    // The effect is keyed on the proposal ids, so adding a proposal tears the
+    // channel down and opens a new one. Teardown emits CLOSED — but that is US
+    // closing the socket, not the network dropping it, so the fresh channel's
+    // first SUBSCRIBED must NOT be treated as a reconnect. Otherwise every new
+    // idea posted to the board costs an extra server re-render.
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
     await connected();
 
     expect(rt.refresh).not.toHaveBeenCalled();

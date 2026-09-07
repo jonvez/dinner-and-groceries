@@ -238,6 +238,12 @@ export function ProposalPool({
           },
         )
         .subscribe((status) => {
+          // A torn-down channel still reports CLOSED as it goes. That is US
+          // closing it (a re-subscribe after the proposal set changed), not the
+          // network dropping — so this effect's channel must go quiet the moment
+          // it is cancelled, or the replacement channel would read the shared
+          // `wasDisconnected` flag as a reconnect and refresh for nothing.
+          if (cancelled) return;
           if (status === "SUBSCRIBED") {
             setLive(true);
             if (wasDisconnected.current) {
@@ -245,7 +251,7 @@ export function ProposalPool({
               // Re-render the RLS-scoped snapshot ON THE SERVER; the sig-keyed
               // effect above reconciles the new props. (A browser-client read
               // would run as anon and blank the board — see the file header.)
-              if (!cancelled) routerRef.current.refresh();
+              routerRef.current.refresh();
             }
           } else if (
             status === "CHANNEL_ERROR" ||
