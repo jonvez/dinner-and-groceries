@@ -201,6 +201,14 @@ export function ProposalPool({
     });
 
     async function setup() {
+      // Known gap (reviewed, accepted): between an old channel leaving and this
+      // one subscribing, no channel exists, so a drop that both starts AND
+      // recovers inside this token round trip goes unobserved. Inherent to
+      // re-subscribing — nothing is listening in that window either way — and
+      // narrow: a deps change is itself caused by a fresh server render, so the
+      // props are authoritative as of microseconds earlier, and a socket still
+      // down when we subscribe times out, sets the flag, and refreshes on
+      // recovery.
       // Authenticate first so the channel's initial JOIN carries the user's JWT.
       const authed = await authenticator.start();
       if (cancelled) return;

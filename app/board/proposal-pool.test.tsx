@@ -531,6 +531,70 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     expect(rt.refresh).not.toHaveBeenCalled();
   });
 
+  it("still refreshes for a drop that happened BEFORE a proposal-set change", async () => {
+    // The fix must not trade a spurious refresh for a MISSED one. `wasDisconnected`
+    // deliberately outlives any single channel: a genuine drop recorded on the old
+    // channel is still owed a server re-render once the replacement connects. This
+    // is the test that fails if someone later "simplifies" the ref to a per-effect
+    // variable — which the cancelled-guard makes tempting.
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    // A real drop on the live channel — no recovery yet.
+    await act(async () => {
+      rt.subscribeCb?.("CHANNEL_ERROR");
+    });
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    // Now the proposal set changes, tearing that channel down mid-drop.
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
+    await connected();
+
+    // The replacement channel connects and the debt is paid, exactly once.
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("still refreshes for a drop that happens AFTER a proposal-set change", async () => {
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
+    await connected();
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    // The replacement channel drops for real and recovers: still a reconnect.
+    await act(async () => {
+      rt.subscribeCb?.("CHANNEL_ERROR");
+      rt.subscribeCb?.("SUBSCRIBED");
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+  });
+
   it("does not refresh when a proposal-set change re-subscribes the channel", async () => {
     // The effect is keyed on the proposal ids, so adding a proposal tears the
     // channel down and opens a new one. Teardown emits CLOSED — but that is US
