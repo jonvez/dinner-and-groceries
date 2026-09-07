@@ -172,6 +172,83 @@ describe("renderBackfillSql", () => {
     expect(sql).not.toContain("update public.ingredients");
     expect(sql).toContain("nothing to repair");
   });
+
+  // The module's security argument is "every value that becomes executable text
+  // goes through sqlLiteral". `generatedAt` is the one value that lands in a `--`
+  // comment instead, and a newline there would terminate the comment and put the
+  // remainder OUTSIDE the transaction, ahead of `begin;`, where the rollback
+  // guards cannot reach it. Not reachable from the CLI today; this is the
+  // invariant, not the exploit.
+  const NEWLINE_AT = "2026-01-01\ndrop table public.ingredients;\n--";
+
+  function headerOf(sql: string): string {
+    const body = sql.search(/^(?:begin;|do \$\$)$/m);
+    expect(body).toBeGreaterThan(0);
+    return sql.slice(0, body);
+  }
+
+  it("never lets a newline in generatedAt escape the header comment", () => {
+    const sql = renderBackfillSql(planBackfill([row()], parseIngredient), {
+      generatedAt: NEWLINE_AT,
+    });
+
+    for (const line of headerOf(sql).split("\n")) {
+      expect(line === "" || line.startsWith("--")).toBe(true);
+    }
+    expect(sql).not.toMatch(/^drop table public\.ingredients;/m);
+    expect(sql).toContain("-- Generated at: 2026-01-01 drop table public.ingredients; --");
+  });
+
+  it("neutralizes a newline in generatedAt on the no-op path too", () => {
+    const sql = renderBackfillSql(
+      planBackfill(
+        [row({ raw_text: "2 cups flour", name: "flour", quantity: 2, unit: "cup" })],
+        parseIngredient,
+      ),
+      { generatedAt: "x\r\nselect pg_sleep(60);" },
+    );
+
+    for (const line of headerOf(sql).split("\n")) {
+      expect(line === "" || line.startsWith("--")).toBe(true);
+    }
+    expect(sql).not.toMatch(/^select pg_sleep/m);
+  });
+
+  it("reports planned/repaired/skipped as a RESULT SET, not only a notice", () => {
+    // `raise notice` may not survive the Management API transport, and a run that
+    // silently skipped every row must not look like a successful one.
+    const sql = renderBackfillSql(planBackfill([row()], parseIngredient), { generatedAt: AT });
+
+    expect(sql).toContain("insert into backfill_170_result (planned, repaired, skipped)");
+    expect(sql).toContain("select planned, repaired, skipped from backfill_170_result;");
+    // The result table is `on commit drop`, so the select has to run inside the
+    // transaction — after the DO block, before `commit;`.
+    const select = sql.indexOf("select planned, repaired, skipped from backfill_170_result;");
+    expect(select).toBeGreaterThan(sql.indexOf("$$;"));
+    expect(select).toBeLessThan(sql.lastIndexOf("commit;"));
+  });
+
+  it("returns zeroed counts as a result set even when there is nothing to repair", () => {
+    const sql = renderBackfillSql(
+      planBackfill(
+        [row({ raw_text: "2 cups flour", name: "flour", quantity: 2, unit: "cup" })],
+        parseIngredient,
+      ),
+      { generatedAt: AT },
+    );
+
+    expect(sql).toContain("select 0 as planned, 0 as repaired, 0 as skipped;");
+  });
+
+  it("records that the over-reach guard is held up by the primary keys, not the check", () => {
+    // The `repaired > planned` raise cannot fire while both sides of the join are
+    // uuid primary keys. Keep the branch, but say so in the file so a later reader
+    // does not mistake a dead branch for live coverage.
+    const sql = renderBackfillSql(planBackfill([row()], parseIngredient), { generatedAt: AT });
+
+    expect(sql).toContain("raise exception");
+    expect(sql).toMatch(/--.*primary key/i);
+  });
 });
 
 describe("readExportedRows", () => {

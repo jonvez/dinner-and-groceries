@@ -188,6 +188,19 @@ export function sqlLiteral(value: string | number | null): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/**
+ * Make a value safe to sit inside a `--` line comment. A newline would end the
+ * comment and land the remainder as EXECUTABLE SQL — and in the header that is
+ * before `begin;`, outside the transaction, where the rollback guards below
+ * cannot reach it. Every other interpolation in the emitted file goes through
+ * `sqlLiteral`; this is the encoder for the one that cannot.
+ */
+export function sqlComment(value: string): string {
+  // \n and \r end a Postgres line comment, and a NUL truncates the query on the
+  // wire; nothing else inside a comment can reach a statement boundary.
+  return value.replace(/[\r\n\u0000]+/g, " ");
+}
+
 export type RenderOptions = { generatedAt?: string };
 
 /**
@@ -202,7 +215,7 @@ export function renderBackfillSql(plan: BackfillPlan, options: RenderOptions = {
     "--",
     "-- GENERATED FILE — do not hand-edit. Regenerate with:",
     "--   node scripts/backfill/generate-ingredient-name-backfill.mjs --in <export.json> --out <this file>",
-    `-- Generated at: ${generatedAt}`,
+    `-- Generated at: ${sqlComment(generatedAt)}`,
     `-- Export: ${plan.total} row(s) read — ${plan.updates.length} to repair, ` +
       `${plan.skipped.unchanged} already correct, ` +
       `${plan.skipped.missingRawText} skipped (no usable raw_text).`,
@@ -212,7 +225,12 @@ export function renderBackfillSql(plan: BackfillPlan, options: RenderOptions = {
     "--",
     "-- Guards: one transaction; never touches a row with a null/empty raw_text;",
     "-- never writes a blank name; never overwrites a row whose name changed since",
-    "-- the export; aborts if it would touch more rows than planned.",
+    "-- the export; and cannot touch more rows than planned — both sides of the",
+    "-- join are uuid primary keys, so it is 1:1 and the abort below is spare.",
+    "--",
+    "-- The last statement RETURNS the planned/repaired/skipped counts as a result",
+    "-- set. Read them: `raise notice` may not survive the transport, and a run that",
+    "-- skipped every row is otherwise indistinguishable from a successful one.",
     "",
   ].join("\n");
 
@@ -224,6 +242,8 @@ export function renderBackfillSql(plan: BackfillPlan, options: RenderOptions = {
       "  raise notice '#170 backfill: nothing to repair — every exported row already matches the parser.';",
       "end",
       "$$;",
+      "",
+      "select 0 as planned, 0 as repaired, 0 as skipped;",
       "",
     ].join("\n");
   }
@@ -251,6 +271,15 @@ export function renderBackfillSql(plan: BackfillPlan, options: RenderOptions = {
     "insert into backfill_170 (id, prev_name, name, quantity, unit) values",
     `${values};`,
     "",
+    "-- The run's own report. A plpgsql block cannot return a result set, so the",
+    "-- counts are parked here and selected below — see the note in the header about",
+    "-- not relying on `raise notice` alone.",
+    "create temporary table backfill_170_result (",
+    "  planned  int not null,",
+    "  repaired int not null,",
+    "  skipped  int not null",
+    ") on commit drop;",
+    "",
     "do $$",
     "declare",
     "  planned int := (select count(*) from backfill_170);",
@@ -267,13 +296,24 @@ export function renderBackfillSql(plan: BackfillPlan, options: RenderOptions = {
     "     and btrim(b.name) <> ''",
     "     and i.name = b.prev_name;",
     "  get diagnostics repaired = row_count;",
+    "  insert into backfill_170_result (planned, repaired, skipped)",
+    "    values (planned, repaired, planned - repaired);",
     "  raise notice '#170 backfill: % of % planned row(s) repaired', repaired, planned;",
+    "  -- Kept, but DEAD as written: backfill_170.id and public.ingredients.id are",
+    "  -- both uuid primary keys, so this UPDATE ... FROM is strictly 1:1 and",
+    "  -- `repaired <= planned` is guaranteed by those primary keys, not by this",
+    "  -- check. Do not read it as live coverage — it only becomes live again if the",
+    "  -- temp table's primary key is ever relaxed.",
     "  if repaired > planned then",
     "    raise exception '#170 backfill touched % row(s), more than the % planned — rolling back',",
     "      repaired, planned;",
     "  end if;",
     "end",
     "$$;",
+    "",
+    "-- `skipped` = planned rows the guards declined to touch (raw_text emptied, or",
+    "-- the name changed between export and run). A healthy run reports skipped = 0.",
+    "select planned, repaired, skipped from backfill_170_result;",
     "",
     "commit;",
     "",
