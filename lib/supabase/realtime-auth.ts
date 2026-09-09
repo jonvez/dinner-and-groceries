@@ -101,8 +101,14 @@ export type RealtimeAuthenticatorDeps = {
 };
 
 export type RealtimeAuthenticator = {
-  /** Fetch + apply the token, then schedule refresh. Resolves once the socket is authenticated. */
-  start: () => Promise<void>;
+  /**
+   * Fetch + apply the token, then schedule refresh. Resolves once the socket is
+   * authenticated, reporting whether a token was ACTUALLY applied: an
+   * unauthenticated socket still JOINs (it only needs the apikey) but RLS
+   * delivers nothing, so callers must be able to tell the difference and say
+   * "Live updates paused" instead of claiming to be live (issues #44/#114).
+   */
+  start: () => Promise<boolean>;
   /** Cancel any pending refresh and suppress in-flight auth (call on teardown). */
   stop: () => void;
 };
@@ -110,7 +116,9 @@ export type RealtimeAuthenticator = {
 /**
  * Keep a Realtime socket authenticated as the signed-in user: apply the current
  * token now, then re-apply just before it expires. `start()` resolves once the
- * first token is applied so callers can subscribe with an authenticated socket.
+ * first token is applied so callers can subscribe with an authenticated socket,
+ * and reports whether that actually happened (false = the socket is anon, so
+ * RLS will deliver nothing and the UI must not claim to be live).
  */
 export function createRealtimeAuthenticator(
   deps: RealtimeAuthenticatorDeps,
@@ -122,19 +130,20 @@ export function createRealtimeAuthenticator(
   let stopped = false;
   let timer: unknown = null;
 
-  async function refresh(): Promise<void> {
+  async function refresh(): Promise<boolean> {
     const result = await deps.getToken();
     // The component may have unmounted (or the user signed out) mid-fetch — do
     // not authenticate a torn-down socket, and do not schedule further work.
-    if (stopped || !result) return;
+    if (stopped || !result) return false;
     await deps.setAuth(result.token);
-    if (stopped) return;
+    if (stopped) return false;
     const delay = nextRefreshDelayMs(result.expiresAt, now(), {
       skewMs: deps.refreshSkewMs,
     });
     timer = schedule(() => {
       void refresh();
     }, delay);
+    return true;
   }
 
   return {

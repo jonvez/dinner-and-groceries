@@ -16,7 +16,8 @@ import {
  * the COMPONENT wiring: rendering reactions/comments, the fixed palette, the
  * defense-in-depth recipe-link guard, and — via a faked browser client — that the
  * Realtime subscription is filtered by household_id, merges incoming changes by PK,
- * scopes them to the week, and reconciles a fresh snapshot on reconnect.
+ * scopes them to the week, and reconciles the SERVER's snapshot on reconnect
+ * (issue #114 — the browser client has no session, so it must never read data).
  *
  * NOTE: this exercises the Realtime PLUMBING with a fake channel. Genuine
  * two-client delivery + a real socket drop is auth-gated and verified live
@@ -30,15 +31,19 @@ const rt = vi.hoisted(() => ({
   handlers: {} as Record<string, (p: unknown) => void>,
   filters: {} as Record<string, string>,
   subscribeCb: undefined as undefined | ((s: string) => void),
-  inCalls: [] as { table: string; ids: string[] }[],
-  data: { reactions: [] as unknown[], comments: [] as unknown[] },
   removeChannel: vi.fn(),
   // Realtime auth (issue #44): record tokens applied to the socket + the order
   // of setAuth vs. subscribe, so we can assert the socket is authenticated as
   // the user BEFORE it joins (anon join => RLS delivers no postgres_changes).
   setAuthTokens: [] as string[],
   events: [] as string[],
+  refresh: vi.fn(),
 }));
+
+// The reconnect snapshot comes from a SERVER re-render (issue #114): the browser
+// client has no session (auth cookies are httpOnly, ADR 0008), so a
+// browser-client read would run as anon, be denied by RLS, and blank the board.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: rt.refresh }) }));
 
 vi.mock("@/lib/supabase/browser", () => ({
   createClient: () => {
@@ -65,23 +70,19 @@ vi.mock("@/lib/supabase/browser", () => ({
         rt.setAuthTokens.push(token);
       },
     };
-    const from = (table: string) => ({
-      select: () => ({
-        in: (_col: string, ids: string[]) => {
-          rt.inCalls.push({ table, ids });
-          const result = {
-            data: table === "reactions" ? rt.data.reactions : rt.data.comments,
-            error: null,
-          };
-          return {
-            order: () => Promise.resolve(result),
-            then: (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) =>
-              Promise.resolve(result).then(onF, onR),
-          };
-        },
-      }),
-    });
-    return { channel, from, removeChannel: rt.removeChannel, realtime };
+    // The browser client is used ONLY for the socket — it has no session, so it
+    // must never be used for a data read (see the reconnect test).
+    const from = () => {
+      throw new Error("the browser client must not read data (no session)");
+    };
+    // The real client emits CLOSED as a channel is torn down. The fake does the
+    // same, so a deliberate TEARDOWN can be told apart from a dropped socket —
+    // conflating them made a re-subscribe look like a reconnect (#114 review).
+    const removeChannel = (ch: unknown) => {
+      rt.subscribeCb?.("CLOSED");
+      return rt.removeChannel(ch);
+    };
+    return { channel, from, removeChannel, realtime };
   },
 }));
 
@@ -102,11 +103,10 @@ beforeEach(() => {
   rt.handlers = {};
   rt.filters = {};
   rt.subscribeCb = undefined;
-  rt.inCalls = [];
-  rt.data = { reactions: [], comments: [] };
   rt.removeChannel.mockClear();
   rt.setAuthTokens = [];
   rt.events = [];
+  rt.refresh.mockClear();
   // The component fetches a short-lived access token from /auth/realtime-token
   // and applies it to the socket before subscribing. Stub that endpoint.
   vi.stubGlobal(
@@ -358,6 +358,10 @@ describe("ProposalPool — Realtime subscription", () => {
     expect(rt.setAuthTokens).toContain("user-jwt");
     // setAuth must precede subscribe so the JOIN carries the user's JWT.
     expect(rt.events.indexOf("setAuth")).toBeLessThan(rt.events.indexOf("subscribe"));
+    // ...and only THEN may the UI claim to be live.
+    await waitFor(() =>
+      expect(screen.getByTestId("realtime-status")).toHaveTextContent("Live"),
+    );
   });
 
   it("subscribes to reactions and comments filtered by household_id (RLS-gated column)", async () => {
@@ -469,38 +473,198 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 });
 
-describe("ProposalPool — drop + reconnect resilience", () => {
-  it("re-fetches the authoritative snapshot and reconciles by PK on reconnect", async () => {
-    renderPool({
+describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
+  it("asks the SERVER for the authoritative snapshot after a reconnect", async () => {
+    const initialReactions: ReactionRow[] = [
+      { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
+    ];
+    const { rerender } = renderPool({
       proposals: [proposals[0]],
-      initialReactions: [
-        { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
-      ],
+      initialReactions,
     });
     await connected();
-
-    // The server's truth after the drop: the thumbs is gone, a heart was added.
-    rt.data.reactions = [
-      { id: "r2", proposal_id: "p1", member_id: "alex", kind: HEART },
-    ] as ReactionRow[];
+    expect(rt.refresh).not.toHaveBeenCalled();
 
     await act(async () => {
       rt.subscribeCb?.("CHANNEL_ERROR");
       rt.subscribeCb?.("SUBSCRIBED");
     });
 
-    // A snapshot re-fetch happened, scoped to the week's proposal ids.
-    await waitFor(() =>
-      expect(rt.inCalls.some((c) => c.table === "reactions")).toBe(true),
-    );
-    expect(rt.inCalls[0].ids).toEqual(["p1"]);
+    // `router.refresh()` re-renders the RLS-scoped server snapshot into props;
+    // the sig-keyed effect reconciles it. A browser-client read would run as
+    // anon (httpOnly cookies), be denied by RLS, and blank the board — the
+    // mocked client's `from()` throws to keep that from creeping back.
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
 
-    // State converged on the server snapshot: thumbs cleared, heart present.
-    const thumbs = screen.getByRole("button", {
-      name: new RegExp(`React ${THUMBS}`),
-    });
+    // Nothing is lost while the server re-render is in flight.
+    expect(
+      screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) }),
+    ).toHaveTextContent("1");
+
+    // The server's truth arrives as new props: the thumbs is gone, a heart was
+    // added. State converges on it (reconcileByPk), with no dup or loss.
+    rerender(
+      <ProposalPool
+        householdId="hh-1"
+        currentMemberId="me"
+        weekStart="2026-06-22"
+        proposals={[proposals[0]]}
+        initialReactions={[
+          { id: "r2", proposal_id: "p1", member_id: "alex", kind: HEART },
+        ]}
+        initialComments={[]}
+        memberNames={memberNames}
+      />,
+    );
+
     const heart = screen.getByRole("button", { name: new RegExp(`React ${HEART}`) });
     await waitFor(() => expect(heart).toHaveTextContent("1"));
-    expect(thumbs).not.toHaveTextContent("1");
+    expect(
+      screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) }),
+    ).not.toHaveTextContent("1");
+  });
+
+  it("does not refresh on the FIRST subscribe (only after a drop)", async () => {
+    renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    expect(rt.refresh).not.toHaveBeenCalled();
+  });
+
+  it("still refreshes for a drop that happened BEFORE a proposal-set change", async () => {
+    // The fix must not trade a spurious refresh for a MISSED one. `wasDisconnected`
+    // deliberately outlives any single channel: a genuine drop recorded on the old
+    // channel is still owed a server re-render once the replacement connects. This
+    // is the test that fails if someone later "simplifies" the ref to a per-effect
+    // variable — which the cancelled-guard makes tempting.
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    // A real drop on the live channel — no recovery yet.
+    await act(async () => {
+      rt.subscribeCb?.("CHANNEL_ERROR");
+    });
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    // Now the proposal set changes, tearing that channel down mid-drop.
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
+    await connected();
+
+    // The replacement channel connects and the debt is paid, exactly once.
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("still refreshes for a drop that happens AFTER a proposal-set change", async () => {
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
+    await connected();
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    // The replacement channel drops for real and recovers: still a reconnect.
+    await act(async () => {
+      rt.subscribeCb?.("CHANNEL_ERROR");
+      rt.subscribeCb?.("SUBSCRIBED");
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not refresh when a proposal-set change re-subscribes the channel", async () => {
+    // The effect is keyed on the proposal ids, so adding a proposal tears the
+    // channel down and opens a new one. Teardown emits CLOSED — but that is US
+    // closing the socket, not the network dropping it, so the fresh channel's
+    // first SUBSCRIBED must NOT be treated as a reconnect. Otherwise every new
+    // idea posted to the board costs an extra server re-render.
+    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    await connected();
+    expect(rt.refresh).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rerender(
+        <ProposalPool
+          householdId="hh-1"
+          currentMemberId="me"
+          weekStart="2026-06-22"
+          proposals={proposals}
+          initialReactions={[]}
+          initialComments={[]}
+          memberNames={memberNames}
+        />,
+      );
+    });
+    await connected();
+
+    expect(rt.refresh).not.toHaveBeenCalled();
+  });
+
+  it("keeps what is on screen through a reconnect (never blanks the pool)", async () => {
+    // The #114 regression: the reconnect handler replaced state with the EMPTY
+    // result of an anon read. Until the server snapshot lands, state stands.
+    renderPool({
+      proposals: [proposals[0]],
+      initialComments: [
+        {
+          id: "c1",
+          proposal_id: "p1",
+          member_id: "alex",
+          body: "yes please",
+          created_at: "2026-06-25T17:30:00.000Z",
+        },
+      ],
+    });
+    await connected();
+
+    await act(async () => {
+      rt.subscribeCb?.("CHANNEL_ERROR");
+      rt.subscribeCb?.("SUBSCRIBED");
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("yes please")).toBeInTheDocument();
+  });
+});
+
+describe("ProposalPool — an unauthenticated socket is never reported as Live", () => {
+  it("shows 'Live updates paused' when no token could be applied (issue #44 silent failure)", async () => {
+    // The token route fails (signed out, network, 5xx): the socket would still
+    // JOIN on the anon key, and RLS would deliver nothing. Reporting "Live"
+    // would be a lie — the exact silent-failure mode #44 fixed on the wire.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
+
+    renderPool({ proposals: [proposals[0]] });
+    await connected();
+
+    expect(rt.setAuthTokens).toEqual([]);
+    await waitFor(() =>
+      expect(screen.getByTestId("realtime-status")).toHaveTextContent(
+        "Live updates paused",
+      ),
+    );
   });
 });

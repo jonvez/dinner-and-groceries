@@ -31,7 +31,10 @@
  * The socket is authenticated AS THE SIGNED-IN USER before subscribing
  * (`createRealtimeAuthenticator` + `fetchRealtimeToken`, issue #44/ADR 0008) —
  * the anon-key-only socket would otherwise evaluate RLS as anon and deliver
- * nothing while still reporting "Live". No service-role key exists on any path.
+ * nothing while still reporting "Live". If no token could be applied the channel
+ * still JOINs (it only needs the apikey), so the status reports "Live updates
+ * paused" unless the socket is BOTH subscribed and authenticated (issue #114).
+ * No service-role key exists on any path.
  */
 
 import { useRouter } from "next/navigation";
@@ -119,6 +122,9 @@ export function GroceryList({
   );
   const [sections, setSections] = useState<SectionRow[]>(initialSections);
   const [live, setLive] = useState(false);
+  // An anon socket JOINs fine but RLS delivers nothing (#44), so "Live" means
+  // BOTH subscribed and authenticated as the signed-in user.
+  const [socketAuthed, setSocketAuthed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -198,8 +204,9 @@ export function GroceryList({
 
     async function setup() {
       // Authenticate FIRST so the channel's JOIN carries the user's JWT.
-      await authenticator.start();
+      const authed = await authenticator.start();
       if (cancelled) return;
+      setSocketAuthed(authed);
       channel = subscribe();
     }
 
@@ -399,7 +406,7 @@ export function GroceryList({
           aria-live="polite"
           data-testid="realtime-status"
         >
-          {live ? "Live" : "Live updates paused"}
+          {live && socketAuthed ? "Live" : "Live updates paused"}
         </span>
       </div>
 
