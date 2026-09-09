@@ -375,3 +375,46 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   mechanism spelled out — the non-author review earned its keep here. And the guard now lives in both test
   files as a *mock that throws*: the faked browser client's `from()` raises "the browser client must not
   read data (no session)", so a future re-introduction fails loudly instead of silently blanking a screen.
+
+---
+
+### 2026-09-09 — a follow-up agent cannot check out the branch it was sent to fix
+
+- **Observation:** the security gate on #175 returned three findings, so a **fresh** developer agent
+  was dispatched to apply them to the existing branch (per `subagent-dispatch` / evt-0005: never
+  re-ping an idle agent for more work). It could not `git checkout fix/170-ingredient-line-prefixes`
+  — the branch was still checked out in the *original author's* worktree, and git refuses a second
+  checkout of the same branch. It recovered on its own: branched from
+  `origin/fix/170-ingredient-line-prefixes` under a different local name and pushed with
+  `git push origin HEAD:fix/170-ingredient-line-prefixes`. Same remote branch, same PR, correct
+  outcome — but it burned turns discovering the constraint and inventing the workaround.
+- **Why this will recur, and get worse:** it is structural, not bad luck. evt-0005 *mandates* fresh
+  dispatches for post-review fixes, and the review→fix cycle is the normal path, not the exception —
+  every gated PR that comes back with findings hits this. The author's worktree is still holding the
+  branch precisely *because* the author finished successfully; a crashed agent would have left the
+  branch free. **The better the process works, the more reliably this bites.**
+- **Impact:** low per occurrence (a few wasted turns, no wrong outcome) but it recurs on every
+  review-with-findings, and the recovery is invented fresh each time by an agent that has no way to
+  know the constraint in advance. Each reinvention is a chance to get it wrong — e.g. by opening a
+  second PR, which is the failure this one avoided but a less careful agent would not.
+- **Root cause:** the orchestrator dispatches follow-up agents without releasing the branch, and the
+  brief says "check out the existing branch" as if that always works. Nothing in the dispatch tells
+  the agent the branch may be held elsewhere, or what to do about it.
+- **Candidate fixes (retro topic — not yet decided):**
+  1. **Say it in the brief.** Any follow-up dispatch onto an existing branch includes the recipe:
+     branch from `origin/<branch>` under a local name, push with `HEAD:<branch>`, never open a second
+     PR. Cheapest, zero moving parts, and it is one paragraph in `subagent-dispatch`.
+  2. **Release the branch when an agent finishes.** The orchestrator prunes the completed agent's
+     worktree before dispatching the follow-up. Cleaner state, but the worktree is also the evidence
+     trail — the report file points into it — so pruning early trades one kind of recoverability for
+     another.
+  3. **Never reuse the branch.** Follow-up fixes go on their own branch and PR. Rejected on sight:
+     it fragments one issue's work across PRs and defeats the "one issue, one PR, linked" convention.
+- **Recommendation to weigh at retro:** (1). It is a documentation change to a skill that every
+  dispatch already reads, and it converts a per-agent rediscovery into a known procedure. (2) is
+  worth considering *only* once the report-file convention is old enough that nobody reads the
+  worktree itself.
+- **Adjacent, noticed while cleaning up:** `.claude/worktrees/` is **not** in `.gitignore`, so agent
+  worktrees show up as untracked in `git status` on `main`. Harmless today, but `git add -A` in that
+  state would commit an entire nested checkout — and this repo's own command-hygiene rule exists
+  because `git add -A` gets reached for anyway. One line in `.gitignore` closes it.
