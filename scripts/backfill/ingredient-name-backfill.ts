@@ -99,21 +99,46 @@ export function readExportedRows(payload: unknown): IngredientExportRow[] {
   });
 }
 
-/** The array inside a recognized wrapper, or null when there isn't one. */
+/**
+ * The array inside a recognized wrapper, or null when there isn't one.
+ *
+ * Wrappers NEST. `supabase db query --linked` — the command the runbook tells
+ * you to run in step 1 — returns `{boundary, rows: [{rows: [...]}]}`, i.e. the
+ * ingredient rows two levels down, not the bare array the docs once promised.
+ * So unwrap repeatedly until the array we are holding looks like ingredient
+ * rows (or we run out of wrappers), rather than assuming a fixed depth. Bounded,
+ * so a self-referential or pathological payload cannot spin.
+ */
 function unwrapRows(payload: unknown): unknown[] | null {
-  if (Array.isArray(payload)) {
-    if (payload.length === 1 && isRecord(payload[0]) && !("id" in payload[0])) {
-      const nested = Object.values(payload[0]).filter(Array.isArray);
-      if (nested.length === 1) return nested[0];
+  let current: unknown = payload;
+
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (Array.isArray(current)) {
+      // A single wrapper object holding exactly one array is another layer, not
+      // the rows themselves. An `id` means we have arrived.
+      if (current.length === 1 && isRecord(current[0]) && !("id" in current[0])) {
+        const nested = Object.values(current[0]).filter(Array.isArray);
+        if (nested.length === 1) {
+          current = nested[0];
+          continue;
+        }
+      }
+      return current;
     }
-    return payload;
-  }
-  if (isRecord(payload)) {
-    for (const key of ["rows", "data", "result"]) {
-      const value = payload[key];
-      if (Array.isArray(value)) return value;
+
+    if (isRecord(current)) {
+      const record = current;
+      const next = ["rows", "data", "result"]
+        .map((key) => record[key])
+        .find(Array.isArray);
+      if (next === undefined) return null;
+      current = next;
+      continue;
     }
+
+    return null;
   }
+
   return null;
 }
 
