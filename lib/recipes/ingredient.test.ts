@@ -210,3 +210,196 @@ describe("QA edge cases (#11)", () => {
     expect(normalizeName(a.name)).toBe("egg");
   });
 });
+
+/**
+ * Leading list markers (#170). Pasting an ingredient list out of a recipe site
+ * or a note carries the site's bullet with it; anchoring the quantity patterns
+ * at the literal start of the string made every one of those lines fall through
+ * to "no quantity, whole line is the name" — which also silently defeats the
+ * roll-up, because `name` is the dedupe key (ADR 0003).
+ */
+describe("leading list markers (#170)", () => {
+  const MARKERS = [
+    ["hyphen", "- "],
+    ["en dash", "– "],
+    ["em dash", "— "],
+    ["asterisk", "* "],
+    ["bullet", "• "],
+    ["middle dot", "· "],
+    ["hollow square (recipe-site checkbox)", "▢ "],
+    ["small square", "▪ "],
+    ["standalone o (Word sub-bullet)", "o "],
+    ["empty checkbox with a space", "[ ] "],
+    ["empty checkbox", "[] "],
+    ["numbered list with a period", "1. "],
+    ["numbered list with a paren", "1) "],
+    ["leading whitespace then a hyphen", "  - "],
+    ["bullet with no space after it", "•"],
+    ["checkbox after a bullet", "- [ ] "],
+  ] as const;
+
+  for (const [label, marker] of MARKERS) {
+    it(`strips a leading ${label} and parses the line as if it were not there`, () => {
+      const raw = `${marker}2 cups all-purpose flour`;
+      expect(parseIngredient(raw)).toEqual({
+        quantity: 2,
+        unit: "cup",
+        name: "all-purpose flour",
+        rawText: raw,
+      });
+    });
+  }
+
+  it("reproduces every row of the issue's evidence table, fixed", () => {
+    expect(parseIngredient("2 lb pork shoulder")).toMatchObject({
+      quantity: 2, unit: "lb", name: "pork shoulder",
+    });
+    expect(parseIngredient("- 2 cups all-purpose flour")).toMatchObject({
+      quantity: 2, unit: "cup", name: "all-purpose flour",
+    });
+    expect(parseIngredient("• 1 tbsp olive oil")).toMatchObject({
+      quantity: 1, unit: "tbsp", name: "olive oil",
+    });
+    expect(parseIngredient("* 3 cloves garlic, minced")).toMatchObject({
+      quantity: 3, unit: "clove", name: "garlic, minced",
+    });
+    expect(parseIngredient("▢ 1 tbsp olive oil")).toMatchObject({
+      quantity: 1, unit: "tbsp", name: "olive oil",
+    });
+    expect(parseIngredient("  - 1 lb ground beef")).toMatchObject({
+      quantity: 1, unit: "lb", name: "ground beef",
+    });
+    expect(parseIngredient("1. 2 cups flour")).toMatchObject({
+      quantity: 2, unit: "cup", name: "flour",
+    });
+    expect(parseIngredient("2lb pork shoulder")).toMatchObject({
+      quantity: 2, unit: "lb", name: "pork shoulder",
+    });
+    expect(parseIngredient("1 (14.5 oz) can diced tomatoes")).toMatchObject({
+      quantity: 1, unit: "can", name: "diced tomatoes",
+    });
+  });
+
+  it("never re-reads a stripped list number as the quantity", () => {
+    expect(parseIngredient("1. 2 cups flour")).toEqual({
+      quantity: 2, unit: "cup", name: "flour", rawText: "1. 2 cups flour",
+    });
+    expect(parseIngredient("3) 1 tsp salt")).toEqual({
+      quantity: 1, unit: "tsp", name: "salt", rawText: "3) 1 tsp salt",
+    });
+  });
+
+  it("does not mistake a decimal for a list number", () => {
+    expect(parseIngredient("1.5 cups flour")).toEqual({
+      quantity: 1.5, unit: "cup", name: "flour", rawText: "1.5 cups flour",
+    });
+  });
+
+  it("strips the marker from an unquantified line too, so it cannot poison the dedupe key", () => {
+    expect(parseIngredient("- Kosher salt")).toEqual({
+      quantity: null, unit: null, name: "Kosher salt", rawText: "- Kosher salt",
+    });
+    expect(parseIngredient("▢ Olive oil, for frying")).toEqual({
+      quantity: null, unit: null, name: "Olive oil, for frying",
+      rawText: "▢ Olive oil, for frying",
+    });
+  });
+
+  it("leaves a genuinely unquantified line with no marker exactly as it was", () => {
+    expect(parseIngredient("Kosher salt")).toEqual({
+      quantity: null, unit: null, name: "Kosher salt", rawText: "Kosher salt",
+    });
+    expect(parseIngredient("Olive oil, for frying")).toEqual({
+      quantity: null, unit: null, name: "Olive oil, for frying",
+      rawText: "Olive oil, for frying",
+    });
+  });
+
+  it("preserves rawText verbatim, marker and all", () => {
+    expect(parseIngredient("  - 1 lb ground beef").rawText).toBe("  - 1 lb ground beef");
+    expect(parseIngredient("▢ 1 tbsp olive oil").rawText).toBe("▢ 1 tbsp olive oil");
+  });
+
+  it("strips the marker inside parseQuantity, so the remainder is unit-matchable", () => {
+    expect(parseQuantity("- 2 cups flour")).toEqual({ quantity: 2, rest: "cups flour" });
+    expect(parseQuantity("• ½ cup sugar")).toEqual({ quantity: 0.5, rest: "cup sugar" });
+    expect(parseQuantity("- salt to taste")).toEqual({ quantity: null, rest: "salt to taste" });
+  });
+
+  it("still refuses a minus sign glued to a number (not a bullet — no data loss)", () => {
+    expect(parseIngredient("-2 cups flour")).toEqual({
+      quantity: null, unit: null, name: "-2 cups flour", rawText: "-2 cups flour",
+    });
+  });
+
+  it("does not eat a hyphenated ingredient name", () => {
+    expect(parseIngredient("all-purpose flour")).toEqual({
+      quantity: null, unit: null, name: "all-purpose flour", rawText: "all-purpose flour",
+    });
+  });
+
+  it("makes a bulleted line dedupe with the same ingredient typed plainly (#14)", () => {
+    const bulleted = parseIngredient("- 2 cups all-purpose flour");
+    const plain = parseIngredient("1 cup all-purpose flour");
+    expect(normalizeName(bulleted.name)).toBe(normalizeName(plain.name));
+    expect(bulleted.unit).toBe(plain.unit);
+  });
+});
+
+describe("digit glued to its unit (#170)", () => {
+  it("splits a quantity glued to a known unit", () => {
+    expect(parseIngredient("2lb pork shoulder")).toEqual({
+      quantity: 2, unit: "lb", name: "pork shoulder", rawText: "2lb pork shoulder",
+    });
+    expect(parseIngredient("500g flour")).toEqual({
+      quantity: 500, unit: "g", name: "flour", rawText: "500g flour",
+    });
+    expect(parseIngredient("1.5kg beef chuck")).toEqual({
+      quantity: 1.5, unit: "kg", name: "beef chuck", rawText: "1.5kg beef chuck",
+    });
+    expect(parseIngredient("- 2lb pork shoulder")).toMatchObject({
+      quantity: 2, unit: "lb", name: "pork shoulder",
+    });
+  });
+
+  it("only splits when the glued letters are a KNOWN unit, so a product code stays intact", () => {
+    expect(parseIngredient("2x4 lumber")).toEqual({
+      quantity: null, unit: null, name: "2x4 lumber", rawText: "2x4 lumber",
+    });
+    expect(parseIngredient("6oz can")).toMatchObject({ quantity: 6, unit: "oz", name: "can" });
+  });
+});
+
+describe("parenthetical package size (#170)", () => {
+  it("drops a numeric package size so the real unit and name survive", () => {
+    expect(parseIngredient("1 (14.5 oz) can diced tomatoes")).toEqual({
+      quantity: 1, unit: "can", name: "diced tomatoes",
+      rawText: "1 (14.5 oz) can diced tomatoes",
+    });
+    expect(parseIngredient("2 (15 oz) cans black beans")).toMatchObject({
+      quantity: 2, unit: "can", name: "black beans",
+    });
+    expect(parseIngredient("1 (14.5-ounce) can crushed tomatoes")).toMatchObject({
+      quantity: 1, unit: "can", name: "crushed tomatoes",
+    });
+  });
+
+  it("leaves no digit or unit token in the name", () => {
+    const { name } = parseIngredient("- 1 (14.5 oz) can diced tomatoes");
+    expect(name).toBe("diced tomatoes");
+    expect(name).not.toMatch(/\d/);
+  });
+
+  it("keeps a NON-numeric parenthetical, which is a descriptor and out of scope", () => {
+    // Descriptor words in the name are explicitly out of scope for #170.
+    expect(parseIngredient("1 (large) onion")).toMatchObject({
+      quantity: 1, unit: null, name: "(large) onion",
+    });
+  });
+
+  it("leaves an unclosed parenthesis alone rather than swallowing the line", () => {
+    expect(parseIngredient("1 (14.5 oz can diced tomatoes")).toMatchObject({
+      quantity: 1, unit: null, name: "(14.5 oz can diced tomatoes",
+    });
+  });
+});

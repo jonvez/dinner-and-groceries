@@ -7,6 +7,24 @@
  * Dedupe (#14) is a normalized-STRING match (ADR 0003), never semantic identity —
  * which is why a small closed unit table, not an external food database, is all we
  * need. See docs/superpowers/specs/2026-07-22-ingredient-parser-design.md.
+ *
+ * #170 — pasted lists. Real input arrives with the source's list marker attached
+ * ("- 2 cups flour", "▢ 1 tbsp olive oil", "1. 2 cups flour"). Every marker is
+ * stripped BEFORE quantity parsing, otherwise the quantity patterns miss and the
+ * whole line becomes the `name` — which puts the amount inside the dedupe key and
+ * silently defeats the roll-up. Two decisions recorded there:
+ *
+ *   - A parenthetical PACKAGE SIZE ("1 (14.5 oz) can diced tomatoes") is DROPPED,
+ *     not captured: the schema has no package-size field, ADR 0003 forbids unit
+ *     conversion (so `14.5 oz` cannot be multiplied into anything), and keeping it
+ *     in `name` would break dedupe against the same can written any other way. The
+ *     verbatim text survives in `rawText`, so nothing is lost and the line stays
+ *     correctable. Only a parenthetical containing a DIGIT is treated as a package
+ *     size; "(large)" and friends are descriptors and stay in the name (out of
+ *     scope, per the issue).
+ *   - A digit glued to its unit ("2lb pork shoulder") splits ONLY when the glued
+ *     letters are a known unit, so a product code ("2x4") is never mistaken for a
+ *     quantity.
  */
 
 export type ParsedIngredient = {
@@ -29,13 +47,48 @@ const VULGAR_FRACTIONS: Record<string, number> = {
 const VULGAR_CLASS = "½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞";
 
 /**
- * Strip a leading quantity from `text`. Returns the numeric value (or null when the
- * line has no leading amount) and the left-trimmed remainder. A RANGE ("2-3", "2 to
- * 3") resolves to the HIGH end so a grocery list never under-buys; `rawText`
- * upstream still preserves the original range verbatim.
+ * A leading list marker, as pasted out of a recipe site, a note or a Word doc (#170).
+ *
+ * Two of these are deliberately narrower than they look:
+ *   - a dash (`-`/`–`/`—`) must be FOLLOWED BY WHITESPACE, so "-2 cups flour" keeps
+ *     its documented "not a quantity" behaviour and a hyphenated name is untouched;
+ *   - a list number (`1.` / `1)`) must be followed by whitespace too, so the decimal
+ *     in "1.5 cups flour" is never mistaken for item 1.
+ * The unambiguous glyph bullets and checkboxes may be glued to the amount ("•1 tbsp").
+ */
+const LIST_MARKER = new RegExp(
+  "^(?:" +
+    "[-–—]\\s+" + // hyphen / en dash / em dash bullet
+    "|[*•·▪▫▢□◦‣]\\s*" + // glyph bullets, incl. the recipe-site checkbox ▢
+    "|\\[[ xX]?\\]\\s*" + // markdown-ish checkbox: [ ] / [] / [x]
+    "|\\d+[.)]\\s+" + // numbered list: "1." / "1)"
+    "|o\\s+" + // Word's sub-bullet, only as a standalone token
+    ")",
+);
+
+/**
+ * Remove any leading list marker(s) from `text` and left-trim (#170). Markers nest
+ * in the wild ("- [ ] 2 cups flour"), so this strips repeatedly — bounded, so a
+ * pathological line can never spin.
+ */
+export function stripListMarker(text: string): string {
+  let s = text.trimStart();
+  for (let i = 0; i < 4; i++) {
+    const stripped = s.replace(LIST_MARKER, "");
+    if (stripped === s) break;
+    s = stripped.trimStart();
+  }
+  return s;
+}
+
+/**
+ * Strip a leading list marker and quantity from `text`. Returns the numeric value
+ * (or null when the line has no leading amount) and the left-trimmed remainder. A
+ * RANGE ("2-3", "2 to 3") resolves to the HIGH end so a grocery list never
+ * under-buys; `rawText` upstream still preserves the original line verbatim.
  */
 export function parseQuantity(text: string): { quantity: number | null; rest: string } {
-  const s = text.trimStart();
+  const s = stripListMarker(text);
 
   // Range: high end wins.
   const range = s.match(
@@ -61,12 +114,19 @@ export function parseQuantity(text: string): { quantity: number | null; rest: st
   const frac = s.match(/^(\d+)\/(\d+)\b(.*)$/);
   if (frac) return { quantity: parseInt(frac[1], 10) / parseInt(frac[2], 10), rest: frac[3].trimStart() };
 
+  // Digit glued to its unit ("2lb pork shoulder"): split ONLY when the glued
+  // letters are a known unit, so a product code ("2x4 lumber") is left alone.
+  const glued = s.match(/^(\d+(?:\.\d+)?)([a-zA-Z]+)\b(.*)$/);
+  if (glued && matchUnit(glued[2])) {
+    return { quantity: parseFloat(glued[1]), rest: `${glued[2]}${glued[3]}`.trimStart() };
+  }
+
   // Plain integer or decimal.
   const num = s.match(/^(\d+(?:\.\d+)?)\b(.*)$/);
   if (num) return { quantity: parseFloat(num[1]), rest: num[2].trimStart() };
 
   // No leading quantity.
-  return { quantity: null, rest: text.trim() };
+  return { quantity: null, rest: s.trimEnd() };
 }
 
 /**
@@ -141,11 +201,19 @@ export function normalizeName(name: string): string {
 }
 
 /**
+ * A parenthetical PACKAGE SIZE straight after the quantity ("1 (14.5 oz) can diced
+ * tomatoes"). Requires a digit inside the parens: that is what tells a package size
+ * from a descriptor ("(large)"), which stays in the name (out of scope for #170).
+ */
+const PACKAGE_SIZE = /^\((?=[^)]*\d)[^)]*\)\s*/;
+
+/**
  * Parse one raw ingredient line into structured, mergeable fields. Pure; no I/O.
- * Pipeline: preserve rawText → strip leading quantity → (only if a quantity was
- * found) match a unit (two-word before one-word) → remainder is the display name.
- * A measurement unit with no preceding quantity is meaningless, so unquantified
- * lines get unit=null and the whole remainder as the name.
+ * Pipeline: preserve rawText → strip a leading list marker + quantity → (only if a
+ * quantity was found) drop a parenthetical package size, then match a unit (two-word
+ * before one-word) → remainder is the display name. A measurement unit with no
+ * preceding quantity is meaningless, so unquantified lines get unit=null and the
+ * whole remainder as the name.
  */
 export function parseIngredient(raw: string): ParsedIngredient {
   const rawText = raw;
@@ -156,7 +224,9 @@ export function parseIngredient(raw: string): ParsedIngredient {
     return { quantity: null, unit: null, name: rest, rawText };
   }
 
-  const tokens = rest.length ? rest.split(" ") : [];
+  // Package size is dropped, not captured — see the module docstring (#170).
+  const afterPackage = rest.replace(PACKAGE_SIZE, "");
+  const tokens = afterPackage.length ? afterPackage.split(" ") : [];
   let unit: string | null = null;
   let nameTokens = tokens;
 
