@@ -343,6 +343,25 @@ describe("GroceryList", () => {
 
     expect(rt.refresh).not.toHaveBeenCalled();
   });
+
+  it("reports 'Live updates paused' when no token could be applied (issue #44/#114)", async () => {
+    // The token route fails (signed out, network, 5xx): the socket still JOINs
+    // on the anon key, but RLS delivers nothing. Claiming "Live" would tell a
+    // shopper the other phone's check-offs are arriving when they are not.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
+
+    renderList([row({ id: "g1", name: "eggs" })]);
+    await connected();
+
+    expect(rt.setAuthTokens).toEqual([]);
+    await waitFor(() =>
+      expect(screen.getByTestId("realtime-status")).toHaveTextContent(
+        "Live updates paused",
+      ),
+    );
+    // The list itself is server-rendered, so it is still fully correct.
+    expect(screen.getAllByTestId("grocery-item")).toHaveLength(1);
+  });
 });
 
 /**

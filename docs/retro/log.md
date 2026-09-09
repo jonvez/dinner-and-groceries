@@ -351,3 +351,27 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   a mechanical net for when the discipline slips, which is exactly the pairing that worked for the
   default-privileges guard. Do **not** adopt (3) alone: it fixes the one path that happened to bite and
   leaves every other out-of-band completion silently diverging.
+
+### 2026-09-07 — the copy got the fix; the original kept the bug (#114)
+
+- **Observation:** `app/grocery/grocery-list.tsx` was written by deliberately mirroring
+  `app/board/proposal-pool.tsx`'s Realtime plumbing (#15). During #15 the reconnect path was found to be
+  wrong — re-reading the "authoritative snapshot" through the BROWSER Supabase client, which has no
+  session because auth cookies are httpOnly (ADR 0008 / #44), so RLS denies the read (42501), the error is
+  swallowed, and state is replaced with an EMPTY list. The grocery copy was fixed (`router.refresh()`, a
+  server re-render) and its module docstring now spells the reasoning out at length. **The original was
+  left untouched for three weeks**, blanking the week board after every socket drop, until the #15 security
+  gate filed it as #114.
+- **Why it slipped:** the fix was framed as "fix the file I am working on". The relationship that made the
+  bug — *this file was copied from that one* — was recorded in prose in the copy's docstring ("the same
+  contract as `app/board/proposal-pool.tsx`, whose Realtime plumbing this mirrors deliberately") and
+  nowhere actionable. A docstring pointing at a sibling is documentation; it is not a to-do.
+- **The generalization:** when a bug is found in code that was cloned from somewhere, the clone source is a
+  *suspect*, not a footnote. The cheap habit: on any fix, grep for the pattern being removed
+  (here: `supabase.from(` inside a `"use client"` file) before closing the issue, and file the twin
+  immediately even if it is not fixed in the same PR. That grep takes seconds and would have surfaced this
+  the same afternoon.
+- **What worked:** the security gate on #15 caught it as a pre-existing twin and filed it with the
+  mechanism spelled out — the non-author review earned its keep here. And the guard now lives in both test
+  files as a *mock that throws*: the faked browser client's `from()` raises "the browser client must not
+  read data (no session)", so a future re-introduction fails loudly instead of silently blanking a screen.
