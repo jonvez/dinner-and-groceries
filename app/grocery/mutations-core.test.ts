@@ -282,16 +282,38 @@ describe("addAdHocItem", () => {
 });
 
 describe("setHaveIt / setChecked", () => {
-  it("have-it updates only have_it, by id", async () => {
+  it("have-it stamps its OWN timestamp — never purchased_at (#171)", async () => {
+    // The stamp is what takes the row off the shopping list, and it must not be
+    // `purchased_at`: that would write a phantom purchase into trip history and
+    // feed the staples-promotion offer. A pantry fact is not a purchase
+    // (ADR 0012). Nothing else on the row is touched, so a crafted call still
+    // cannot re-home the row or flip `edited`.
     const { client, calls } = makeClient();
 
-    const result = await setHaveIt(client, { id: "g1", haveIt: true });
+    const result = await setHaveIt(client, { id: "g1", haveIt: true, now });
 
     expect(result).toEqual({ ok: true });
     expect(calls.updates).toEqual([
       {
         table: "grocery_items",
-        values: { have_it: true },
+        values: { have_it: true, have_it_at: NOW.toISOString() },
+        filters: [{ op: "eq", column: "id", value: "g1" }],
+      },
+    ]);
+  });
+
+  it("undo clears the stamp, putting the row back on the list (#171)", async () => {
+    const { client, calls } = makeClient();
+
+    const result = await setHaveIt(client, { id: "g1", haveIt: false, now });
+
+    expect(result).toEqual({ ok: true });
+    // `have_it_at: null` is the whole undo — the row was never deleted, so its
+    // aisle, quantity and unit are still exactly where they were.
+    expect(calls.updates).toEqual([
+      {
+        table: "grocery_items",
+        values: { have_it: false, have_it_at: null },
         filters: [{ op: "eq", column: "id", value: "g1" }],
       },
     ]);
