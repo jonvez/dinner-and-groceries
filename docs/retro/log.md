@@ -418,3 +418,53 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   worktrees show up as untracked in `git status` on `main`. Harmless today, but `git add -A` in that
   state would commit an entire nested checkout — and this repo's own command-hygiene rule exists
   because `git add -A` gets reached for anyway. One line in `.gitignore` closes it.
+
+---
+
+### 2026-09-10 — I wrote the runbook, then handed over commands nobody could run
+
+- **Observation:** the #171 migration needed a manual `supabase db push`. Jon was handed three
+  instructions in a row that did not work:
+  1. `supabase db push` — there is no `supabase` on his PATH. It is a repo devDependency pinned at
+     2.107.0 (#164); the only working invocation is `npx supabase` **from inside the repo**.
+  2. No mention that he had to be **on the branch**. `20260909120000_grocery_items_have_it_at.sql`
+     exists only on `feat/171-have-it-removes-item`, never on `main` — which is the entire reason the
+     apply-then-merge ordering is delicate. It was left implicit.
+  3. `git checkout feat/171-have-it-removes-item` — **fatal: already used by worktree**. The finished
+     agent's worktree still held the branch. This is the failure documented in the entry directly
+     above, written the same day, by me.
+- **Root cause — and it is not "forgot the `npx`".** Before writing those instructions I checked a
+  lot of state: prod's migration list, whether the file existed on the branch, whether the CLI was
+  global or local, what version was pinned and why. All correct, all useless. **I verified the facts
+  surrounding the command and never rehearsed the command itself.** Two of the three failures
+  (`npx`, the worktree lock) would have surfaced instantly by running the thing once.
+- **Why the third one is the interesting one.** I had written the branch-contention entry hours
+  earlier, in this same file, and still produced a `git checkout` that hit it. Writing a lesson down
+  is not the same as being able to apply it — a retro entry is a *lookup table nobody consults*
+  unless something forces the lookup. The knowledge was captured perfectly and changed nothing.
+- **Impact:** three round trips of Jon's time on what should have been one copy-paste, at the one
+  moment in the flow that is genuinely irreversible (a schema change against production). Handing a
+  human a command that errors immediately is cheap; handing them one that half-works during a prod
+  migration is not, and this was luck rather than design.
+- **The class:** any instruction handed to a HUMAN to execute. Agent-authored runbooks are written
+  from inside a context the human does not share — a worktree, a repo-root cwd, a `node_modules/.bin`
+  on the effective path, a checked-out branch. Every one of those is invisible to the author and
+  fatal to the reader. Note this repo already *had* this bug in committed form: #175's backfill
+  runbook said "save the returned json array" when the CLI returns an envelope, because its author
+  was barred from ever running it. **Same defect, different day: a procedure nobody executed before
+  publishing.**
+- **Candidate fixes (retro topic — not yet decided):**
+  1. **Rehearse before handing over.** Any command given to Jon gets run first, or its closest
+     harmless equivalent (`git checkout` the branch and switch back; `--dry-run`; `--help` on the
+     exact binary path). Cheap, catches PATH and lock errors, and is what finally worked here.
+  2. **State the preconditions in the instruction, not around it.** cwd, branch, and binary in the
+     copy-paste block itself — `cd ~/dev/... && git checkout X && npx ...` — rather than as prose
+     the reader is expected to reassemble.
+  3. **Prune a finished agent's worktree at hand-off**, not at session end. Would have prevented the
+     third failure outright. Trade-off already recorded in the entry above (the worktree is the
+     evidence trail the report file points into) — but note the trail is only needed until the
+     report is read, and this one had been read hours earlier.
+- **Recommendation to weigh at retro:** (1) and (2) are the same discipline as "evidence before
+  assertions" applied to instructions rather than claims, and they cost nothing. (3) is now more
+  attractive than it looked this morning: the same stale worktree has caused two distinct failures in
+  one day, one for an agent and one for a human.
