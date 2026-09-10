@@ -233,6 +233,7 @@ export type Database = {
           created_at: string
           edited: boolean
           have_it: boolean
+          have_it_at: string | null
           household_id: string
           id: string
           ingredient_id: string | null
@@ -250,6 +251,7 @@ export type Database = {
           created_at?: string
           edited?: boolean
           have_it?: boolean
+          have_it_at?: string | null
           household_id: string
           id?: string
           ingredient_id?: string | null
@@ -267,6 +269,7 @@ export type Database = {
           created_at?: string
           edited?: boolean
           have_it?: boolean
+          have_it_at?: string | null
           household_id?: string
           id?: string
           ingredient_id?: string | null

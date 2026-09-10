@@ -15,8 +15,9 @@
  *     RLS-gated so no cross-household leakage) merges the OTHER shopper's
  *     changes into local state, keyed by PK (`mergeChange`). The week scope is
  *     applied to incoming INSERT/UPDATE rows; a row that arrives already
- *     archived (`purchased_at` set) LEAVES the active list, which is how the
- *     other phone sees "complete trip" happen.
+ *     archived (`purchased_at` set) or CLAIMED (`have_it_at` set, #171) LEAVES
+ *     the active list, which is how the other phone sees "complete trip" and
+ *     "we have it" happen.
  *   - On a drop + reconnect we ask the SERVER to re-render the authoritative
  *     snapshot (`router.refresh()`), and the `sig`-keyed effect below
  *     `reconcileByPk`s the new props — the server is the source of truth, so
@@ -126,6 +127,8 @@ export function GroceryList({
   // BOTH subscribed and authenticated as the signed-in user.
   const [socketAuthed, setSocketAuthed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // The row behind the notice's Undo, if the notice is a "we have it" (#171).
+  const [undoRow, setUndoRow] = useState<GroceryRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<PromotableItem[]>([]);
@@ -143,6 +146,20 @@ export function GroceryList({
     savingSectionRef.current = next;
     setSavingSection(next);
   }, []);
+  /**
+   * Rows whose "we have it" write is still in flight (#171), and what the local
+   * truth about them is: `null` = being removed, a row = being restored by Undo.
+   * A ref for the same reason `savingSectionRef` is one — the snapshot-sync
+   * effect must read it without re-running on every write.
+   */
+  const pendingHaveItRef = useRef<Map<string, GroceryRow | null>>(new Map());
+  const markPendingHaveIt = useCallback(
+    (id: string, pending: GroceryRow | null | undefined) => {
+      if (pending === undefined) pendingHaveItRef.current.delete(id);
+      else pendingHaveItRef.current.set(id, pending);
+    },
+    [],
+  );
   const [accepted, setAccepted] = useState<Record<string, boolean>>({});
   // Held in a ref so the router's identity can never churn the subscription
   // below (a re-JOIN would drop events mid-aisle).
@@ -160,7 +177,23 @@ export function GroceryList({
     // Sync from the server snapshot (external system), not deriving local
     // render state — the blessed setState-in-effect case per the rule docs.
     setItems((prev) => {
-      const next = sortItems(reconcileByPk(initialItems));
+      let next = sortItems(reconcileByPk(initialItems));
+
+      // A snapshot rendered BEFORE an in-flight "we have it" still lists the
+      // item (or, mid-Undo, still omits it). Adopting it wholesale would flash
+      // the row back onto the list and remove it again a beat later — the same
+      // staleness the aisle picker guards against, and much more alarming when
+      // a row vanishes and reappears. Hold the local truth for exactly those
+      // ids until their own revalidation lands. (#171)
+      const pending = pendingHaveItRef.current;
+      if (pending.size > 0) {
+        next = next.filter((r) => !(pending.has(r.id) && pending.get(r.id) === null));
+        for (const [id, row] of pending) {
+          if (row && !next.some((r) => r.id === id)) next.push(row);
+        }
+        next = sortItems(next);
+      }
+
       const saving = savingSectionRef.current;
       if (Object.keys(saving).length === 0) return next;
       // A snapshot in flight was rendered BEFORE the aisle writes that are
@@ -276,17 +309,57 @@ export function GroceryList({
     [patch],
   );
 
-  const onToggleHaveIt = useCallback(
-    async (row: GroceryRow, haveIt: boolean) => {
+  /**
+   * "We have it" — one tap and the item is off the list (#171). No checkbox, no
+   * Complete trip: saying you have it already says everything.
+   *
+   * Optimistic like the toggles, and rolled back if the write fails, because a
+   * shopper standing in an aisle on bad signal should never wait to see the item
+   * go. The removed row is kept in hand for two reasons: to put it back on
+   * failure, and to power the Undo below — the row still exists server-side with
+   * its aisle, quantity and unit, so nothing has to be reconstructed either way.
+   */
+  const onHaveIt = useCallback(
+    async (row: GroceryRow) => {
       setError(null);
-      patch(row.id, { haveIt });
-      const result = await setHaveItAction(row.id, haveIt);
+      setNotice(null);
+      setUndoRow(null);
+      markPendingHaveIt(row.id, null);
+      setItems((prev) => prev.filter((r) => r.id !== row.id));
+
+      const result = await setHaveItAction(row.id, true);
+
       if (result && "error" in result) {
-        patch(row.id, { haveIt: row.haveIt });
+        markPendingHaveIt(row.id, undefined);
+        setItems((prev) => sortItems(reconcileByPk([...prev, row]))); // roll back
+        setError(result.error);
+        return;
+      }
+      markPendingHaveIt(row.id, undefined);
+      setNotice(`${row.name} — you already have it.`);
+      setUndoRow(row);
+    },
+    [markPendingHaveIt],
+  );
+
+  /** Put it back, exactly as it was. The row was never deleted. */
+  const onUndoHaveIt = useCallback(
+    async (row: GroceryRow) => {
+      setError(null);
+      setNotice(null);
+      setUndoRow(null);
+      markPendingHaveIt(row.id, row);
+      setItems((prev) => sortItems(reconcileByPk([...prev, row])));
+
+      const result = await setHaveItAction(row.id, false);
+
+      markPendingHaveIt(row.id, undefined);
+      if (result && "error" in result) {
+        setItems((prev) => prev.filter((r) => r.id !== row.id)); // roll back
         setError(result.error);
       }
     },
-    [patch],
+    [markPendingHaveIt],
   );
 
   /**
@@ -331,6 +404,7 @@ export function GroceryList({
   const onRebuild = useCallback(async () => {
     setError(null);
     setNotice(null);
+    setUndoRow(null);
     setBusy(true);
     const result = await buildGroceryListAction(weekId);
     setBusy(false);
@@ -344,6 +418,7 @@ export function GroceryList({
   const onCompleteTrip = useCallback(async () => {
     setError(null);
     setNotice(null);
+    setUndoRow(null);
     setBusy(true);
     const result = await completeTripAction(weekId);
     setBusy(false);
@@ -370,6 +445,7 @@ export function GroceryList({
     // trip, so promotion stores the section alongside the staple (#137).
     const names = candidates.filter((item) => accepted[item.name]);
     setError(null);
+    setUndoRow(null);
     setBusy(true);
     const result = await promoteToCatalogAction(names);
     setBusy(false);
@@ -385,8 +461,11 @@ export function GroceryList({
     );
   }, [candidates, accepted]);
 
+  // "N to get" counts what is actually left to buy. A have-it row is no longer
+  // filtered out here — since #171 it is not on the list at all, so the count
+  // falls because the item is GONE, not merely uncounted.
   const remaining = useMemo(
-    () => items.filter((row) => !row.checked && !row.haveIt).length,
+    () => items.filter((row) => !row.checked).length,
     [items],
   );
 
@@ -432,6 +511,20 @@ export function GroceryList({
       {notice ? (
         <p className="text-muted-foreground text-sm" role="status" data-testid="grocery-notice">
           {notice}
+          {undoRow ? (
+            <>
+              {" "}
+              {/* One tap removed it, so one tap must bring it back — a store is
+                  a noisy place to be sure about the pantry. */}
+              <button
+                type="button"
+                onClick={() => void onUndoHaveIt(undoRow)}
+                className="text-foreground underline underline-offset-2"
+              >
+                Undo
+              </button>
+            </>
+          ) : null}
         </p>
       ) : null}
       {error ? (
@@ -470,7 +563,7 @@ export function GroceryList({
               groupId={null}
               saving={savingSection[row.id] === true}
               onToggleChecked={onToggleChecked}
-              onToggleHaveIt={onToggleHaveIt}
+              onHaveIt={onHaveIt}
               onMoveToSection={onMoveToSection}
             />
           ))}
@@ -502,7 +595,7 @@ export function GroceryList({
                       groupId={group.id}
                       saving={savingSection[row.id] === true}
                       onToggleChecked={onToggleChecked}
-                      onToggleHaveIt={onToggleHaveIt}
+                      onHaveIt={onHaveIt}
                       onMoveToSection={onMoveToSection}
                     />
                   ))}
@@ -522,9 +615,13 @@ export function GroceryList({
 
 /**
  * Map a raw Postgres Changes payload to a PK-keyed change. A row that arrives
- * ARCHIVED (`purchased_at` set) is treated as a removal — that's how the other
- * shopper's "complete trip" empties this phone's active list. DELETE payloads
- * carry the full old row (REPLICA IDENTITY FULL), but we only need the PK.
+ * ARCHIVED (`purchased_at` set) or CLAIMED (`have_it_at` set, #171) is treated
+ * as a removal — that's how the other shopper's "complete trip" empties this
+ * phone's active list, and how their "we have it" drops a single item from it
+ * with no refresh. The claimed row is NOT deleted server-side (the roll-up
+ * planner still needs it); it is only off this screen, so an Undo arrives as an
+ * ordinary UPDATE and `mergeChange` upserts it back by PK. DELETE payloads carry
+ * the full old row (REPLICA IDENTITY FULL), but we only need the PK.
  *
  * There is NO week scope here, deliberately. This used to drop any row whose
  * `week_id` differed from the page's week; once the list became rolling that
@@ -547,7 +644,9 @@ export function toChange(
 
   const row = payload.new as Record<string, unknown>;
   if (typeof row?.id !== "string") return null;
-  if (row.purchased_at != null) return { type: "DELETE", id: row.id };
+  if (row.purchased_at != null || row.have_it_at != null) {
+    return { type: "DELETE", id: row.id };
+  }
 
   return {
     type: payload.eventType,
@@ -561,7 +660,7 @@ function GroceryItemRow({
   groupId,
   saving,
   onToggleChecked,
-  onToggleHaveIt,
+  onHaveIt,
   onMoveToSection,
 }: {
   row: GroceryRow;
@@ -571,11 +670,12 @@ function GroceryItemRow({
   /** True while this row's aisle write is in flight. */
   saving: boolean;
   onToggleChecked: (row: GroceryRow, checked: boolean) => Promise<void>;
-  onToggleHaveIt: (row: GroceryRow, haveIt: boolean) => Promise<void>;
+  /** One-way (#171): the row leaves the list. Undo lives in the notice. */
+  onHaveIt: (row: GroceryRow) => Promise<void>;
   onMoveToSection: (row: GroceryRow, sectionId: string | null) => Promise<void>;
 }) {
   const amount = formatAmount(row.quantity, row.unit);
-  const muted = row.haveIt || row.checked;
+  const muted = row.checked;
 
   return (
     <li
@@ -601,15 +701,14 @@ function GroceryItemRow({
           <span className="text-muted-foreground ml-2 text-xs">from the menu</span>
         ) : null}
       </span>
+      {/* Not a toggle any more (#171): it removes the item, so it carries no
+          pressed state — a have-it row is not on this list to un-press. */}
       <button
         type="button"
-        aria-pressed={row.haveIt}
-        onClick={() => void onToggleHaveIt(row, !row.haveIt)}
-        className={`rounded-full border px-2 py-0.5 text-xs ${
-          row.haveIt ? "border-primary bg-primary/10" : "border-input"
-        }`}
+        onClick={() => void onHaveIt(row)}
+        className="border-input rounded-full border px-2 py-0.5 text-xs"
       >
-        {row.haveIt ? "Got it already" : "We have it"}
+        We have it
       </button>
       {sections.length > 0 ? (
         // A native <select> on purpose: iOS renders it as a full-width wheel at
