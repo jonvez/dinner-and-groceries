@@ -109,6 +109,12 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   Reclaim is gradual (the VM balloon returns pages over ~30s), and container-stop alone leaves Docker
   Desktop's own VM overhead — quit Docker Desktop too for the full amount, at the cost of an admin
   password prompt next start.
+- **There is no global `supabase` binary.** It is a repo devDependency pinned at 2.107.0, so every
+  invocation is `npx supabase` **run from the repo root** — a bare `supabase` is `command not found`,
+  and a global install would defeat the #164 pin. `db push` additionally needs the **database
+  password** (dashboard -> Project Settings -> Database); `db query --linked` does not, it rides the
+  `supabase login` token. A migration lives only on its feature branch, so applying one to prod means
+  checking that branch out first: schema **then** merge, never the reverse.
 - **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
