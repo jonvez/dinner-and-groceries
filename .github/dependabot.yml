@@ -25,6 +25,13 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    # The Supabase CLI is held at 2.107.0 until #164 is resolved: under 2.116.0
+    # the local stack loses role isolation and five RLS pgTAP guards fail. Left
+    # unignored, the CLI bump rides into the dev-minor-patch group every week and
+    # turns the whole group red (it sank #173). Remove this block when #164 closes.
+    ignore:
+      - dependency-name: supabase
+        versions: [">2.107.0"]
     groups:
       prod-minor-patch:
         dependency-type: production
