@@ -8,6 +8,9 @@
  *   - **Archive, don't delete.** Checked rows get a `purchased_at` stamp; the
  *     active list is `purchased_at is null` (#13/#14). The trip stays in history
  *     and a re-roll-up can never revive it.
+ *   - **A trip is also what ends a "we have it" claim** (#171/ADR 0012). That is
+ *     a second effect of the same action, and it neither archives nor counts
+ *     nor promotes the rows it touches — nothing was bought.
  *   - **Promotion is an explicit, separate step.** `completeTrip` only OFFERS
  *     candidates; the shopper confirms which ones become staples, and only then
  *     does `promoteToCatalog` write. Nothing is force-added to the catalog.
@@ -70,6 +73,10 @@ type CatalogMatch = { id: string; name: string; added_count: number | null };
  * in this week, and return the count plus the distinct AD-HOC names (both feeder
  * FKs null) as promotion candidates. A dish-derived line isn't a staple; a
  * catalog-fed row already is one.
+ *
+ * Completing a trip ALSO ends every outstanding "we have it" claim (#171) — a
+ * second, separate effect that archives nothing. See the comment at that
+ * statement for why it is not folded into the archive above.
  */
 export async function completeTrip(
   supabase: Pick<DbClient, "from">,
@@ -99,6 +106,32 @@ export async function completeTrip(
   if (error) return { ok: false, error: TRIP_ERROR };
 
   const rows = (data ?? []) as unknown as ArchivedRow[];
+
+  // ---- second effect: the trip ends every "we have it" claim (#171) --------
+  //
+  // A claim has to end SOMEWHERE, or a staple the family uses up is suppressed
+  // from the list forever. It ends here rather than at a calendar boundary
+  // because this list is decoupled from time — a trip happens whenever it
+  // happens (ADR 0012).
+  //
+  // Deliberately a SEPARATE statement from the archive above:
+  //   - these rows are NOT stamped `purchased_at` — nothing was bought, so they
+  //     stay out of trip history and out of the dashboard (#17);
+  //   - they are not in the `RETURNING` set above, so they can neither inflate
+  //     `archived` nor be offered as staples-promotion candidates;
+  //   - `purchased_at is null` keeps it to still-ACTIVE rows: a row the
+  //     statement above just archived is history now, not a claim to reopen.
+  //
+  // Best-effort, like `setItemSection`'s write-through: the archive has already
+  // committed, so reporting failure would tell the shopper the trip did not
+  // happen — and a second tap would archive nothing and lose the promotion
+  // prompt. A claim that fails to clear simply clears on the next trip.
+  await supabase
+    .from("grocery_items")
+    .update({ have_it: false, have_it_at: null })
+    .eq("household_id", input.householdId)
+    .eq("have_it", true)
+    .is("purchased_at", null);
 
   // Distinct ad-hoc names, case-insensitive, keeping the first spelling the
   // family used (that's the one they'll recognize in the catalog). The section

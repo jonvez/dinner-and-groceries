@@ -105,7 +105,9 @@ describe("completeTrip", () => {
 
     await completeTrip(client, { householdId: "hh-1", weekId: "wk-1", now });
 
-    expect(calls.updates).toEqual([
+    // Statement ONE of two: the archive. (Statement two clears have-it claims
+    // and is pinned by its own test below.)
+    expect(calls.updates[0]).toEqual(
       {
         table: "grocery_items",
         values: { purchased_at: NOW.toISOString() },
@@ -120,7 +122,78 @@ describe("completeTrip", () => {
         ],
         returning: "id, name, ingredient_id, catalog_item_id, section_id",
       },
-    ]);
+    );
+  });
+
+  it("clears have-it claims as a SECOND effect — without archiving them (#171)", async () => {
+    // A "we have it" claim ends on the next COMPLETED TRIP, never on a calendar
+    // boundary: the list is decoupled from time, and a trip happens whenever it
+    // happens (ADR 0012). So the item the family used up comes back onto the
+    // list instead of being suppressed forever. Crucially this is a SEPARATE
+    // statement from the archive: the claimed rows are not stamped
+    // `purchased_at`, so they are neither counted as archived nor offered as
+    // staples-promotion candidates — nothing was bought.
+    const { client, calls } = makeClient({ archived: { data: [], error: null } });
+
+    await completeTrip(client, { householdId: "hh-1", weekId: "wk-1", now });
+
+    expect(calls.updates).toHaveLength(2);
+    expect(calls.updates[1]).toEqual({
+      table: "grocery_items",
+      values: { have_it: false, have_it_at: null },
+      filters: [
+        { op: "eq", column: "household_id", value: "hh-1" },
+        { op: "eq", column: "have_it", value: true },
+        // Only STILL-ACTIVE claims: a row archived a moment ago by the
+        // statement above is history now and must not be reopened.
+        { op: "is", column: "purchased_at", value: null },
+      ],
+    });
+    // No purchase stamp anywhere near it.
+    expect(calls.updates[1].values).not.toHaveProperty("purchased_at");
+    // And it returns nothing — a cleared claim can never reach `promotable`.
+    expect(calls.updates[1].returning).toBeUndefined();
+  });
+
+  it("does not count or offer a cleared have-it row (#171)", async () => {
+    // The archive `RETURNING` is the ONLY source of both numbers, and it saw
+    // only the checked rows.
+    const { client } = makeClient({
+      archived: {
+        data: [archivedRow({ id: "g1", name: "paper towels" })],
+        error: null,
+      },
+    });
+
+    expect(
+      await completeTrip(client, { householdId: "hh-1", weekId: "wk-1", now }),
+    ).toEqual({
+      ok: true,
+      archived: 1,
+      promotable: [{ name: "paper towels", sectionId: null }],
+    });
+  });
+
+  it("still reports the completed trip when the claim clear fails (#171)", async () => {
+    // The archive has already committed. Reporting failure would tell the
+    // shopper the trip did not happen — and a re-tap would archive nothing and
+    // lose the promotion prompt. The claims simply clear on the next trip.
+    // Same best-effort reasoning as `setItemSection`'s write-through.
+    const { client } = makeClient({
+      archived: {
+        data: [archivedRow({ id: "g1", name: "paper towels" })],
+        error: null,
+      },
+      update: { data: null, error: { message: "permission denied" } },
+    });
+
+    expect(
+      await completeTrip(client, { householdId: "hh-1", weekId: "wk-1", now }),
+    ).toEqual({
+      ok: true,
+      archived: 1,
+      promotable: [{ name: "paper towels", sectionId: null }],
+    });
   });
 
   it("counts what was archived and offers ONLY ad-hoc names for promotion", async () => {

@@ -106,9 +106,18 @@ export function toGroceryRow(row: GroceryItemRow): GroceryRow {
 }
 
 /**
- * Load the ACTIVE list (`purchased_at is null` — a completed trip's rows are
- * archived, not shown) in stable shopping order, plus the staples catalog with
- * the most-reached-for items first.
+ * Load the ACTIVE list in stable shopping order, plus the staples catalog with
+ * the most-reached-for items first. "Active" is two exclusions:
+ *
+ *   - `purchased_at is null` — a completed trip's rows are archived, not shown;
+ *   - `have_it_at is null` — the family already has it (#171), so it is off the
+ *     shopping screen.
+ *
+ * The second one hides the row HERE and nowhere else. The claimed row is still
+ * in `grocery_items`, still un-purchased, and the roll-up planner still reads it
+ * (`rollup-core.ts` filters on `purchased_at` only) so it keeps claiming its
+ * dedupe key and a rebuild cannot insert a shadow duplicate of it (ADR 0012).
+ * Do not "tidy" that asymmetry away — it is the whole design.
  *
  * "Active" spans every week: see the note on the read below.
  */
@@ -127,6 +136,7 @@ export async function loadGroceryList(
     .from("grocery_items")
     .select(GROCERY_ITEM_COLUMNS)
     .is("purchased_at", null)
+    .is("have_it_at", null)
     .order("position")
     .order("created_at");
 

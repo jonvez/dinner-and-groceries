@@ -8,12 +8,13 @@ import { loadGroceryList } from "./list-core";
  * INJECTED Supabase-like client — no live DB (same pattern as `rollup-core`).
  *
  * What's pinned here:
- *   - only the week's UN-PURCHASED rows are the active list (`purchased_at is
- *     null`) — a completed trip's rows must never reappear;
+ *   - only UN-PURCHASED, UNCLAIMED rows are the active list (`purchased_at is
+ *     null` and `have_it_at is null`) — a completed trip's rows must never
+ *     reappear, and an item the family says they have is off the list (#171);
  *   - stable shopping order (`position`, then `created_at`) and a
  *     most-used-first catalog (`added_count desc`, then `name`);
- *   - snake_case → camelCase mapping, so a `have_it` row really is de-emphasized
- *     and a dish-derived row really is marked in the UI;
+ *   - snake_case → camelCase mapping, so a dish-derived row really is marked in
+ *     the UI;
  *   - quantity/unit stay NULL (never coerced to 0/1 — the list must render an
  *     unquantified "eggs" as just "eggs");
  *   - no rows / a failed read degrades to empty arrays rather than throwing.
@@ -92,12 +93,31 @@ describe("loadGroceryList", () => {
     const items = selects.find((s) => s.table === "grocery_items");
     expect(items?.filters).toEqual([
       { op: "is", column: "purchased_at", value: null },
+      { op: "is", column: "have_it_at", value: null },
       { op: "order", column: "position", options: undefined },
       { op: "order", column: "created_at", options: undefined },
     ]);
     expect(items?.filters.some((f) => f.column === "week_id")).toBe(false);
     // No manual household filter — RLS scopes the read (ADR 0003).
     expect(items?.filters.some((f) => f.column === "household_id")).toBe(false);
+  });
+
+  it("hides a have-it row from the shopping list (#171)", async () => {
+    // "We have it" takes the item off the list in one tap. The row is NOT
+    // deleted and NOT archived — it keeps `purchased_at` null so the roll-up
+    // planner still sees it (see rollup-core.test.ts) — so the ONLY thing that
+    // keeps it off the shopping screen is this filter. Its own stamp, never
+    // `purchased_at`: a pantry fact is not a purchase (ADR 0012).
+    const { client, selects } = makeClient({});
+
+    await loadGroceryList(client);
+
+    const items = selects.find((s) => s.table === "grocery_items");
+    expect(items?.filters).toContainEqual({
+      op: "is",
+      column: "have_it_at",
+      value: null,
+    });
   });
 
   it("reads the staples catalog most-used first, then alphabetically", async () => {
