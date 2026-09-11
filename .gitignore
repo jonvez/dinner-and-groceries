@@ -20,3 +20,7 @@ e2e/.auth/
 # Editor + local orchestration scratch (SDD progress ledger, task briefs).
 .idea/
 .superpowers/
+# Agent worktrees — whole checkouts of other branches, created by subagent
+# dispatch. Untracked here they show up in `git status` on main, where a
+# `git add -A` would commit an entire nested checkout.
+.claude/worktrees/

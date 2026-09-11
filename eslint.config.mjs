@@ -5,7 +5,16 @@ import nextTypescript from "eslint-config-next/typescript";
 // import the flat arrays directly (no more FlatCompat/eslintrc wrapping).
 const eslintConfig = [
   {
-    ignores: [".next/**", "node_modules/**", "next-env.d.ts"],
+    // `.claude/worktrees/**` holds live agent worktrees — whole checkouts of
+    // other branches. Without this, a local lint run reports every problem
+    // twice (once here, once in each worktree) and can fail on half-finished
+    // code that is not part of this branch at all.
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "next-env.d.ts",
+      ".claude/worktrees/**",
+    ],
   },
   ...nextCoreWebVitals,
   ...nextTypescript,
