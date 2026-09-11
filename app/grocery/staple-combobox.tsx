@@ -35,9 +35,25 @@
  * control that the threshold used to do. (NN/g's mobile-input checklist asks
  * the opposite question: "can you make suggestions based on the FIRST letters
  * typed?")
+ *
+ * ## Leaving without picking (#197)
+ *
+ * The list sits directly over Quantity and Unit, and a phone keyboard has no
+ * Escape key. So, as in the APG pattern, the list closes when focus leaves the
+ * input, and on a press anywhere outside the input and its list. Neither picks,
+ * and neither touches what was typed; typing again reopens the list. The
+ * outside-press rule is not redundant with blur: iOS Safari does not blur an
+ * input when you tap blank, non-focusable space.
  */
 
-import { useCallback, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { CatalogRow } from "./list-core";
 import { suggestStaples, type StapleSuggestion } from "./suggest-core";
@@ -73,12 +89,34 @@ export function StapleCombobox({
   const [dismissed, setDismissed] = useState(false);
   const [active, setActive] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** The input plus its list: a press inside this is not "outside". */
+  const comboRef = useRef<HTMLDivElement>(null);
 
   const suggestions = useMemo(
     () => suggestStaples(value, catalog),
     [value, catalog],
   );
   const open = !dismissed && suggestions.length > 0;
+
+  const dismiss = useCallback(() => {
+    setDismissed(true);
+    setActive(-1);
+  }, []);
+
+  // Close on a press outside the input and its list. Only listening while
+  // open, and in the capture phase so nothing that stops propagation can
+  // swallow it. `pointerdown` covers mouse, touch and pen, and fires before the
+  // option's `mousedown`, which is why presses INSIDE must be left alone.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (comboRef.current?.contains(event.target as Node)) return;
+      dismiss();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [open, dismiss]);
 
   const pick = useCallback(
     (suggestion: StapleSuggestion) => {
@@ -96,8 +134,7 @@ export function StapleCombobox({
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Escape") {
-        setDismissed(true);
-        setActive(-1);
+        dismiss();
         return;
       }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -121,7 +158,7 @@ export function StapleCombobox({
         pick(suggestions[active]);
       }
     },
-    [suggestions, open, active, pick],
+    [suggestions, open, active, pick, dismiss],
   );
 
   const status = !open
@@ -140,7 +177,7 @@ export function StapleCombobox({
       >
         {label}
       </label>
-      <div className="relative">
+      <div ref={comboRef} className="relative">
         <input
           ref={inputRef}
           id={inputId}
@@ -164,6 +201,10 @@ export function StapleCombobox({
             setActive(-1);
           }}
           onKeyDown={onKeyDown}
+          // Focus went elsewhere (Tab, the iOS accessory-bar arrows, another
+          // field). A tap on an option never gets here: its mousedown is
+          // default-prevented, so the input keeps focus.
+          onBlur={dismiss}
           className="border-input bg-background w-full rounded-md border px-3 py-1.5 text-sm"
         />
 
@@ -173,6 +214,10 @@ export function StapleCombobox({
           aria-label={`${label} suggestions`}
           hidden={!open}
           data-testid="staple-suggestions"
+          // A press anywhere on the list (its border, the gap between options)
+          // must not blur the input, or the blur rule above would close the
+          // list under the finger.
+          onMouseDown={(e) => e.preventDefault()}
           className="border-input bg-background absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border shadow-md"
         >
           {/* Rendered ONLY while open. Hiding the list with `hidden` but
