@@ -468,3 +468,60 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   assertions" applied to instructions rather than claims, and they cost nothing. (3) is now more
   attractive than it looked this morning: the same stale worktree has caused two distinct failures in
   one day, one for an agent and one for a human.
+
+### 2026-09-11 — board/issue drift turned up three different ways in one sweep
+
+A recurrence of the 2026-09-01 entry, in three shapes:
+
+- **An epic stayed open after its children closed.** Epic #135 (grocery sections) sat in Backlog after
+  all four sub-issues had shipped. Nothing closes an epic when its last child closes.
+- **An issue was Done on the board but still open** (the 09-01 shape). Epic #122 stayed open because
+  one acceptance criterion ("`npm audit` = 0") had quietly gone false: new advisories landed after the
+  sweep. It couldn't honestly be closed until the new advisories were fixed.
+- **A human-gated QA item waited on a check that had already happened.** #82 (home-screen install)
+  sat in QA waiting for Jon's iPhone check. Jon and the kids had done it; nobody asked.
+
+**What caught all three:** reading the *whole* board, closed issues included, when asked "what's
+next". **Candidate fixes:** close or accept an epic in the same step that closes its last child; at
+session start, list items waiting on a human check and ask Jon about them directly.
+
+### 2026-09-11 — I passed on an ungroomed issue's impact claim as fact (#110)
+
+When recommending the next chunk I called #110 "a real bug: deleting a dish leaves its ingredients on
+the list permanently". That came straight from the issue text, which a review gate had filed from
+schema reasoning. PO grooming then found **no user path reaches it**: the app has no dish delete and
+no ingredient edit. Jon had approved the chunk partly on that claim, so it needed a second decision
+(deferred until #89). The same grooming pass found 2 of #115's 5 bullets dead: one fixed by #174, one
+unreachable. **Lesson:** before recommending an old issue, check the user impact against the current
+app, not the issue body. The PO's "re-verify before Ready" step paid for itself on its first use.
+
+### 2026-09-11 — dependency-pass gotchas (sharp/js-yaml/vitest sweep, #183)
+
+- **The tracking issue listed 1 advisory; `main` had 4, including 2 high** (`sharp` ships in the prod
+  image). Run `npm audit` at the start of the pass; don't take the advisory list from the issue.
+- **A pin that lives only in prose doesn't hold.** PLAN.md said "don't bump the Supabase CLI past
+  2.107.0 (#164)". Dependabot doesn't read PLAN.md, so it kept folding 2.116.0 into the weekly dev
+  group, which went red on pgTAP (#173), and the group's other fixes were blocked with it. Moving the
+  pin into `.github/dependabot.yml` as an `ignore` rule (#188) fixed it.
+- **Merging a `dependabot.yml` change triggers an immediate Dependabot run.** #188 produced 5 new PRs
+  within minutes (4 majors and the regenerated group). Expect that and plan merge slots for it.
+- **`deps-refresh/cli.ts` keeps one version per package name.** When a package is installed at
+  several versions, a bump to one copy drops out of the Bumped table (`@emnapi/runtime` in #187 was
+  added by hand). Additions are keyed by name, so the gate decision is unaffected. Worth fixing in rig.
+- **Rebase-merge keeps security fixes independently revertable.** #187 carried one commit per
+  advisory; a squash merge would have collapsed them into one.
+- **After a Playwright bump, local E2E needs `npx playwright install chromium`**, or every browser
+  test fails at launch (hit by the #115 dev).
+
+### 2026-09-11 — local-run traps that cost time this session
+
+- `npm --prefix <worktree> exec -- vitest run …` runs vitest from the **shell's cwd** (the main
+  checkout), not the worktree. It reported 11 false failures from the wrong tree's file against the
+  wrong `node_modules`. Use `npm --prefix <worktree> test -- <file>`, which runs the script inside
+  the worktree.
+- A local `npm run build` for E2E needs `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  set at build time (as `ci.yml` does); without them the client bundle throws and pages render
+  "couldn't load" (hit by the #196 dev).
+- Locally, with `fullyParallel` on, the two staple-promoting specs can race: they share user A's
+  household, so one spec's "Complete trip" archives the other's item. CI runs one worker. Run local
+  E2E with `CI=1` (hit by the #197 dev).
