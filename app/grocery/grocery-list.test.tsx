@@ -83,7 +83,14 @@ type ToggleFn = (
   value: boolean,
 ) => Promise<{ ok: true } | { error: string }>;
 
+type AddAdHocFn = (
+  weekId: string,
+  prev: unknown,
+  form: FormData,
+) => Promise<{ ok: true } | { error: string } | null>;
+
 const actions = vi.hoisted(() => ({
+  addAdHoc: vi.fn<AddAdHocFn>(async () => ({ ok: true })),
   setChecked: vi.fn<ToggleFn>(async () => ({ ok: true })),
   setHaveIt: vi.fn<ToggleFn>(async () => ({ ok: true })),
   setItemSection: vi.fn<
@@ -94,7 +101,8 @@ const actions = vi.hoisted(() => ({
 }));
 
 vi.mock("./actions", () => ({
-  addAdHocItemAction: async () => null,
+  addAdHocItemAction: (weekId: string, prev: unknown, form: FormData) =>
+    actions.addAdHoc(weekId, prev, form),
   addCatalogItemToListAction: async () => ({ ok: true }),
   buildGroceryListAction: async () => ({ ok: true, added: 0, removed: 0 }),
   completeTripAction: (weekId: string) => actions.completeTrip(weekId),
@@ -114,6 +122,8 @@ beforeEach(() => {
   rt.setAuthTokens = [];
   rt.events = [];
   rt.refresh.mockClear();
+  actions.addAdHoc.mockClear();
+  actions.addAdHoc.mockImplementation(async () => ({ ok: true }));
   actions.setChecked.mockClear();
   actions.setHaveIt.mockClear();
   actions.setHaveIt.mockImplementation(async () => ({ ok: true }));
@@ -808,5 +818,164 @@ describe("GroceryList — promoting staples after a trip", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not add those to your staples.",
     );
+  });
+});
+
+/**
+ * "Add something else" (#185). Item gets its own line, with Add beside it, and
+ * Quantity + Unit go on the line below — so the staple suggestions, which are
+ * as wide as the Item field, stop being squeezed by three fixed-width controls.
+ *
+ * jsdom does no layout, so the GEOMETRY (widths, rows at 375px, no sideways
+ * scroll) is proven in `e2e/authed/grocery-add-form.spec.ts`. What's pinned
+ * here is the structure the geometry rests on — which controls share a row,
+ * and that the DOM order is the visual order — plus the form's behaviour, so a
+ * layout change can't quietly break adding an item.
+ */
+describe("GroceryList — add something else", () => {
+  const STAPLES: CatalogRow[] = [
+    { id: "c-milk", name: "Milk", defaultUnit: "gal", addedCount: 0 },
+  ];
+
+  function renderForm() {
+    render(
+      <GroceryList
+        weekId="wk-1"
+        householdId="hh-1"
+        initialItems={[]}
+        catalog={STAPLES}
+        sections={SECTIONS}
+      />,
+    );
+    const item = screen.getByLabelText("Item") as HTMLInputElement;
+    const form = item.closest("form")!;
+    const inForm = within(form);
+    return {
+      form,
+      item,
+      add: inForm.getByRole("button", { name: "Add" }),
+      quantity: inForm.getByLabelText("Quantity") as HTMLInputElement,
+      unit: inForm.getByLabelText("Unit") as HTMLInputElement,
+    };
+  }
+
+  /** The nearest element holding both `a` and `b` — the row they share. */
+  function rowOf(a: HTMLElement, b: HTMLElement): HTMLElement {
+    let el = a.parentElement;
+    while (el && !el.contains(b)) el = el.parentElement;
+    return el!;
+  }
+
+  /** How a control is announced: its <label>, or a button's own text. */
+  const nameOf = (el: HTMLElement) =>
+    (el as HTMLInputElement).labels?.[0]?.textContent ?? el.textContent ?? "";
+
+  it("puts the controls in the DOM in visual order: Item, Add, Quantity, Unit", async () => {
+    const { form } = renderForm();
+    await connected();
+
+    // Tab order follows the DOM, so this IS the keyboard / screen-reader order.
+    const controls = Array.from(
+      form.querySelectorAll<HTMLElement>("input, button, select, textarea"),
+    );
+    expect(controls.map(nameOf)).toEqual(["Item", "Add", "Quantity", "Unit"]);
+    // A positive tabindex would let the tab order drift from the DOM order.
+    for (const control of controls) expect(control.tabIndex).toBeLessThanOrEqual(0);
+  });
+
+  it("puts Item and Add on one row, and Quantity and Unit on the row below", async () => {
+    const { item, add, quantity, unit } = renderForm();
+    await connected();
+
+    const first = rowOf(item, add);
+    const second = rowOf(quantity, unit);
+    expect(first).not.toContainElement(quantity);
+    expect(first).not.toContainElement(unit);
+    expect(second).not.toContainElement(item);
+    expect(second).not.toContainElement(add);
+  });
+
+  it("places Add without CSS reordering, so what's seen is what's tabbed", async () => {
+    const { form } = renderForm();
+    await connected();
+
+    // `order-*` or explicit grid placement would show Add on row 1 while it sat
+    // somewhere else in the DOM — exactly the divergence the order test guards.
+    const reorders = /^(-?order-|col-start-|col-end-|row-start-|row-end-)/;
+    const offenders = Array.from(form.querySelectorAll<HTMLElement>("*")).filter(
+      (el) =>
+        el.style.order !== "" ||
+        Array.from(el.classList).some((token) =>
+          reorders.test(token.slice(token.lastIndexOf(":") + 1)),
+        ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("picks a highlighted staple on Enter, prefilling its unit, without submitting", async () => {
+    const { item, unit } = renderForm();
+    await connected();
+
+    fireEvent.change(item, { target: { value: "mil" } });
+    fireEvent.keyDown(item, { key: "ArrowDown" });
+    // `false` = default prevented: the browser's implicit submit never happens.
+    expect(fireEvent.keyDown(item, { key: "Enter" })).toBe(false);
+
+    expect(item.value).toBe("Milk");
+    expect(unit.value).toBe("gal");
+    expect(actions.addAdHoc).not.toHaveBeenCalled();
+  });
+
+  it("leaves Enter alone when no suggestion is highlighted, so it submits", async () => {
+    const { item } = renderForm();
+    await connected();
+
+    fireEvent.change(item, { target: { value: "mil" } });
+    // Not prevented — the browser's implicit submission goes ahead. (jsdom does
+    // not perform it; the real submit-on-Enter is driven in the E2E spec.)
+    expect(fireEvent.keyDown(item, { key: "Enter" })).toBe(true);
+  });
+
+  it("submits Item, Quantity and Unit through the action, then clears the form", async () => {
+    const { item, add, quantity, unit } = renderForm();
+    await connected();
+
+    fireEvent.change(item, { target: { value: "Lemons" } });
+    fireEvent.change(quantity, { target: { value: "3" } });
+    fireEvent.change(unit, { target: { value: "each" } });
+    await act(async () => {
+      fireEvent.click(add);
+    });
+
+    await waitFor(() => expect(actions.addAdHoc).toHaveBeenCalledTimes(1));
+    const [weekId, , sent] = actions.addAdHoc.mock.calls[0];
+    expect(weekId).toBe("wk-1");
+    expect(sent.get("name")).toBe("Lemons");
+    expect(sent.get("quantity")).toBe("3");
+    expect(sent.get("unit")).toBe("each");
+
+    await waitFor(() => expect(item.value).toBe(""));
+    expect(quantity.value).toBe("");
+    expect(unit.value).toBe("");
+  });
+
+  it("shows the action's error under the form's fields", async () => {
+    actions.addAdHoc.mockImplementation(async () => ({ error: "Couldn't add that." }));
+    const { form, item, add, quantity, unit } = renderForm();
+    await connected();
+
+    fireEvent.change(item, { target: { value: "Lemons" } });
+    await act(async () => {
+      fireEvent.click(add);
+    });
+
+    const alert = await within(form).findByRole("alert");
+    expect(alert.textContent).toBe("Couldn't add that.");
+    // Below the last field, not wedged into either row.
+    expect(
+      unit.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(rowOf(item, add)).not.toContainElement(alert);
+    expect(rowOf(quantity, unit)).not.toContainElement(alert);
   });
 });
