@@ -285,7 +285,7 @@ describe("promoteToCatalog", () => {
       now,
     });
 
-    expect(result).toEqual({ ok: true, promoted: 1 });
+    expect(result).toEqual({ ok: true, promoted: 1, failed: [] });
     expect(calls.inserts).toEqual([
       {
         table: "catalog_items",
@@ -331,7 +331,7 @@ describe("promoteToCatalog", () => {
       now,
     });
 
-    expect(result).toEqual({ ok: true, promoted: 1 });
+    expect(result).toEqual({ ok: true, promoted: 1, failed: [] });
     expect(calls.inserts).toHaveLength(0);
     expect(calls.updates).toEqual([
       {
@@ -356,7 +356,7 @@ describe("promoteToCatalog", () => {
       now,
     });
 
-    expect(result).toEqual({ ok: true, promoted: 1 });
+    expect(result).toEqual({ ok: true, promoted: 1, failed: [] });
     expect(calls.updates).toHaveLength(0);
     expect(calls.inserts).toEqual([
       {
@@ -396,11 +396,13 @@ describe("promoteToCatalog", () => {
       now,
     });
 
-    expect(result).toEqual({ ok: true, promoted: 1 });
+    expect(result).toEqual({ ok: true, promoted: 1, failed: [] });
     expect((calls.inserts[0].rows as { name: string }).name).toBe("bananas");
   });
 
-  it("returns a generic error when the catalog read is denied", async () => {
+  it("returns a plain generic error when the catalog read is denied — nothing written", async () => {
+    // Nothing has been written yet, so there is no partial outcome to report:
+    // the caller keeps EVERY candidate and a retry is simply the same batch.
     const { client, calls } = makeClient({
       catalog: { data: null, error: { code: "42501", message: "permission denied" } },
     });
@@ -409,6 +411,7 @@ describe("promoteToCatalog", () => {
       await promoteToCatalog(client, { householdId: "hh-1", names: ["salt"], now }),
     ).toEqual({ ok: false, error: "Could not add those to your staples." });
     expect(calls.inserts).toHaveLength(0);
+    expect(calls.updates).toHaveLength(0);
   });
 
   it("treats a concurrent duplicate insert as already promoted", async () => {
@@ -417,12 +420,14 @@ describe("promoteToCatalog", () => {
       insert: { data: null, error: { code: "23505", message: "duplicate key" } },
     });
 
+    // The other phone got there first: the staple exists, which is the outcome
+    // the shopper asked for — so it is NOT offered again for a retry.
     expect(
       await promoteToCatalog(client, { householdId: "hh-1", names: ["salt"], now }),
-    ).toEqual({ ok: true, promoted: 1 });
+    ).toEqual({ ok: true, promoted: 1, failed: [] });
   });
 
-  it("returns a generic error when a write is denied", async () => {
+  it("reports a denied write as FAILED for that name, not as a whole-batch error", async () => {
     const { client } = makeClient({
       catalog: catalogRows([]),
       insert: { data: null, error: { code: "42501", message: "permission denied" } },
@@ -430,6 +435,136 @@ describe("promoteToCatalog", () => {
 
     expect(
       await promoteToCatalog(client, { householdId: "hh-1", names: ["salt"], now }),
-    ).toEqual({ ok: false, error: "Could not add those to your staples." });
+    ).toEqual({ ok: true, promoted: 0, failed: [{ name: "salt", sectionId: null }] });
+  });
+});
+
+/**
+ * Retry safety (#115). A batch used to stop at the first failed write and
+ * report the whole batch as failed — even though the names BEFORE it had
+ * already committed. The prompt then kept every name, so a retry promoted the
+ * committed ones AGAIN and bumped their `added_count` twice. That count now
+ * gates the "Buy again" chips and ranks the Item suggestions, so the inflation
+ * is visible.
+ *
+ * These run against a small STATEFUL fake catalog so the assertion is about
+ * the outcome that matters — each staple's final `added_count` — rather than
+ * about which statements were issued.
+ */
+describe("promoteToCatalog — a retry after a partial failure", () => {
+  type StoredStaple = { id: string; name: string; added_count: number };
+
+  /**
+   * An in-memory `catalog_items` for one household. Any name in `failOnce` has
+   * its FIRST write denied (a flaky connection in a store); later writes land.
+   */
+  function makeCatalogStore(rows: StoredStaple[], failOnce: string[] = []) {
+    const table: StoredStaple[] = rows.map((r) => ({ ...r }));
+    const pendingFailures = new Set(failOnce.map((n) => n.toLowerCase()));
+    const denied: QueryResult = {
+      data: null,
+      error: { code: "42501", message: "permission denied" },
+    };
+    const ok: QueryResult = { data: null, error: null };
+    let nextId = 1;
+
+    const from = vi.fn(() => ({
+      select: () => ({
+        eq: () =>
+          Promise.resolve({ data: table.map((r) => ({ ...r })), error: null }),
+      }),
+      insert: (row: { name: string; added_count: number }) => {
+        if (pendingFailures.delete(row.name.toLowerCase())) {
+          return Promise.resolve(denied);
+        }
+        table.push({ id: `new-${nextId++}`, name: row.name, added_count: row.added_count });
+        return Promise.resolve(ok);
+      },
+      update: (values: { added_count: number }) => ({
+        eq: (_column: string, id: string) => {
+          const row = table.find((r) => r.id === id);
+          if (!row) return Promise.resolve(ok); // matches nothing, like RLS
+          if (pendingFailures.delete(row.name.toLowerCase())) {
+            return Promise.resolve(denied);
+          }
+          row.added_count = values.added_count;
+          return Promise.resolve(ok);
+        },
+      }),
+    }));
+
+    const client = { from } as unknown as Parameters<typeof promoteToCatalog>[0];
+    /** Every stored staple with this name (case-insensitive) — twins included. */
+    const staples = (name: string) =>
+      table.filter((r) => r.name.toLowerCase() === name.toLowerCase());
+    return { client, staples };
+  }
+
+  it("attempts EVERY name and reports only the ones that failed", async () => {
+    const { client, staples } = makeCatalogStore(
+      [{ id: "c-salt", name: "Salt", added_count: 3 }],
+      ["pepper"],
+    );
+
+    const result = await promoteToCatalog(client, {
+      householdId: "hh-1",
+      names: [
+        "salt",
+        { name: "pepper", sectionId: "sec-spices" },
+        { name: "flour", sectionId: "sec-baking" },
+      ],
+      now,
+    });
+
+    // The failure on name 2 did not stop name 3, and a name that WAS written
+    // (salt, flour) is never reported as failed. The failed item keeps its
+    // aisle, so a retry still files it where the shopper put it.
+    expect(result).toEqual({
+      ok: true,
+      promoted: 2,
+      failed: [{ name: "pepper", sectionId: "sec-spices" }],
+    });
+    expect(staples("salt")).toEqual([{ id: "c-salt", name: "Salt", added_count: 4 }]);
+    expect(staples("flour")).toHaveLength(1);
+    expect(staples("pepper")).toHaveLength(0);
+  });
+
+  it("bumps each staple EXACTLY ONCE across the failed attempt and its retry", async () => {
+    const { client, staples } = makeCatalogStore(
+      [
+        { id: "c-salt", name: "Salt", added_count: 3 },
+        { id: "c-pepper", name: "Pepper", added_count: 5 },
+      ],
+      // Name 2 of 3 fails the first time only.
+      ["pepper"],
+    );
+
+    const first = await promoteToCatalog(client, {
+      householdId: "hh-1",
+      names: ["salt", "pepper", "flour"],
+      now,
+    });
+    expect(first).toEqual({
+      ok: true,
+      promoted: 2,
+      failed: [{ name: "pepper", sectionId: null }],
+    });
+
+    // The retry is given ONLY what failed — exactly what the prompt keeps.
+    const retry = await promoteToCatalog(client, {
+      householdId: "hh-1",
+      names: first.ok ? first.failed : [],
+      now,
+    });
+    expect(retry).toEqual({ ok: true, promoted: 1, failed: [] });
+
+    // Each staple's total bump across both attempts is 1.
+    expect(staples("salt")).toEqual([{ id: "c-salt", name: "Salt", added_count: 4 }]);
+    expect(staples("pepper")).toEqual([
+      { id: "c-pepper", name: "Pepper", added_count: 6 },
+    ]);
+    expect(staples("flour")).toEqual([
+      expect.objectContaining({ name: "flour", added_count: 1 }),
+    ]);
   });
 });
