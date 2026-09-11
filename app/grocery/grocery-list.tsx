@@ -852,7 +852,13 @@ function AdHocForm({ weekId, catalog }: { weekId: string; catalog: CatalogRow[] 
       <h3 className="text-muted-foreground text-xs font-medium uppercase">
         Add something else
       </h3>
-      <div className="flex flex-wrap items-end gap-2">
+      {/* Two rows (#185). Item gets the width — its suggestion list is exactly
+          as wide as it is — with Add beside it, because type-or-pick then Add
+          is the common case. Quantity and Unit are rarely used, so they go
+          below. DOM order IS the visual order (Item, Add, Quantity, Unit):
+          never reach for CSS `order` to move Add, or the tab and screen-reader
+          order stops matching what's on screen. */}
+      <div className="flex items-end gap-2">
         <StapleCombobox
           name="name"
           label="Item"
@@ -866,6 +872,15 @@ function AdHocForm({ weekId, catalog }: { weekId: string; catalog: CatalogRow[] 
           catalog={catalog}
           disabled={pending}
         />
+        <button
+          type="submit"
+          disabled={pending}
+          className="border-input shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
+        >
+          {pending ? "Adding…" : "Add"}
+        </button>
+      </div>
+      <div className="flex gap-2">
         <div className="flex flex-col gap-1">
           <label htmlFor="grocery-quantity" className="text-muted-foreground text-xs font-medium">
             Quantity
@@ -893,13 +908,6 @@ function AdHocForm({ weekId, catalog }: { weekId: string; catalog: CatalogRow[] 
             className="border-input bg-background w-24 rounded-md border px-2 py-1.5 text-sm"
           />
         </div>
-        <button
-          type="submit"
-          disabled={pending}
-          className="border-input rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-60"
-        >
-          {pending ? "Adding…" : "Add"}
-        </button>
       </div>
       {state && "error" in state ? (
         <p role="alert" className="text-destructive text-xs">
