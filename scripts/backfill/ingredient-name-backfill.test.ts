@@ -278,3 +278,41 @@ describe("readExportedRows", () => {
     expect(readExportedRows([])).toEqual([]);
   });
 });
+
+describe("readExportedRows — the shape `supabase db query --linked` actually returns", () => {
+  // Observed running step 1 of the runbook against the cloud project on
+  // 2026-09-09: the CLI does NOT return a bare array. It wraps the result set
+  // in an envelope and the rows sit TWO levels down. The reader unwrapped one
+  // level, then failed with "export row 0 has no id" — blocking the documented
+  // procedure at its first step, on the exact command the runbook prescribes.
+  const cliEnvelope = {
+    boundary: "2ca8d11378c841419016251e5448e042",
+    rows: [
+      {
+        rows: [
+          {
+            id: "0049de02-6dbf-44de-be81-2ed3f7a72ebb",
+            name: "black peppercorns",
+            quantity: 1.5,
+            raw_text: "1 1/2 teaspoons black peppercorns",
+            unit: "tsp",
+          },
+        ],
+      },
+    ],
+  };
+
+  it("reads rows out of the CLI's {boundary, rows:[{rows:[...]}]} envelope", () => {
+    const rows = readExportedRows(cliEnvelope);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("0049de02-6dbf-44de-be81-2ed3f7a72ebb");
+    expect(rows[0].raw_text).toBe("1 1/2 teaspoons black peppercorns");
+  });
+
+  it("still refuses an envelope whose innermost rows are not ingredient rows", () => {
+    expect(() => readExportedRows({ rows: [{ rows: [{ nope: true }] }] })).toThrow(
+      /has no id/,
+    );
+  });
+});
+
