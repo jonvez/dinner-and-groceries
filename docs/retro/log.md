@@ -375,3 +375,96 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
   mechanism spelled out — the non-author review earned its keep here. And the guard now lives in both test
   files as a *mock that throws*: the faked browser client's `from()` raises "the browser client must not
   read data (no session)", so a future re-introduction fails loudly instead of silently blanking a screen.
+
+---
+
+### 2026-09-09 — a follow-up agent cannot check out the branch it was sent to fix
+
+- **Observation:** the security gate on #175 returned three findings, so a **fresh** developer agent
+  was dispatched to apply them to the existing branch (per `subagent-dispatch` / evt-0005: never
+  re-ping an idle agent for more work). It could not `git checkout fix/170-ingredient-line-prefixes`
+  — the branch was still checked out in the *original author's* worktree, and git refuses a second
+  checkout of the same branch. It recovered on its own: branched from
+  `origin/fix/170-ingredient-line-prefixes` under a different local name and pushed with
+  `git push origin HEAD:fix/170-ingredient-line-prefixes`. Same remote branch, same PR, correct
+  outcome — but it burned turns discovering the constraint and inventing the workaround.
+- **Why this will recur, and get worse:** it is structural, not bad luck. evt-0005 *mandates* fresh
+  dispatches for post-review fixes, and the review→fix cycle is the normal path, not the exception —
+  every gated PR that comes back with findings hits this. The author's worktree is still holding the
+  branch precisely *because* the author finished successfully; a crashed agent would have left the
+  branch free. **The better the process works, the more reliably this bites.**
+- **Impact:** low per occurrence (a few wasted turns, no wrong outcome) but it recurs on every
+  review-with-findings, and the recovery is invented fresh each time by an agent that has no way to
+  know the constraint in advance. Each reinvention is a chance to get it wrong — e.g. by opening a
+  second PR, which is the failure this one avoided but a less careful agent would not.
+- **Root cause:** the orchestrator dispatches follow-up agents without releasing the branch, and the
+  brief says "check out the existing branch" as if that always works. Nothing in the dispatch tells
+  the agent the branch may be held elsewhere, or what to do about it.
+- **Candidate fixes (retro topic — not yet decided):**
+  1. **Say it in the brief.** Any follow-up dispatch onto an existing branch includes the recipe:
+     branch from `origin/<branch>` under a local name, push with `HEAD:<branch>`, never open a second
+     PR. Cheapest, zero moving parts, and it is one paragraph in `subagent-dispatch`.
+  2. **Release the branch when an agent finishes.** The orchestrator prunes the completed agent's
+     worktree before dispatching the follow-up. Cleaner state, but the worktree is also the evidence
+     trail — the report file points into it — so pruning early trades one kind of recoverability for
+     another.
+  3. **Never reuse the branch.** Follow-up fixes go on their own branch and PR. Rejected on sight:
+     it fragments one issue's work across PRs and defeats the "one issue, one PR, linked" convention.
+- **Recommendation to weigh at retro:** (1). It is a documentation change to a skill that every
+  dispatch already reads, and it converts a per-agent rediscovery into a known procedure. (2) is
+  worth considering *only* once the report-file convention is old enough that nobody reads the
+  worktree itself.
+- **Adjacent, noticed while cleaning up:** `.claude/worktrees/` is **not** in `.gitignore`, so agent
+  worktrees show up as untracked in `git status` on `main`. Harmless today, but `git add -A` in that
+  state would commit an entire nested checkout — and this repo's own command-hygiene rule exists
+  because `git add -A` gets reached for anyway. One line in `.gitignore` closes it.
+
+---
+
+### 2026-09-10 — I wrote the runbook, then handed over commands nobody could run
+
+- **Observation:** the #171 migration needed a manual `supabase db push`. Jon was handed three
+  instructions in a row that did not work:
+  1. `supabase db push` — there is no `supabase` on his PATH. It is a repo devDependency pinned at
+     2.107.0 (#164); the only working invocation is `npx supabase` **from inside the repo**.
+  2. No mention that he had to be **on the branch**. `20260909120000_grocery_items_have_it_at.sql`
+     exists only on `feat/171-have-it-removes-item`, never on `main` — which is the entire reason the
+     apply-then-merge ordering is delicate. It was left implicit.
+  3. `git checkout feat/171-have-it-removes-item` — **fatal: already used by worktree**. The finished
+     agent's worktree still held the branch. This is the failure documented in the entry directly
+     above, written the same day, by me.
+- **Root cause — and it is not "forgot the `npx`".** Before writing those instructions I checked a
+  lot of state: prod's migration list, whether the file existed on the branch, whether the CLI was
+  global or local, what version was pinned and why. All correct, all useless. **I verified the facts
+  surrounding the command and never rehearsed the command itself.** Two of the three failures
+  (`npx`, the worktree lock) would have surfaced instantly by running the thing once.
+- **Why the third one is the interesting one.** I had written the branch-contention entry hours
+  earlier, in this same file, and still produced a `git checkout` that hit it. Writing a lesson down
+  is not the same as being able to apply it — a retro entry is a *lookup table nobody consults*
+  unless something forces the lookup. The knowledge was captured perfectly and changed nothing.
+- **Impact:** three round trips of Jon's time on what should have been one copy-paste, at the one
+  moment in the flow that is genuinely irreversible (a schema change against production). Handing a
+  human a command that errors immediately is cheap; handing them one that half-works during a prod
+  migration is not, and this was luck rather than design.
+- **The class:** any instruction handed to a HUMAN to execute. Agent-authored runbooks are written
+  from inside a context the human does not share — a worktree, a repo-root cwd, a `node_modules/.bin`
+  on the effective path, a checked-out branch. Every one of those is invisible to the author and
+  fatal to the reader. Note this repo already *had* this bug in committed form: #175's backfill
+  runbook said "save the returned json array" when the CLI returns an envelope, because its author
+  was barred from ever running it. **Same defect, different day: a procedure nobody executed before
+  publishing.**
+- **Candidate fixes (retro topic — not yet decided):**
+  1. **Rehearse before handing over.** Any command given to Jon gets run first, or its closest
+     harmless equivalent (`git checkout` the branch and switch back; `--dry-run`; `--help` on the
+     exact binary path). Cheap, catches PATH and lock errors, and is what finally worked here.
+  2. **State the preconditions in the instruction, not around it.** cwd, branch, and binary in the
+     copy-paste block itself — `cd ~/dev/... && git checkout X && npx ...` — rather than as prose
+     the reader is expected to reassemble.
+  3. **Prune a finished agent's worktree at hand-off**, not at session end. Would have prevented the
+     third failure outright. Trade-off already recorded in the entry above (the worktree is the
+     evidence trail the report file points into) — but note the trail is only needed until the
+     report is read, and this one had been read hours earlier.
+- **Recommendation to weigh at retro:** (1) and (2) are the same discipline as "evidence before
+  assertions" applied to instructions rather than claims, and they cost nothing. (3) is now more
+  attractive than it looked this morning: the same stale worktree has caused two distinct failures in
+  one day, one for an agent and one for a human.
