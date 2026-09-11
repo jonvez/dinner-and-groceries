@@ -69,10 +69,15 @@ export async function addCatalogItemToList(
 ): Promise<MutationResult> {
   const clock = input.now ?? (() => new Date());
 
+  // RLS already hides another household's staples; the explicit `household_id`
+  // filter is defense in depth (#115), symmetric with `promoteToCatalog`'s
+  // catalog read, so no reader assumes a fence that isn't there. The id is
+  // untrusted request input — only the household comes from the session.
   const { data: staple } = await supabase
     .from("catalog_items")
     .select("id, name, default_unit, added_count, section_id")
     .eq("id", input.catalogItemId)
+    .eq("household_id", input.householdId)
     .maybeSingle();
 
   // Not found, or not ours (RLS hides another household's staples) → fail closed.

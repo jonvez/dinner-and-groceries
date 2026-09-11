@@ -162,6 +162,33 @@ describe("addCatalogItemToList", () => {
     ]);
   });
 
+  it("scopes the staple read to the caller's household, not just the id (#115)", async () => {
+    // Defense in depth over RLS, symmetric with `promoteToCatalog`'s catalog
+    // read: the id is untrusted request input, so the read that supplies the
+    // name/unit/aisle copied onto the list row carries the household fence too.
+    const { client, calls } = makeClient({
+      catalogItem: {
+        data: { id: "c1", name: "Milk", default_unit: null, added_count: 4 },
+        error: null,
+      },
+    });
+
+    await addCatalogItemToList(client, {
+      householdId: "hh-1",
+      weekId: "wk-1",
+      catalogItemId: "c1",
+      now,
+    });
+
+    const stapleRead = calls.selects.find((s) => s.table === "catalog_items");
+    expect(stapleRead?.filters).toContainEqual({
+      op: "eq",
+      column: "household_id",
+      value: "hh-1",
+    });
+    expect(stapleRead?.filters).toContainEqual({ op: "eq", column: "id", value: "c1" });
+  });
+
   it("fails closed when the staple is not readable (another household's id)", async () => {
     const { client, calls } = makeClient({ catalogItem: { data: null, error: null } });
 

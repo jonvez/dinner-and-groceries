@@ -44,8 +44,14 @@ export type CompleteTripResult =
   | { ok: true; archived: number; promotable: PromotableItem[] }
   | { ok: false; error: string };
 
+/**
+ * `ok: false` means NOTHING was written (the catalog read failed), so the
+ * caller keeps every candidate. `ok: true` means the batch ran to the end:
+ * `promoted` names were written and `failed` lists exactly the ones that were
+ * not — never a name that was — so a retry of `failed` bumps nothing twice.
+ */
 export type PromoteResult =
-  | { ok: true; promoted: number }
+  | { ok: true; promoted: number; failed: PromotableItem[] }
   | { ok: false; error: string };
 
 export const TRIP_ERROR = "Could not complete the trip.";
@@ -160,6 +166,12 @@ export async function completeTrip(
  *
  * The household's catalog is read ONCE and matched in TypeScript — see the file
  * header for why a per-name `ilike` is not safe with user-typed text.
+ *
+ * Retry-safe (#115): each name is its own write and commits on its own, so a
+ * failed write does NOT stop the batch or fail it. Every name is attempted and
+ * the ones that failed come back in `failed`. Stopping early used to report
+ * the whole batch as failed after earlier names had committed; the prompt kept
+ * them all, and a retry bumped the committed staples' `added_count` twice.
  */
 export async function promoteToCatalog(
   supabase: Pick<DbClient, "from">,
@@ -172,6 +184,7 @@ export async function promoteToCatalog(
 ): Promise<PromoteResult> {
   const clock = input.now ?? (() => new Date());
   let promoted = 0;
+  const failed: PromotableItem[] = [];
 
   // One RLS-scoped read for the whole batch (the `household_id` filter is
   // defense in depth over RLS), keyed the way the unique index is.
@@ -195,6 +208,7 @@ export async function promoteToCatalog(
     const sectionId = isItem ? (raw as PromotableItem).sectionId : null;
 
     const existing = byName.get(name.toLowerCase());
+    let written: boolean;
 
     if (existing) {
       // An existing staple keeps its durable aisle unless this promotion
@@ -208,7 +222,7 @@ export async function promoteToCatalog(
           ...(sectionId !== null ? { section_id: sectionId } : {}),
         })
         .eq("id", existing.id);
-      if (error) return { ok: false, error: PROMOTE_ERROR };
+      written = !error;
     } else {
       const { error } = await supabase.from("catalog_items").insert({
         household_id: input.householdId,
@@ -220,13 +234,14 @@ export async function promoteToCatalog(
       // A unique violation means the other shopper promoted the same name
       // between our lookup and insert — the staple exists, which is the outcome
       // the user asked for. Anything else is a real failure.
-      if (error && (error as { code?: string }).code !== UNIQUE_VIOLATION) {
-        return { ok: false, error: PROMOTE_ERROR };
-      }
+      written = !error || (error as { code?: string }).code === UNIQUE_VIOLATION;
     }
 
-    promoted += 1;
+    // Keep going either way: this name's write is independent of the others,
+    // and the ones that already landed must not be offered for a retry.
+    if (written) promoted += 1;
+    else failed.push({ name, sectionId });
   }
 
-  return { ok: true, promoted };
+  return { ok: true, promoted, failed };
 }

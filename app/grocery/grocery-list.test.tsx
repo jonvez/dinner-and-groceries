@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GroceryList, formatAmount, toChange } from "./grocery-list";
 import type { CatalogRow, GroceryRow } from "./list-core";
 import type { SectionRow } from "./sections-core";
+import type { CompleteTripResult, PromotableItem, PromoteResult } from "./trip-core";
 
 /**
  * The live shopping list (issue #15). The data cores are exhaustively tested in
@@ -88,14 +89,16 @@ const actions = vi.hoisted(() => ({
   setItemSection: vi.fn<
     (id: string, sectionId: string | null) => Promise<{ ok: true } | { error: string }>
   >(async () => ({ ok: true })),
+  completeTrip: vi.fn<(weekId: string) => Promise<CompleteTripResult>>(),
+  promoteToCatalog: vi.fn<(names: PromotableItem[]) => Promise<PromoteResult>>(),
 }));
 
 vi.mock("./actions", () => ({
   addAdHocItemAction: async () => null,
   addCatalogItemToListAction: async () => ({ ok: true }),
   buildGroceryListAction: async () => ({ ok: true, added: 0, removed: 0 }),
-  completeTripAction: async () => ({ ok: true, archived: 0, promotable: [] }),
-  promoteToCatalogAction: async () => ({ ok: true, promoted: 0 }),
+  completeTripAction: (weekId: string) => actions.completeTrip(weekId),
+  promoteToCatalogAction: (names: PromotableItem[]) => actions.promoteToCatalog(names),
   setCheckedAction: (id: string, checked: boolean) => actions.setChecked(id, checked),
   setHaveItAction: (id: string, haveIt: boolean) => actions.setHaveIt(id, haveIt),
   setItemSectionAction: (id: string, sectionId: string | null) =>
@@ -116,6 +119,18 @@ beforeEach(() => {
   actions.setHaveIt.mockImplementation(async () => ({ ok: true }));
   actions.setItemSection.mockClear();
   actions.setItemSection.mockImplementation(async () => ({ ok: true }));
+  actions.completeTrip.mockReset();
+  actions.completeTrip.mockImplementation(async () => ({
+    ok: true,
+    archived: 0,
+    promotable: [],
+  }));
+  actions.promoteToCatalog.mockReset();
+  actions.promoteToCatalog.mockImplementation(async () => ({
+    ok: true,
+    promoted: 0,
+    failed: [],
+  }));
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -678,5 +693,120 @@ describe("GroceryList — aisles", () => {
     expect(screen.getAllByTestId("grocery-item")).toHaveLength(1);
     // Nothing to pick from, so no picker is offered.
     expect(screen.queryByLabelText("Aisle for Milk")).toBeNull();
+  });
+});
+
+/**
+ * Promoting staples after a trip is safe to retry (#115). Each name is its own
+ * write, so a batch can partly land. The prompt must then keep ONLY the names
+ * that failed: keeping the ones that landed would promote them again on the
+ * retry and bump their `added_count` twice — and that count drives the "Buy
+ * again" chips and the suggestion ranking. The core's side of this is pinned in
+ * `trip-core.test.ts`; here we pin the prompt.
+ */
+describe("GroceryList — promoting staples after a trip", () => {
+  const SALT: PromotableItem = { name: "salt", sectionId: null };
+  const PEPPER: PromotableItem = { name: "pepper", sectionId: "s-produce" };
+  const FLOUR: PromotableItem = { name: "flour", sectionId: null };
+
+  const prompt = () => screen.queryByTestId("promotion-prompt");
+  const promptNames = () =>
+    within(screen.getByTestId("promotion-prompt"))
+      .getAllByRole("listitem")
+      .map((li) => li.textContent);
+
+  /** Finish a trip that offers these candidates, and return once the prompt shows. */
+  async function finishTripOffering(promotable: PromotableItem[]) {
+    actions.completeTrip.mockResolvedValue({
+      ok: true,
+      archived: promotable.length,
+      promotable,
+    });
+    renderList([row({ id: "g1", name: "eggs", checked: true })]);
+    await connected();
+    await act(async () => {
+      screen.getByRole("button", { name: "Complete trip" }).click();
+    });
+    await waitFor(() => expect(prompt()).toBeInTheDocument());
+  }
+
+  const addToStaples = async () => {
+    await act(async () => {
+      within(screen.getByTestId("promotion-prompt"))
+        .getByRole("button", { name: "Add to staples" })
+        .click();
+    });
+  };
+
+  it("keeps only the failed names after a partial failure, then a retry sends just those", async () => {
+    actions.promoteToCatalog
+      .mockResolvedValueOnce({ ok: true, promoted: 2, failed: [PEPPER] })
+      .mockResolvedValueOnce({ ok: true, promoted: 1, failed: [] });
+    await finishTripOffering([SALT, PEPPER, FLOUR]);
+
+    await addToStaples();
+
+    expect(actions.promoteToCatalog).toHaveBeenNthCalledWith(1, [SALT, PEPPER, FLOUR]);
+    // The prompt stays open with ONLY the name that failed, still ticked, and
+    // says what happened — including that the other two did land.
+    expect(promptNames()).toEqual(["pepper"]);
+    expect(screen.getByRole("checkbox", { name: "pepper" })).toBeChecked();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not add 1 item to your staples. Try again.",
+    );
+    expect(screen.getByTestId("grocery-notice")).toHaveTextContent(
+      "2 items added to your staples.",
+    );
+
+    await addToStaples();
+
+    // The retry carries only the failure (with its aisle). Salt and flour
+    // landed the first time and are NOT sent again, so across both attempts
+    // each staple is written — and so bumped — exactly once.
+    expect(actions.promoteToCatalog).toHaveBeenCalledTimes(2);
+    expect(actions.promoteToCatalog).toHaveBeenNthCalledWith(2, [PEPPER]);
+
+    expect(prompt()).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("grocery-notice")).toHaveTextContent(
+      "1 item added to your staples.",
+    );
+  });
+
+  it("keeps the prompt open with every name when no write landed", async () => {
+    actions.promoteToCatalog.mockResolvedValueOnce({
+      ok: true,
+      promoted: 0,
+      failed: [SALT, PEPPER],
+    });
+    await finishTripOffering([SALT, PEPPER]);
+
+    await addToStaples();
+
+    expect(promptNames()).toEqual(["salt", "pepper"]);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not add 2 items to your staples. Try again.",
+    );
+    // Nothing landed, so nothing claims to have been added.
+    expect(screen.getByTestId("grocery-notice")).not.toHaveTextContent(
+      "added to your staples",
+    );
+  });
+
+  it("keeps EVERY candidate when the whole batch fails before any write", async () => {
+    // The catalog read failed, so nothing was written and there is nothing to
+    // prune: the retry is simply the same batch.
+    actions.promoteToCatalog.mockResolvedValueOnce({
+      ok: false,
+      error: "Could not add those to your staples.",
+    });
+    await finishTripOffering([SALT, PEPPER, FLOUR]);
+
+    await addToStaples();
+
+    expect(promptNames()).toEqual(["salt", "pepper", "flour"]);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not add those to your staples.",
+    );
   });
 });
