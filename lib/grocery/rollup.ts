@@ -43,6 +43,13 @@ export type ExistingGroceryItem = {
   unit: string | null;
   /** null ⇒ catalog or ad-hoc, i.e. not dish-derived ⇒ protected. */
   ingredientId: string | null;
+  /**
+   * "We already have it". Since #171 such a row is HIDDEN from the shopping
+   * list, but it is still fed to this planner on purpose: it must keep claiming
+   * its dedupe key so a rebuild cannot insert a shadow duplicate beside it
+   * (ADR 0012). Hiding a row and dropping it from `existing` are not the same
+   * thing — never filter these out upstream.
+   */
   haveIt: boolean;
   checked: boolean;
   edited: boolean;

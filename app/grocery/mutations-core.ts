@@ -16,8 +16,10 @@
  *     answer `{ ok: true }` having changed nothing. That is DELIBERATE: an
  *     identical response for "not yours", "doesn't exist", and "done" denies an
  *     existence oracle. Do not "fix" it into a not-found error.
- *   - The toggles write ONE column each — a request can't ride along and
- *     re-home a row, rename it, or clear its provenance.
+ *   - The toggles write only their OWN columns — `setChecked` one, `setHaveIt`
+ *     the have-it pair (flag + stamp, #171), both derived from the caller's
+ *     boolean. A request can't ride along and re-home a row, rename it, or
+ *     clear its provenance.
  *
  * Nothing here touches dishes/recipes/ingredients: `grocery_items` is an
  * independent table (SPEC.md), so editing the list never mutates the menu.
@@ -151,17 +153,37 @@ export async function addAdHocItem(
 }
 
 /**
- * "We already have it" — de-emphasizes the row in the UI and protects it from a
- * re-roll-up (ADR 0003). Never deletes: the shopper may change their mind in the
- * aisle.
+ * "We already have it" — takes the item OFF the shopping list in one tap (#171),
+ * and undoes that when `haveIt` is false.
+ *
+ * Two columns, written together in this one statement and nowhere else:
+ *   - `have_it` is the flag the roll-up planner reads to PROTECT the row's
+ *     dedupe key (ADR 0003), and
+ *   - `have_it_at` is the claim stamp the shopping-list read excludes on.
+ * Keeping them in a single update is what makes "hidden from the list" and
+ * "still claiming its key" true at the same instant.
+ *
+ * It is deliberately NOT `purchased_at`: a pantry fact is not a purchase, and
+ * stamping the archive column would write a phantom purchase into trip history
+ * and offer the item for staples promotion (ADR 0012).
+ *
+ * Never deletes. The row keeps its aisle, quantity and unit, so Undo is just
+ * this same call with `haveIt: false` — nothing has to be reconstructed. The
+ * claim also ends on the next completed trip (`trip-core.ts`), so a staple the
+ * family uses up comes back onto the list instead of being suppressed forever.
  */
 export async function setHaveIt(
   supabase: Pick<DbClient, "from">,
-  input: { id: string; haveIt: boolean },
+  input: { id: string; haveIt: boolean } & Clock,
 ): Promise<MutationResult> {
+  const clock = input.now ?? (() => new Date());
+
   const { error } = await supabase
     .from("grocery_items")
-    .update({ have_it: input.haveIt })
+    .update({
+      have_it: input.haveIt,
+      have_it_at: input.haveIt ? clock().toISOString() : null,
+    })
     .eq("id", input.id);
   if (error) return { ok: false, error: GENERIC_ERROR };
   return { ok: true };

@@ -202,3 +202,50 @@ clean; PR linked to #11; QA verifies the parse table; PO accepts.
 - Semantic ingredient identity / external food DBs.
 - Persistence, JSON-LD extraction (#12), grocery roll-up/dedupe consumption (#14),
   any UI/editor.
+
+## Amendment — pasted list markers (#170, 2026-09-07)
+
+Real input does not arrive as clean as this spec's examples: pasting an ingredient list
+out of a recipe site, a note or a Word doc carries the source's **list marker** with it.
+Because every quantity pattern was anchored at the literal start of the string, those
+lines fell through to step 5 above — `quantity: null, unit: null`, and the WHOLE line
+(bullet, amount and all) as the `name`. That is not cosmetic: `name` is the dedupe key
+(ADR 0003), so an unparsed line never merges with the same ingredient from another dish.
+
+Three changes, all inside the pure parser:
+
+1. **Step 0 — strip the list marker** (`stripListMarker`), before the quantity grammar
+   runs. Markers stripped: `-` `–` `—` `*` `•` `·` `▢` `▪` `▫` `□` `◦` `‣`, a `[ ]` /
+   `[]` / `[x]` checkbox, a `N.` / `N)` list number, and a standalone `o` (Word's
+   sub-bullet). Markers nest (`- [ ] 2 cups flour`), so stripping repeats — bounded.
+   Two rules are deliberately narrow so nothing already-working regresses:
+   - a dash must be **followed by whitespace**, so `-2 cups flour` keeps its documented
+     "not a quantity" behaviour and a hyphenated name is untouched;
+   - a list number must be **followed by whitespace**, so the decimal in `1.5 cups flour`
+     is never read as item 1, and `1. 2 cups flour` yields `q=2`, never `q=1`.
+2. **A digit glued to its unit** (`2lb pork shoulder`) splits — but only when the glued
+   letters are a **known unit**, so a product code (`2x4`) is never read as a quantity.
+3. **A parenthetical package size** (`1 (14.5 oz) can diced tomatoes`) is **DROPPED**,
+   not captured. Decision (the issue left it to the implementer):
+   - there is no package-size column, and inventing one is a data-model change;
+   - ADR 0003 forbids unit conversion, so `14.5 oz` cannot be multiplied into anything
+     the grocery list would use;
+   - leaving it in the `name` breaks dedupe against the same can written any other way;
+   - `rawText` still preserves the line verbatim, so nothing is lost and the line stays
+     correctable downstream.
+   Only a parenthetical containing a **digit** counts as a package size — `(large)` and
+   friends are descriptors and stay in the name (descriptor normalization remains out of
+   scope, per #170).
+
+`rawText` is unchanged by all of this: it is still the verbatim input, marker included.
+
+### Backfill
+
+Rows saved before this fix keep their polluted `name`, and therefore keep defeating the
+roll-up. `raw_text` makes them repairable: `scripts/backfill/generate-ingredient-name-backfill.mjs`
+re-parses an export with the REAL parser (no rules forked into plpgsql) and emits one
+transactional SQL file to review before it is applied via
+`npx supabase db query --linked -f`. Its guards: never touch a row with a null/empty
+`raw_text`, never write a blank `name` (same fallback as the ingest path), never
+overwrite a row whose name changed since the export, and abort if it would touch more
+rows than planned.

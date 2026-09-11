@@ -4,7 +4,7 @@
 -- pgTAP test (slice 1d, issue #13). One rolled-back transaction; fixtures inlined
 -- so the file is self-contained (matches 17_ingredients_rls_test.sql).
 begin;
-select plan(10);
+select plan(14);
 
 create schema if not exists tests;
 
@@ -96,6 +96,43 @@ select throws_ok(
 select throws_ok(
   $$insert into public.grocery_items (household_id, week_id, name, ingredient_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0e000001-0000-0000-0000-000000000001', 'x', '01000002-0000-0000-0000-000000000002')$$,
   '23503', null, 'composite FK blocks pointing at another household ingredient');
+
+-- ---- #171: the have-it claim column is inside the SAME row-level fence ----
+-- The claim stamp is a new write surface on a household-scoped table, so it gets
+-- the same allow-same / deny-cross treatment as everything else here rather than
+-- being assumed safe because "it's just a column".
+
+-- 11: the column exists and is nullable (an unclaimed row has no stamp)
+select is(
+  (select is_nullable from information_schema.columns
+    where table_schema = 'public' and table_name = 'grocery_items' and column_name = 'have_it_at'),
+  'YES', 'grocery_items.have_it_at exists and is nullable');
+
+-- 12: allow-same — a member may claim their OWN household's row
+update public.grocery_items set have_it = true, have_it_at = now()
+  where id = '09000001-0000-0000-0000-000000000001';
+select is(
+  (select count(*)::int from public.grocery_items
+    where id = '09000001-0000-0000-0000-000000000001' and have_it_at is not null),
+  1, 'allow-same: H member stamps have_it_at on H''s own row');
+
+-- 13: deny-cross — the same statement aimed at K's row reaches nothing. It does
+-- not raise: RLS makes the row invisible, so the UPDATE simply matches zero rows
+-- (which is also why the mutation returns a uniform `ok` — no existence oracle).
+update public.grocery_items set have_it = true, have_it_at = now()
+  where id = '09000002-0000-0000-0000-000000000002';
+select tests.clear_auth();
+select is(
+  (select count(*)::int from public.grocery_items
+    where id = '09000002-0000-0000-0000-000000000002' and have_it_at is not null),
+  0, 'deny-cross: H member cannot stamp have_it_at on K''s row');
+
+-- 14: a claim is NOT a purchase — claiming must never archive the row, or the
+-- item would land in trip history and in the staples-promotion offer (ADR 0012).
+select is(
+  (select count(*)::int from public.grocery_items
+    where id = '09000001-0000-0000-0000-000000000001' and purchased_at is null),
+  1, 'a have-it claim leaves purchased_at null — a pantry fact is not a purchase');
 
 select * from finish();
 rollback;

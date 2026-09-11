@@ -37,7 +37,29 @@ function makeClient(opts: {
   const calls: Recorded = { selects: [], inserts: [], updates: [], deletes: [] };
   const ok: QueryResult = { data: null, error: null };
 
-  const thenable = (result: QueryResult, record: (filters: Filter[]) => void) => {
+  /**
+   * The grocery read APPLIES its own `eq`/`is` filters to the seeded rows, the
+   * way Postgres would. That is deliberate: it means a filter this read must
+   * NOT have (e.g. hiding have-it rows, #171) genuinely removes the row from
+   * what the planner is handed, so the resulting shadow duplicate shows up as a
+   * failing assertion instead of being invisible to a filter-blind double.
+   */
+  const applyFilters = (data: unknown, filters: Filter[]) =>
+    Array.isArray(data)
+      ? (data as Record<string, unknown>[]).filter((row) =>
+          filters.every((f) =>
+            f.op === "eq" || f.op === "is"
+              ? (row[f.column] ?? null) === (f.value ?? null)
+              : true,
+          ),
+        )
+      : data;
+
+  const thenable = (
+    result: QueryResult,
+    record: (filters: Filter[]) => void,
+    filterRows = false,
+  ) => {
     const filters: Filter[] = [];
     const builder = {
       eq(column: string, value: unknown) {
@@ -54,7 +76,8 @@ function makeClient(opts: {
       },
       then<T>(resolve: (r: QueryResult) => T) {
         record(filters);
-        return Promise.resolve(result).then(resolve);
+        const data = filterRows ? applyFilters(result.data, filters) : result.data;
+        return Promise.resolve({ ...result, data }).then(resolve);
       },
     };
     return builder;
@@ -63,7 +86,11 @@ function makeClient(opts: {
   const from = vi.fn((table: string) => ({
     select: (columns: string) => {
       const result = table === "slots" ? (opts.slots ?? ok) : (opts.groceryItems ?? ok);
-      return thenable(result, (filters) => calls.selects.push({ table, columns, filters }));
+      return thenable(
+        result,
+        (filters) => calls.selects.push({ table, columns, filters }),
+        table === "grocery_items",
+      );
     },
     insert: (rows: unknown) => {
       calls.inserts.push({ table, rows });
@@ -91,6 +118,10 @@ const groceryRow = (o: Record<string, unknown> & { id: string; name: string }) =
   section_id: null,
   catalog_item_id: null,
   have_it: false,
+  // Both stamps are explicit so the filter-applying double above behaves like
+  // the table: an active row is un-purchased AND unclaimed.
+  have_it_at: null,
+  purchased_at: null,
   checked: false,
   edited: false,
   // The week under rebuild, so a row is deletable unless a test opts out.
@@ -225,6 +256,48 @@ describe("buildGroceryList", () => {
     expect(calls.updates).toHaveLength(0);
     expect(calls.deletes).toHaveLength(0);
     expect(result).toEqual({ ok: true, added: 0, removed: 0 });
+  });
+
+  it("still sees a have-it row, so a rebuild cannot insert a shadow duplicate (#171)", async () => {
+    // The sharp edge of #171. "We have it" HIDES the row from the shopping list
+    // (`have_it_at` stamped) but must NOT hide it from the planner: the row is
+    // still in `grocery_items`, still un-purchased, and still claims its dedupe
+    // key. Hiding a row from the display and dropping it from the planner's
+    // `existing` set are two different things — only the first is wanted.
+    // Get this wrong and "Rebuild from menu" quietly re-adds the very item the
+    // family just said they already had, which is the duplicate the roll-up
+    // exists to prevent (ADR 0003, ADR 0012).
+    const { client, calls } = makeClient({
+      slots: {
+        data: [slotRow([{ id: "ing-1", name: "flour", quantity: 3, unit: "cup" }])],
+        error: null,
+      },
+      groceryItems: {
+        data: [
+          groceryRow({
+            id: "g1",
+            name: "flour",
+            quantity: 1,
+            unit: "cup",
+            have_it: true,
+            have_it_at: "2026-09-07T18:00:00.000Z",
+          }),
+        ],
+        error: null,
+      },
+    });
+
+    const result = await buildGroceryList(client, ARGS);
+
+    expect(calls.inserts).toHaveLength(0);
+    expect(calls.updates).toHaveLength(0);
+    expect(calls.deletes).toHaveLength(0);
+    expect(result).toEqual({ ok: true, added: 0, removed: 0 });
+    // …and the read that fed it is un-narrowed: only the archive filter.
+    const listSelect = calls.selects.find((s) => s.table === "grocery_items");
+    expect(listSelect?.filters).toEqual([
+      { op: "is", column: "purchased_at", value: null },
+    ]);
   });
 
   it("treats a catalog row (ingredient_id null) as protected", async () => {

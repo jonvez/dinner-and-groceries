@@ -12,10 +12,11 @@ import type { SectionRow } from "./sections-core";
  *   - the Realtime socket is authenticated as the user BEFORE the channel joins,
  *     and the channel is household-scoped (`filter: household_id=eq.<id>`);
  *   - incoming changes merge by PK, are scoped to this week, and an ARCHIVED row
- *     (purchased_at set) leaves the active list — that's how the other phone
- *     sees "complete trip";
+ *     (purchased_at set) or a CLAIMED one (have_it_at set) leaves the active
+ *     list — that's how the other phone sees "complete trip" and "we have it";
  *   - a missing quantity/unit renders as NOTHING (never "0"/"1");
- *   - "we already have it" de-emphasizes without removing the row;
+ *   - "we have it" removes the row in ONE tap, optimistically, with an Undo
+ *     that puts it back intact (#171);
  *   - checking a box calls the check-off action optimistically.
  *
  * Genuine two-client delivery over a real socket is covered by
@@ -76,7 +77,10 @@ vi.mock("@/lib/supabase/browser", () => ({
   },
 }));
 
-type ToggleFn = (id: string, value: boolean) => Promise<{ ok: true }>;
+type ToggleFn = (
+  id: string,
+  value: boolean,
+) => Promise<{ ok: true } | { error: string }>;
 
 const actions = vi.hoisted(() => ({
   setChecked: vi.fn<ToggleFn>(async () => ({ ok: true })),
@@ -109,6 +113,7 @@ beforeEach(() => {
   rt.refresh.mockClear();
   actions.setChecked.mockClear();
   actions.setHaveIt.mockClear();
+  actions.setHaveIt.mockImplementation(async () => ({ ok: true }));
   actions.setItemSection.mockClear();
   actions.setItemSection.mockImplementation(async () => ({ ok: true }));
   vi.stubGlobal(
@@ -192,6 +197,8 @@ const dbRow = (o: Record<string, unknown> & { id: string; name: string }) => ({
   position: 0,
   created_at: "2026-08-07T00:00:00.000Z",
   purchased_at: null,
+  /** #171: set ⇒ the family has it, so the row is off the shopping list. */
+  have_it_at: null,
   section_id: null,
   ...o,
 });
@@ -220,6 +227,32 @@ describe("toChange", () => {
         changePayload("UPDATE", dbRow({ id: "g1", name: "x", purchased_at: "2026-08-07T19:00:00Z" })),
       ),
     ).toEqual({ type: "DELETE", id: "g1" });
+  });
+
+  it("treats a claimed have-it row as a removal from the active list (#171)", () => {
+    // This is how the OTHER phone drops the item live: the row is still in
+    // `grocery_items` (the planner needs it) but it is off the shopping list.
+    expect(
+      toChange(
+        changePayload(
+          "UPDATE",
+          dbRow({
+            id: "g1",
+            name: "olive oil",
+            have_it: true,
+            have_it_at: "2026-09-07T18:00:00Z",
+          }),
+        ),
+      ),
+    ).toEqual({ type: "DELETE", id: "g1" });
+  });
+
+  it("brings a row back when the other phone undoes the claim (#171)", () => {
+    // `mergeChange` upserts by PK, so an UPDATE for a row this phone already
+    // dropped fills the missing INSERT — the undo propagates without a reload.
+    expect(
+      toChange(changePayload("UPDATE", dbRow({ id: "g1", name: "olive oil" }))),
+    ).toEqual({ type: "UPDATE", row: expect.objectContaining({ id: "g1" }) });
   });
 
   it("maps a DELETE by primary key", () => {
@@ -259,21 +292,6 @@ describe("GroceryList", () => {
     const item = screen.getByTestId("grocery-item");
     expect(within(item).getByText("2 cup")).toBeInTheDocument();
     expect(within(item).getByText("from the menu")).toBeInTheDocument();
-  });
-
-  it("de-emphasizes a have-it row without removing it", async () => {
-    renderList([row({ id: "g1", name: "olive oil", haveIt: true })]);
-    await connected();
-
-    const item = screen.getByTestId("grocery-item");
-    expect(item).toBeInTheDocument();
-    expect(within(item).getByRole("button", { name: "Got it already" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(within(item).getByText("olive oil").parentElement?.className).toContain(
-      "line-through",
-    );
   });
 
   it("checks an item off through the action", async () => {
@@ -361,6 +379,141 @@ describe("GroceryList", () => {
     );
     // The list itself is server-rendered, so it is still fully correct.
     expect(screen.getAllByTestId("grocery-item")).toHaveLength(1);
+  });
+});
+
+/**
+ * "We have it" (#171). One tap takes the item off the list — no checkbox, no
+ * Complete trip. The row is not deleted (the roll-up planner still needs it, see
+ * `rollup-core.test.ts`), it is simply gone from this screen.
+ */
+describe("GroceryList — we have it", () => {
+  const heading = () =>
+    screen.getByRole("heading", { name: /Shopping list/ }).textContent ?? "";
+
+  const tapHaveIt = async (name: string) => {
+    const item = screen
+      .getAllByTestId("grocery-item")
+      .find((el) => el.dataset.name === name)!;
+    await act(async () => {
+      within(item).getByRole("button", { name: "We have it" }).click();
+    });
+  };
+
+  it("removes the item on one tap, optimistically", async () => {
+    renderList([row({ id: "g1", name: "olive oil" })]);
+    await connected();
+    expect(heading()).toContain("(1 to get)");
+
+    await tapHaveIt("olive oil");
+
+    expect(actions.setHaveIt).toHaveBeenCalledWith("g1", true);
+    expect(screen.queryByTestId("grocery-item")).not.toBeInTheDocument();
+    // The item is GONE, not merely uncounted.
+    expect(heading()).toContain("(0 to get)");
+  });
+
+  it("puts the row back when the write fails", async () => {
+    actions.setHaveIt.mockImplementation(async () => ({ error: "Nope." }));
+    renderList([row({ id: "g1", name: "olive oil", quantity: 2, unit: "cup" })]);
+    await connected();
+
+    await tapHaveIt("olive oil");
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Nope."));
+    const item = screen.getByTestId("grocery-item");
+    expect(within(item).getByText("olive oil")).toBeInTheDocument();
+    expect(within(item).getByText("2 cup")).toBeInTheDocument();
+    expect(heading()).toContain("(1 to get)");
+  });
+
+  it("offers an Undo that restores the row with its quantity, unit and aisle", async () => {
+    renderList([
+      row({
+        id: "g1",
+        name: "olive oil",
+        quantity: 2,
+        unit: "cup",
+        sectionId: "s-dairy",
+      }),
+    ]);
+    await connected();
+
+    await tapHaveIt("olive oil");
+    const notice = screen.getByTestId("grocery-notice");
+    expect(notice).toHaveTextContent("olive oil");
+
+    await act(async () => {
+      within(notice).getByRole("button", { name: "Undo" }).click();
+    });
+
+    // The undo is the same one-column write, inverted — the row was never
+    // deleted, so nothing about it had to be reconstructed.
+    expect(actions.setHaveIt).toHaveBeenLastCalledWith("g1", false);
+    const item = screen.getByTestId("grocery-item");
+    expect(within(item).getByText("2 cup")).toBeInTheDocument();
+    expect(
+      (screen.getByLabelText("Aisle for olive oil") as HTMLSelectElement).value,
+    ).toBe("s-dairy");
+    expect(heading()).toContain("(1 to get)");
+    // The offer is spent once taken.
+    expect(screen.queryByTestId("grocery-notice")).not.toBeInTheDocument();
+  });
+
+  it("drops the item live when the other phone claims it", async () => {
+    renderList([row({ id: "g1", name: "olive oil" })]);
+    await connected();
+
+    await act(async () => {
+      rt.handler?.(
+        changePayload(
+          "UPDATE",
+          dbRow({
+            id: "g1",
+            name: "olive oil",
+            have_it: true,
+            have_it_at: "2026-09-07T18:00:00Z",
+          }),
+        ),
+      );
+    });
+
+    expect(screen.queryByTestId("grocery-item")).not.toBeInTheDocument();
+    expect(heading()).toContain("(0 to get)");
+  });
+
+  it("keeps the item off the list when an OLDER server snapshot still lists it", async () => {
+    // The `revalidatePath` snapshot in flight was rendered before this write
+    // committed. Adopting it wholesale would flash the item back onto the list
+    // and then remove it again — the same staleness the aisle picker guards
+    // against, and far more alarming when the row disappears and reappears.
+    let settle: ((result: { ok: true }) => void) | undefined;
+    actions.setHaveIt.mockImplementation(
+      () => new Promise((resolve) => { settle = resolve; }),
+    );
+    const { snapshot } = renderList([
+      row({ id: "g1", name: "olive oil" }),
+      row({ id: "g2", name: "eggs" }),
+    ]);
+    await connected();
+
+    await tapHaveIt("olive oil");
+    expect(screen.getAllByTestId("grocery-item")).toHaveLength(1);
+
+    await act(async () => {
+      snapshot([
+        row({ id: "g1", name: "olive oil" }),
+        row({ id: "g2", name: "eggs", quantity: 12 }),
+      ]);
+    });
+
+    expect(
+      screen.getAllByTestId("grocery-item").map((el) => el.dataset.name),
+    ).toEqual(["eggs"]);
+
+    await act(async () => {
+      settle?.({ ok: true });
+    });
   });
 });
 
