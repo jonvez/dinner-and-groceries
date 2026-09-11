@@ -450,15 +450,29 @@ export function GroceryList({
     const result = await promoteToCatalogAction(names);
     setBusy(false);
     if (!result.ok) {
+      // Nothing was written, so every candidate stays and a retry is the same
+      // batch.
       setError(result.error);
       return;
     }
-    setCandidates([]);
-    setNotice(
-      result.promoted === 1
-        ? "1 item added to your staples."
-        : `${result.promoted} items added to your staples.`,
-    );
+    if (result.promoted > 0) {
+      setNotice(
+        result.promoted === 1
+          ? "1 item added to your staples."
+          : `${result.promoted} items added to your staples.`,
+      );
+    }
+    // A batch can partly land (#115). Keep ONLY what failed: a name that
+    // landed must leave the prompt, or the retry would promote it again and
+    // bump its `added_count` twice. `accepted` is left as it is, so the names
+    // still offered stay ticked.
+    setCandidates(result.failed);
+    if (result.failed.length > 0) {
+      const count = result.failed.length;
+      setError(
+        `Could not add ${count === 1 ? "1 item" : `${count} items`} to your staples. Try again.`,
+      );
+    }
   }, [candidates, accepted]);
 
   // "N to get" counts what is actually left to buy. A have-it row is no longer
