@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -43,22 +43,30 @@ function Harness({
 }) {
   const [value, setValue] = useState("");
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit();
-      }}
-    >
-      <StapleCombobox
-        name="name"
-        label="Item"
-        value={value}
-        onChange={setValue}
-        onPick={onPick}
-        catalog={catalog}
-      />
-      <button type="submit">Add</button>
-    </form>
+    <>
+      {/* Something outside the combobox to tap, like the page's heading. */}
+      <h2>Groceries</h2>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+      >
+        <StapleCombobox
+          name="name"
+          label="Item"
+          value={value}
+          onChange={setValue}
+          onPick={onPick}
+          catalog={catalog}
+        />
+        <button type="submit">Add</button>
+        <label>
+          Quantity
+          <input name="quantity" />
+        </label>
+      </form>
+    </>
   );
 }
 
@@ -227,5 +235,121 @@ describe("StapleCombobox", () => {
 
     expect(screen.getByRole("status").textContent).toBe("");
     expect(options()).toHaveLength(0);
+  });
+});
+
+/**
+ * Leaving the list WITHOUT picking (#197). Since #185 the open list sits over
+ * Quantity and Unit, and a phone keyboard has no Escape key, so the list must
+ * close the way the APG combobox does: when focus leaves the input, and on a
+ * press anywhere outside the input and its list. Neither may pick, and neither
+ * may touch what was typed.
+ */
+describe("StapleCombobox — dismissing without picking (#197)", () => {
+  /** A real focus move: the input gets a genuine `focusout`, not a fake one. */
+  const leaveForQuantity = () =>
+    act(() => screen.getByLabelText("Quantity").focus());
+
+  it("closes when focus leaves the Item field, keeping what was typed", () => {
+    const onPick = vi.fn();
+    render(<Harness onPick={onPick} />);
+    input().focus();
+    type("mo");
+    press("ArrowDown");
+    expect(options().length).toBeGreaterThan(0);
+
+    // Tab, the iOS accessory-bar arrows, or a tap on another field.
+    leaveForQuantity();
+
+    expect(options()).toHaveLength(0);
+    expect(input().getAttribute("aria-expanded")).toBe("false");
+    expect(input().getAttribute("aria-activedescendant")).toBeNull();
+    expect(input().value).toBe("mo");
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("reopens when the user types again after leaving the field", () => {
+    render(<Harness />);
+    input().focus();
+    type("mo");
+    leaveForQuantity();
+    expect(options()).toHaveLength(0);
+
+    input().focus();
+    type("mol");
+
+    expect(options().length).toBeGreaterThan(0);
+    // A fresh list: nothing highlighted until the user arrows.
+    expect(input().getAttribute("aria-activedescendant")).toBeNull();
+  });
+
+  it("closes on a press outside the combobox, without picking or clearing", () => {
+    const onPick = vi.fn();
+    render(<Harness onPick={onPick} />);
+    input().focus();
+    type("mo");
+    // Even a HIGHLIGHTED option is not chosen by pressing elsewhere.
+    press("ArrowDown");
+    expect(options().length).toBeGreaterThan(0);
+
+    fireEvent.pointerDown(screen.getByRole("heading", { name: "Groceries" }));
+
+    expect(options()).toHaveLength(0);
+    expect(input().getAttribute("aria-expanded")).toBe("false");
+    expect(input().value).toBe("mo");
+    expect(onPick).not.toHaveBeenCalled();
+
+    // Typing again brings it back, as after Escape.
+    type("mol");
+    expect(options().length).toBeGreaterThan(0);
+  });
+
+  it("stays open on a press on the input itself or inside the list", () => {
+    render(<Harness />);
+    input().focus();
+    type("mo");
+    const count = options().length;
+    expect(count).toBeGreaterThan(0);
+
+    fireEvent.pointerDown(input());
+    expect(options()).toHaveLength(count);
+
+    fireEvent.pointerDown(screen.getByRole("listbox"));
+    expect(options()).toHaveLength(count);
+  });
+
+  it("never lets a press on the list blur the input, even between options", () => {
+    render(<Harness />);
+    input().focus();
+    type("mo");
+
+    // `fireEvent` returns false when the handler called preventDefault — the
+    // browser's cue not to move focus. A press on the list's edge or padding
+    // must not blur the input and so close the list under the finger.
+    expect(fireEvent.mouseDown(screen.getByRole("listbox"))).toBe(false);
+    expect(options().length).toBeGreaterThan(0);
+    expect(document.activeElement).toBe(input());
+  });
+
+  it("still picks on a tap: pointer-down then mouse-down on an option", () => {
+    const onPick = vi.fn();
+    render(<Harness onPick={onPick} />);
+    input().focus();
+    type("milk");
+    const option = options()[0];
+
+    // A real tap fires pointerdown before mousedown. The outside-press rule
+    // must not close the list on the pointerdown, or there'd be nothing left
+    // for the mousedown to pick.
+    fireEvent.pointerDown(option);
+    const notPrevented = fireEvent.mouseDown(option);
+
+    expect(notPrevented).toBe(false); // so the input never blurs on the tap
+    expect(input().value).toBe("Milk");
+    expect(onPick).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Milk", defaultUnit: "gal" }),
+    );
+    expect(options()).toHaveLength(0);
+    expect(document.activeElement).toBe(input());
   });
 });
