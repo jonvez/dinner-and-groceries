@@ -52,23 +52,16 @@ const bottom = (b: Box) => b.y + b.height;
 const sameRow = (a: Box, b: Box) => a.y < bottom(b) && b.y < bottom(a);
 
 /**
- * Nothing on the grocery screen pushes it sideways. `scrollWidth` counts every
+ * Nothing on the grocery screen pushes it sideways. The whole page is checked,
+ * nav included (the nav fits a phone since #196). `scrollWidth` counts every
  * overflowing descendant, in flow or absolutely positioned (the open suggestion
  * list), so this catches the form and its dropdown alike.
- *
- * Scoped to `<main>` rather than the whole document: at 375px the GLOBAL nav is
- * already wider than the screen on every page (#196), which is not this form's
- * doing. Tighten this to `document.documentElement` once #196 lands.
  */
 async function expectNoSidewaysScroll(page: Page) {
-  const { scrollWidth, clientWidth, viewport } = await page
-    .locator("main")
-    .evaluate((main) => ({
-      scrollWidth: main.scrollWidth,
-      clientWidth: main.clientWidth,
-      viewport: document.documentElement.clientWidth,
-    }));
-  expect(clientWidth).toBeLessThanOrEqual(viewport);
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
   expect(scrollWidth, "the screen must not scroll sideways").toBeLessThanOrEqual(
     clientWidth,
   );
