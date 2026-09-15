@@ -115,7 +115,17 @@ export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
         ) : adoption.hasActivity ? (
           <>
             <dl className="flex flex-wrap gap-8">
-              <Figure label="Active today" value={adoption.activeToday} testId="active-today" />
+              {/*
+                A ROLLING 24 hours, and the label says so (#228). "Active
+                today" was a UTC calendar day, which read 0 all evening during
+                the household's own Pacific afternoon — the label has to match
+                what the number actually measures, or it lies just as loudly.
+              */}
+              <Figure
+                label="Active in the last 24 hours"
+                value={adoption.activeLast24h}
+                testId="active-last-24h"
+              />
               <Figure
                 label="Active this week"
                 value={adoption.activeThisWeek}
