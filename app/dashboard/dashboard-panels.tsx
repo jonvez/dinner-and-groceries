@@ -126,8 +126,14 @@ export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
                 value={adoption.activeLast24h}
                 testId="active-last-24h"
               />
+              {/*
+                Same rule as the figure above: this is a rolling 7 days, so it
+                does not say "this week" either. A label that names a calendar
+                period while measuring a trailing window is the #228 bug in
+                miniature.
+              */}
               <Figure
-                label="Active this week"
+                label="Active in the last 7 days"
                 value={adoption.activeThisWeek}
                 testId="active-this-week"
               />
