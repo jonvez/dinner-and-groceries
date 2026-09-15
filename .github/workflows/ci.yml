@@ -8,10 +8,15 @@ on:
   push:
     branches: [main]
 
-# Cancel superseded runs on the same ref to save CI minutes.
+# Cancel superseded runs on the same ref to save CI minutes — but NOT on `main`.
+# A `main` run applies migrations to the prod database (the `migrate` job below);
+# cancelling one mid-apply is survivable (each migration file is its own
+# transaction and `db push` resumes from the history table) but it is not
+# something to design in. So `main` runs QUEUE and PRs still cancel, which is
+# where the CI-minute saving actually comes from. (ADR 0015 § 4.)
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -72,7 +77,13 @@ jobs:
     name: Lint, typecheck, unit tests
     runs-on: ubuntu-latest
     steps:
+      # Full history: `migrations-monotonic.test.ts` compares the migrations this
+      # branch ADDS against the ones already on the base branch, which needs the
+      # merge base. A shallow clone makes that comparison impossible and the test
+      # fails closed rather than skipping.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -317,6 +328,145 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
+  # Migrate: apply supabase/migrations/ to the cloud Supabase PROD database
+  # (ADR 0015, runbook docs/runbooks/prod-migrations.md). Runs on merges to main
+  # only, BEFORE the app deploy, so a failed apply leaves prod on old code AND
+  # old schema instead of new code on old schema — the failure this project has
+  # already shipped twice (#63, /grocery 500s).
+  #
+  # Credential: ONE GCP Secret Manager secret, SUPABASE_MIGRATION_DB_URL (the
+  # prod SESSION-pooler URI, port 5432 — transaction mode cannot run DDL), read
+  # at job time by the existing keyless WIF deploy identity. No
+  # SUPABASE_ACCESS_TOKEN (a PAT is account-wide), no `supabase link` state, and
+  # NO new GitHub secret — ADR 0009's "nothing long-lived in GitHub" holds. The
+  # value is masked before it can reach a log, is never bound to Cloud Run, and
+  # `--debug` is banned here because it prints the connection string.
+  #
+  # `needs: rls` is deliberate: no migration reaches prod on a commit whose pgTAP
+  # allow/deny suite did not pass. Required checks gate MERGES; this gates the
+  # APPLY. No docs-only fast-path either — `db push` with nothing pending is a
+  # sub-second no-op, so every merge doubles as a standing assertion that prod's
+  # migration history matches the repo, and no path-filter bug can fail open.
+  # ---------------------------------------------------------------------------
+  migrate:
+    name: Apply DB migrations to prod
+    needs: [verify, rls, e2e]
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation only; no long-lived key
+    # Prod applies never overlap, whatever the trigger (a re-run of an older run
+    # included). Never cancels: see the workflow-level concurrency note above.
+    concurrency:
+      group: prod-migrate
+      cancel-in-progress: false
+    steps:
+      - name: Gate on GCP wiring
+        id: gate
+        run: |
+          if [ -z "${{ vars.GCP_PROJECT_ID }}" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GCP not wired yet (vars.GCP_PROJECT_ID unset) — migrate is a no-op stub."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # The supabase CLI is a devDependency pinned at 2.107.0 (#164) — the
+      # lockfile is the version of record; there is no global binary.
+      - name: Install dependencies
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: npm ci
+
+      # Keyless auth via Workload Identity Federation — same provider and same
+      # deploy SA the deploy job uses; no JSON keys in the repo.
+      - name: Authenticate to Google Cloud
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # ::add-mask:: is registered BEFORE the value can reach any later log line.
+      # Requires secretmanager.secretAccessor on this secret for the DEPLOY SA
+      # only — explicitly NOT the Cloud Run runtime compute SA (ADR 0015 § 8).
+      - name: Fetch the migration connection URI from Secret Manager
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: |
+          URI="$(gcloud secrets versions access latest --secret=SUPABASE_MIGRATION_DB_URL --project=${{ vars.GCP_PROJECT_ID }})"
+          echo "::add-mask::$URI"
+          echo "SUPABASE_MIGRATION_DB_URL=$URI" >> "$GITHUB_ENV"
+
+      # Pre-flight: prod's history BEFORE anything is attempted. On a red run
+      # this log line is usually the whole diagnosis (runbook § 3).
+      - name: Prod migration history (pre-flight)
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: npx supabase migration list --db-url "$SUPABASE_MIGRATION_DB_URL"
+
+      # No --include-all, on purpose: a remote version missing from the repo, or
+      # a pending file older than prod's history head, must exit 1 and block the
+      # deploy until a human repairs it (runbook § 3.1 / § 3.2). Each file is
+      # applied in its own transaction, so a failure rolls that file back whole
+      # and a re-run resumes from the history table.
+      - name: Apply pending migrations
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: npx supabase db push --db-url "$SUPABASE_MIGRATION_DB_URL" --yes
+
+      # `migration list` ALWAYS exits 0, so green `db push` alone does not prove
+      # prod's history matches the repo — parse it. A blank cell on either side
+      # is the drift signature. With this step, a green `migrate` means the
+      # repo's migration history IS prod's migration history.
+      - name: Assert every repo migration is applied (post-flight)
+        if: ${{ steps.gate.outputs.enabled == 'true' }}
+        run: |
+          npx supabase migration list --db-url "$SUPABASE_MIGRATION_DB_URL" | tee migration-list.txt
+          # Rows look like:  " 20260101000000 | 20260101000000 | 2026-01-01 00:00:00 "
+          # Deliberately NOT using an interval expression ([0-9]{14}): intervals
+          # are not portable across awk variants (ubuntu-latest's default awk is
+          # mawk), and an awk that took `{14}` literally would match ZERO rows
+          # and report success — a parser that fails OPEN, which is the one
+          # outcome this step must never have. So: match any digit run, and
+          # assert a nonzero row count. The repo always has >= 1 migration, so
+          # "parsed nothing" means the parse broke, not that prod is clean.
+          report="$(awk -F'|' '
+            /^[[:space:]]*[0-9][0-9]*[[:space:]]*\|/ || /^[[:space:]]*\|[[:space:]]*[0-9][0-9]*/ {
+              rows++
+              l=$1; r=$2; gsub(/[[:space:]]/,"",l); gsub(/[[:space:]]/,"",r);
+              if (l != r) printf "  drift: local=%s remote=%s\n", (l==""?"-":l), (r==""?"-":r)
+            }
+            END { printf "rows=%d\n", rows }
+          ' migration-list.txt)"
+          rows="$(printf '%s\n' "$report" | sed -n 's/^rows=//p')"
+          drift="$(printf '%s\n' "$report" | grep '^  drift:' || true)"
+          if [ "${rows:-0}" -lt 1 ]; then
+            echo "::error::could not parse any migration rows out of \`migration list\` — refusing to call that success."
+            exit 1
+          fi
+          if [ -n "$drift" ]; then
+            echo "::error::prod migration history does not match the repo:"; echo "$drift"; exit 1
+          fi
+          echo "Prod migration history matches the repo ($rows migrations)."
+
+      - name: Stub notice (GCP not wired)
+        if: ${{ steps.gate.outputs.enabled != 'true' }}
+        run: |
+          echo "Migrate stub: pipeline shape present; wire vars.GCP_* + the SUPABASE_MIGRATION_DB_URL secret to activate."
+
+  # ---------------------------------------------------------------------------
   # Deploy: Docker build -> Artifact Registry -> Cloud Run (ADR 0009).
   # Guarded to merges on main; no-op only while GCP wiring vars are unset, so it
   # never runs on PRs and commits no real GCP credentials.
@@ -328,7 +478,9 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     name: Deploy to Cloud Run
-    needs: [verify, e2e]
+    # `migrate` first (ADR 0015 § 3): a failed apply skips the deploy entirely,
+    # so prod stays coherent on the previous image + previous schema.
+    needs: [verify, e2e, migrate]
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions:
