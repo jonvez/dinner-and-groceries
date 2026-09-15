@@ -525,3 +525,30 @@ app, not the issue body. The PO's "re-verify before Ready" step paid for itself 
 - Locally, with `fullyParallel` on, the two staple-promoting specs can race: they share user A's
   household, so one spec's "Complete trip" archives the other's item. CI runs one worker. Run local
   E2E with `CI=1` (hit by the #197 dev).
+
+### 2026-09-15 — a named regression guard that asserts the wrong thing (QA of #64 / PR #214)
+
+`e2e/authed/realtime.spec.ts` gained a test called *"a proposal on ANOTHER week does not re-render
+this week's open board"*. QA mutated the `proposals` binding back to `household_id=eq.<id>` and the
+test **still passed** (#219): its assertions check *"the other week's content is absent"*, which stays
+true even when the page does re-render, because the server render is week-scoped either way. The AC
+was in fact protected — by three component tests — but the E2E advertised a guard it did not provide.
+That is the same shape of gap that let #64 survive in the first place (the old E2E proposed *before*
+the observer opened the board). **Lesson:** a test that is nominated as *the* regression guard for an
+acceptance criterion has to be proven red by mutating the specific mechanism it names — not by
+reverting the whole feature, which makes everything go red for the wrong reason and hides tests that
+assert nothing. The dev's pre-fix revert here did show red, but for a different cause (no channel at
+all on a zero-proposal week), which masked this.
+
+Also: instant negative assertions (`toHaveCount(0)` immediately after the actor acts) prove almost
+nothing about a *live* path — they resolve on the first poll, before any push could have arrived. A
+negative Realtime assertion needs a bounded settle window, or a positive control that must change.
+
+### 2026-09-15 — the retro log warned about this and it still cost 20 minutes (third time)
+
+The 2026-09-11 entry already says a local `npm run build` for E2E needs `NEXT_PUBLIC_SUPABASE_URL` /
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` at build time. It has now bitten devs on #196, #197 and #64. A
+warning in a log nobody re-reads mid-task is not a guard. Cheapest fix: fail the build (or the E2E
+runner) loudly when those vars are unset outside CI, the way `ci.yml` already greps the emitted
+chunks to verify they were inlined. Same class: this worktree had no `node_modules` of its own, so
+`next build` failed until `npm ci` ran inside it — also already a known trap.
