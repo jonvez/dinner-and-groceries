@@ -560,3 +560,31 @@ path (no channel at all on a zero-proposal week; the subscription keyed on the p
 re-JOINs on every change) that would have made a naive fix look half-broken. **Lesson:** for a
 "live updates don't arrive" bug, check the storage layer (publication membership, replica identity)
 *before* the client subscription. Same root shape as #63.
+
+### 2026-09-15 — QA of #213 (#210 event emission): what mutation testing found that a green suite didn't
+
+- **A green suite is not evidence; a killed mutant is.** #213's 758 passing tests told me nothing on
+  their own. Deleting each emission and each silence guard (17 mutants) and watching a test go red
+  told me everything — including that one mutation to `emitEvent` turns 7 files red, which is what
+  "analytics can never break a user action" actually looks like when it's true. Worth making the
+  default QA move for any "emit X at Y" issue, and a good substitute for auditing TDD order after
+  the fact: tests written after the code routinely survive mutation, and these didn't.
+- **The reference call site was the untested one.** #210 and ADR 0014 both point at
+  `app/recipes/new/actions.ts:80` as "the one that was already wired" — and it has no test at all
+  (mutant survives; filed #215). The pattern to watch: when an issue says "do it like the existing
+  one", nobody checks whether the existing one is covered. *Audit the exemplar, not just the copies.*
+- **Guards that catch a different failure than the one the tests force are invisible.** Every call
+  site tests a throwing *insert* — which `emitEvent` swallows first, so the outer `try/catch` in
+  `emitSignIn`/`recordSessionStartAction` is never reached and can be deleted with the suite green
+  (#216). Two layers of defence, one of them unproven, and no amount of coverage % would have said so.
+- **"`next build` doesn't work in a worktree" is a myth that cost this PR its local E2E.** The
+  worktree had an *empty* `node_modules/`; vitest and tsc only worked because they resolved from the
+  parent checkout. After `npm ci` in the worktree, both `npm run build` and the full Playwright suite
+  ran fine. Devs are skipping the E2E tier on a false belief — add `npm ci` to the worktree setup.
+- **The `fullyParallel` staple-promotion race bit again** (already logged 2026-09-11, hit by the #197
+  dev, now by QA). Third occurrence. It costs every newcomer the same 10 minutes of "is this my bug?"
+  Time to stop logging it and fix it: `workers: process.env.CI ? 1 : 1` or per-spec household seeding.
+- **Two agent sessions shared one local Supabase stack and one of them removed it mid-run.** All 12
+  containers vanished (`supabase stop` semantics) while I was querying `events`. If concurrent
+  sessions are the norm, `db:start`/`db:stop` needs a refcount or each worktree needs its own project
+  id — otherwise one agent silently breaks another's evidence.
