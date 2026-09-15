@@ -135,6 +135,56 @@ describe("DashboardPanels — empty states", () => {
   });
 });
 
+describe("DashboardPanels — a failed read is NOT an empty one", () => {
+  /**
+   * The lie this prevents (security review #223, F1): a transient read failure
+   * degrades every panel to zero, and the empty state would then tell Jon
+   * "nobody has opened the app in the last 30 days" — on the one screen whose
+   * entire purpose is reporting adoption truthfully.
+   */
+  function renderFailed(events: DashboardEvent[] = []) {
+    return render(
+      <DashboardPanels
+        summary={summarizeDashboard(events, MEMBERS, { now: NOW, readFailed: true })}
+      />,
+    );
+  }
+
+  it("says it couldn't load, and never says 'no activity yet'", () => {
+    const { container } = renderFailed();
+    for (const name of [/adoption/i, /participation/i, /trips/i]) {
+      const panel = screen.getByRole("region", { name });
+      expect(panel).toHaveTextContent(/couldn.t load/i);
+      expect(panel).not.toHaveTextContent(/no activity yet/i);
+    }
+    expect(container.textContent ?? "").not.toMatch(/nobody has opened the app/i);
+  });
+
+  it("shows no figures or member rows, so nothing reads as a real zero", () => {
+    renderFailed();
+    expect(screen.queryByTestId("active-last-24h")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("trips-completed")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("row")).toHaveLength(0);
+  });
+
+  it("suppresses the empty state even when there WAS activity in the partial data", () => {
+    // An error alongside rows: what came back may be incomplete, so it must not
+    // be rendered as if it were the whole picture.
+    renderFailed(BUSY);
+    expect(screen.getByRole("region", { name: /adoption/i })).toHaveTextContent(/couldn.t load/i);
+    expect(screen.queryByTestId("active-days-m-jojo")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty state for a genuinely empty window", () => {
+    renderSummary([], []);
+    for (const name of [/adoption/i, /participation/i, /trips/i]) {
+      const panel = screen.getByRole("region", { name });
+      expect(panel).toHaveTextContent(/no activity yet/i);
+      expect(panel).not.toHaveTextContent(/couldn.t load/i);
+    }
+  });
+});
+
 describe("DashboardPanels — the hard boundary", () => {
   it("renders no health or tag figure at all (#211 is blocked on M2)", () => {
     const { container } = renderSummary(BUSY);

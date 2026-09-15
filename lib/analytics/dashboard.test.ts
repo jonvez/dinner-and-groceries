@@ -365,3 +365,71 @@ describe("loadDashboardSummary", () => {
     expect(summary.trips.completed).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A FAILED read is not an empty one. Degrading to zeroes is right; REPORTING
+// them as "nobody has opened the app in 30 days" is a lie, on the one screen
+// whose whole job is to tell Jon the truth about adoption. `readFailed` is what
+// lets the panels say "couldn't load" instead (security review #223, F1).
+// ---------------------------------------------------------------------------
+
+describe("loadDashboardSummary — a failed read is distinguishable from an empty one", () => {
+  it("flags readFailed when the EVENTS read errors", async () => {
+    const { supabase } = makeClient({
+      events: { data: null, error: { message: "schema cache is stale" } },
+    });
+    const summary = await loadDashboardSummary(supabase, { now: NOW });
+    expect(summary.readFailed).toBe(true);
+    // Still degrades rather than throwing: the figures are zero...
+    expect(summary.adoption.hasActivity).toBe(false);
+  });
+
+  it("flags readFailed when the MEMBERS read errors", async () => {
+    const { supabase } = makeClient({
+      members: { data: null, error: { message: "boom" } },
+    });
+    const summary = await loadDashboardSummary(supabase, { now: NOW });
+    expect(summary.readFailed).toBe(true);
+  });
+
+  it("flags readFailed when an error arrives ALONGSIDE rows", async () => {
+    // PostgREST can return a partial/errored body; an error is an error even if
+    // `data` is not null, so we must never silently render what came back.
+    const { supabase } = makeClient({
+      events: {
+        data: [{ event_type: "session_start", member_id: "m-jojo", created_at: ago(1) }],
+        error: { message: "partial" },
+      },
+      members: { data: [{ id: "m-jojo", display_name: "Jojo" }], error: null },
+    });
+    expect((await loadDashboardSummary(supabase, { now: NOW })).readFailed).toBe(true);
+  });
+
+  it("does NOT flag readFailed for a genuinely empty events table", async () => {
+    // The empty state must survive: no rows and no error is "nothing happened
+    // yet", which is a true and useful thing to say.
+    const { supabase } = makeClient({
+      events: { data: [], error: null },
+      members: { data: [{ id: "m-jojo", display_name: "Jojo" }], error: null },
+    });
+    const summary = await loadDashboardSummary(supabase, { now: NOW });
+    expect(summary.readFailed).toBe(false);
+    expect(summary.adoption.hasActivity).toBe(false);
+  });
+
+  it("does NOT flag readFailed on a successful read with activity", async () => {
+    const { supabase } = makeClient({
+      events: {
+        data: [{ event_type: "trip_completed", member_id: "m-jojo", created_at: ago(1) }],
+        error: null,
+      },
+      members: { data: [{ id: "m-jojo", display_name: "Jojo" }], error: null },
+    });
+    expect((await loadDashboardSummary(supabase, { now: NOW })).readFailed).toBe(false);
+  });
+
+  it("is false by default for the pure summarizer — only a READ can fail", () => {
+    expect(summarizeDashboard([], MEMBERS, { now: NOW }).readFailed).toBe(false);
+    expect(summarizeDashboard([], MEMBERS, { now: NOW, readFailed: true }).readFailed).toBe(true);
+  });
+});

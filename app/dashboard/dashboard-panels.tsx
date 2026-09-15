@@ -12,6 +12,12 @@
  *     activity yet" plus the reason, never a zero-filled table — a zeroed panel
  *     is indistinguishable from a broken one, and this screen's only job is to
  *     tell Jon the truth about how the family is using the app.
+ *   - **And broken is said out loud too.** `summary.readFailed` means the read
+ *     failed, so the figures are UNKNOWN rather than zero: every panel shows
+ *     "Couldn't load" instead, and no figure or member row is rendered at all.
+ *     Showing the empty state here would be the screen's worst possible
+ *     failure — telling a parent nobody has used the app when the truth is
+ *     that we could not find out.
  *   - **Every member appears, alphabetically, including zeroes.** Not sorted by
  *     volume: the north star forbids a scorecard, and this screen is the parent's
  *     private read, never shown to the kids.
@@ -26,6 +32,20 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return (
     <p className="text-muted-foreground text-sm">
       No activity yet — {children}
+    </p>
+  );
+}
+
+/**
+ * The shared "we could not find out" state. Deliberately worded so it can never
+ * be mistaken for the empty state above: this says nothing about whether the
+ * family used the app.
+ */
+function LoadErrorState() {
+  return (
+    <p role="status" className="text-sm font-medium">
+      Couldn&rsquo;t load these numbers just now. This is a problem reading the data, not a sign
+      that nothing happened — try reloading.
     </p>
   );
 }
@@ -77,7 +97,7 @@ const CELL = "px-2 py-1.5 text-right tabular-nums";
 const HEAD = "px-2 py-1.5 text-right font-medium";
 
 export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
-  const { adoption, participation, trips } = summary;
+  const { adoption, participation, trips, readFailed } = summary;
 
   return (
     <div className="space-y-4">
@@ -90,7 +110,9 @@ export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
       </p>
 
       <Panel title="Adoption" subtitle="Who has opened the app">
-        {adoption.hasActivity ? (
+        {readFailed ? (
+          <LoadErrorState />
+        ) : adoption.hasActivity ? (
           <>
             <dl className="flex flex-wrap gap-8">
               <Figure label="Active today" value={adoption.activeToday} testId="active-today" />
@@ -139,7 +161,9 @@ export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
         title="Participation"
         subtitle="Proposing, reacting, commenting and slotting"
       >
-        {participation.hasActivity ? (
+        {readFailed ? (
+          <LoadErrorState />
+        ) : participation.hasActivity ? (
           <table className="w-full text-sm">
             <caption className="text-muted-foreground pb-1 text-left text-xs">
               Everyone is listed, in alphabetical order
@@ -188,7 +212,9 @@ export function DashboardPanels({ summary }: { summary: DashboardSummary }) {
       </Panel>
 
       <Panel title="Trips" subtitle="Shopping finished">
-        {trips.hasActivity ? (
+        {readFailed ? (
+          <LoadErrorState />
+        ) : trips.hasActivity ? (
           <dl className="flex flex-wrap gap-8">
             <Figure
               label="Trips completed"
