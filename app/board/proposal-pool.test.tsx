@@ -19,6 +19,11 @@ import {
  * scopes them to the week, and reconciles the SERVER's snapshot on reconnect
  * (issue #114 — the browser client has no session, so it must never read data).
  *
+ * Plus, since issue #64, that a `proposals` change on the already-open board is a
+ * TRIGGER for a server re-render (never a rendered payload — it has no joined
+ * title or proposer), that the channel is bound to the viewed week and opened
+ * once from stable ids only, and that bursts coalesce into one refresh.
+ *
  * NOTE: this exercises the Realtime PLUMBING with a fake channel. Genuine
  * two-client delivery + a real socket drop is auth-gated and verified live
  * (issue #24 / family-validation), not here.
@@ -32,6 +37,10 @@ const rt = vi.hoisted(() => ({
   filters: {} as Record<string, string>,
   subscribeCb: undefined as undefined | ((s: string) => void),
   removeChannel: vi.fn(),
+  // Every channel name created, in order. A re-JOIN loses events through a
+  // documented blind window, so the count is an assertion target (#64): a
+  // proposal arriving must NOT open a second channel.
+  channels: [] as string[],
   // Realtime auth (issue #44): record tokens applied to the socket + the order
   // of setAuth vs. subscribe, so we can assert the socket is authenticated as
   // the user BEFORE it joins (anon join => RLS delivers no postgres_changes).
@@ -47,7 +56,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: rt.refresh }) }
 
 vi.mock("@/lib/supabase/browser", () => ({
   createClient: () => {
-    const channel = () => {
+    const channel = (name: string) => {
+      rt.channels.push(name);
       const chain: Record<string, unknown> = {
         on: (_e: string, opts: { table: string; filter: string }, handler: (p: unknown) => void) => {
           rt.handlers[opts.table] = handler;
@@ -103,6 +113,7 @@ beforeEach(() => {
   rt.handlers = {};
   rt.filters = {};
   rt.subscribeCb = undefined;
+  rt.channels = [];
   rt.removeChannel.mockClear();
   rt.setAuthTokens = [];
   rt.events = [];
@@ -155,19 +166,27 @@ const proposals: ProposalView[] = [
 
 const memberNames = { me: "Jon", alex: "Alex" };
 
-function renderPool(overrides: Partial<Parameters<typeof ProposalPool>[0]> = {}) {
-  return render(
+type PoolProps = Partial<Parameters<typeof ProposalPool>[0]>;
+
+/** The pool with default props, so a `rerender` (a fresh server snapshot) is terse. */
+function poolElement(overrides: PoolProps = {}) {
+  return (
     <ProposalPool
       householdId="hh-1"
+      weekId="w-1"
       currentMemberId="me"
       weekStart="2026-06-22"
-      proposals={proposals}
+      initialProposals={proposals}
       initialReactions={[]}
       initialComments={[]}
       memberNames={memberNames}
       {...overrides}
-    />,
+    />
   );
+}
+
+function renderPool(overrides: PoolProps = {}) {
+  return render(poolElement(overrides));
 }
 
 describe("ProposalPool — rendering", () => {
@@ -181,7 +200,7 @@ describe("ProposalPool — rendering", () => {
   });
 
   it("renders a reaction button for every palette emoji on each proposal", () => {
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     for (const kind of REACTION_PALETTE) {
       expect(
         screen.getByRole("button", { name: new RegExp(`React ${kind}`) }),
@@ -197,7 +216,7 @@ describe("ProposalPool — rendering", () => {
 
   it("does not render a link for an unsafe (javascript:) URL (defense in depth)", () => {
     renderPool({
-      proposals: [
+      initialProposals: [
         {
           id: "evil",
           dishId: "d-evil",
@@ -213,7 +232,7 @@ describe("ProposalPool — rendering", () => {
   });
 
   it("shows an empty-state when there are no proposals yet", () => {
-    renderPool({ proposals: [] });
+    renderPool({ initialProposals: [] });
     const pool = screen.getByRole("region", { name: /idea/i });
     expect(
       within(pool).getByText(/no .*ideas|nothing|be the first/i),
@@ -224,7 +243,7 @@ describe("ProposalPool — rendering", () => {
 describe("ProposalPool — reactions tally", () => {
   it("shows counts and marks the current member's own reaction (aria-pressed)", () => {
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
         { id: "r2", proposal_id: "p1", member_id: "alex", kind: THUMBS },
@@ -259,7 +278,7 @@ describe("ProposalPool — nudge sort (popular floats up, never auto-places)", (
     renderPool({
       // Input order is the newer one first; nudge sort must float the popular
       // older one above it.
-      proposals: [newer, older],
+      initialProposals: [newer, older],
       initialReactions: [
         { id: "r1", proposal_id: "old", member_id: "me", kind: THUMBS },
         { id: "r2", proposal_id: "old", member_id: "alex", kind: HEART },
@@ -283,7 +302,7 @@ describe("ProposalPool — nudge sort (popular floats up, never auto-places)", (
 describe("ProposalPool — ready-to-slot badge", () => {
   it("shows the badge at >= 2 distinct positive reactors", () => {
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
         { id: "r2", proposal_id: "p1", member_id: "alex", kind: HEART },
@@ -294,7 +313,7 @@ describe("ProposalPool — ready-to-slot badge", () => {
 
   it("does NOT badge when one member reacts with several positive kinds (distinct rule)", () => {
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
         { id: "r2", proposal_id: "p1", member_id: "me", kind: HEART },
@@ -307,7 +326,7 @@ describe("ProposalPool — ready-to-slot badge", () => {
   it("does NOT badge a proposal with only neutral reactions", () => {
     const NEUTRAL = REACTION_PALETTE[REACTION_PALETTE.length - 1];
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "me", kind: NEUTRAL },
         { id: "r2", proposal_id: "p1", member_id: "alex", kind: NEUTRAL },
@@ -319,7 +338,7 @@ describe("ProposalPool — ready-to-slot badge", () => {
 
 describe("ProposalPool — tap-to-slot affordance", () => {
   it("renders a day + meal picker and a Slot button on each proposal", () => {
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     expect(
       screen.getByRole("button", { name: /^slot/i }),
     ).toBeInTheDocument();
@@ -339,7 +358,7 @@ describe("ProposalPool — comments", () => {
         created_at: "2026-06-25T17:30:00.000Z",
       },
     ];
-    renderPool({ proposals: [proposals[0]], initialComments: comments });
+    renderPool({ initialProposals: [proposals[0]], initialComments: comments });
     expect(screen.getByText("yes please")).toBeInTheDocument();
     expect(screen.getByText("Alex")).toBeInTheDocument();
     expect(
@@ -353,7 +372,7 @@ describe("ProposalPool — Realtime subscription", () => {
     // Root cause of #44: the socket joined with the anon key only, so RLS-gated
     // postgres_changes delivered nothing. The fix fetches the short-lived access
     // token and applies it via realtime.setAuth, and must do so before the join.
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     await connected();
     expect(rt.setAuthTokens).toContain("user-jwt");
     // setAuth must precede subscribe so the JOIN carries the user's JWT.
@@ -365,15 +384,21 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 
   it("subscribes to reactions and comments filtered by household_id (RLS-gated column)", async () => {
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     await connected();
     expect(rt.filters.reactions).toBe("household_id=eq.hh-1");
     expect(rt.filters.comments).toBe("household_id=eq.hh-1");
   });
 
+  it("opens exactly ONE channel for the whole social layer (one status source)", async () => {
+    renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+    expect(rt.channels).toEqual(["board-social:hh-1"]);
+  });
+
   it("merges an incoming reaction INSERT for a week proposal (count increments)", async () => {
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
       ],
@@ -393,7 +418,7 @@ describe("ProposalPool — Realtime subscription", () => {
   it("flips the current member's own 'mine' state when their reaction arrives live", async () => {
     // e.g. the same member acting from a second device: the live echo must mark
     // the pill pressed, not just bump an anonymous count.
-    renderPool({ proposals: [proposals[0]], initialReactions: [] });
+    renderPool({ initialProposals: [proposals[0]], initialReactions: [] });
     await connected();
     const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
     expect(btn).toHaveAttribute("aria-pressed", "false");
@@ -411,7 +436,7 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 
   it("removes its channel on unmount (no leaked subscription)", async () => {
-    const { unmount } = renderPool({ proposals: [proposals[0]] });
+    const { unmount } = renderPool({ initialProposals: [proposals[0]] });
     await connected();
     expect(rt.removeChannel).not.toHaveBeenCalled();
     unmount();
@@ -419,7 +444,7 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 
   it("ignores an incoming reaction for a proposal NOT in this week (week scope)", async () => {
-    renderPool({ proposals: [proposals[0]], initialReactions: [] });
+    renderPool({ initialProposals: [proposals[0]], initialReactions: [] });
     await connected();
     act(() => {
       rt.handlers.reactions({
@@ -439,7 +464,7 @@ describe("ProposalPool — Realtime subscription", () => {
 
   it("removes a reaction on an incoming DELETE (by PK)", async () => {
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions: [
         { id: "r1", proposal_id: "p1", member_id: "alex", kind: THUMBS },
       ],
@@ -454,7 +479,7 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 
   it("shows an incoming comment from another member live", async () => {
-    renderPool({ proposals: [proposals[0]], initialComments: [] });
+    renderPool({ initialProposals: [proposals[0]], initialComments: [] });
     await connected();
     act(() => {
       rt.handlers.comments({
@@ -473,13 +498,259 @@ describe("ProposalPool — Realtime subscription", () => {
   });
 });
 
+describe("ProposalPool — a new proposal arrives live (issue #64)", () => {
+  /**
+   * A raw `proposals` INSERT payload: the table's OWN columns only (see
+   * 20260625164006_social_schema.sql). No dish title, no proposer name — both
+   * come from server-side joins — which is why a proposals change is a TRIGGER
+   * for a server re-render, not a payload to render (ADR 0013 §2).
+   */
+  const proposalInsert = {
+    eventType: "INSERT" as const,
+    new: {
+      id: "p3",
+      household_id: "hh-1",
+      week_id: "w-1",
+      dish_id: "d3",
+      proposed_by: "alex",
+      note: null,
+      created_at: "2026-06-24T10:00:00.000Z",
+    },
+    old: {},
+  };
+
+  /** How that row comes back from the SERVER, joined and RLS-scoped. */
+  const arrived: ProposalView = {
+    id: "p3",
+    dishId: "d3",
+    createdAt: "2026-06-24T10:00:00.000Z",
+    title: "Green Curry",
+    note: null,
+    sourceUrl: null,
+    proposerName: "Alex",
+  };
+
+  it("binds proposals scoped to the VIEWED WEEK (week_id is on the row)", async () => {
+    // Another week's activity must not refresh this page; RLS still enforces
+    // the household (ADR 0013 §5).
+    renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+    expect(rt.filters.proposals).toBe("week_id=eq.w-1");
+  });
+
+  it("subscribes on a week that starts with ZERO proposals", async () => {
+    // The pre-fix code returned early when the week had no proposals, so no
+    // channel existed at all and the FIRST idea of a week could never arrive
+    // live (proposal-pool.tsx:185).
+    renderPool({ initialProposals: [] });
+    await connected();
+    expect(rt.handlers.proposals).toBeDefined();
+    expect(rt.filters.proposals).toBe("week_id=eq.w-1");
+    await waitFor(() =>
+      expect(screen.getByTestId("realtime-status")).toHaveTextContent("Live"),
+    );
+  });
+
+  it("asks the SERVER to re-render on a proposals INSERT, and renders no placeholder", async () => {
+    renderPool({ initialProposals: [] });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+    // The payload has no title: rendering it would show "Untitled dish". The
+    // pool must show nothing at all until the joined snapshot lands.
+    expect(screen.queryByTestId("proposal-title")).not.toBeInTheDocument();
+    expect(screen.queryByText(/untitled/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the arrived proposal with its title and proposer once the snapshot lands", async () => {
+    const { rerender } = renderPool({ initialProposals: [] });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+    });
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+
+    // `router.refresh()` re-renders the server snapshot into props; the
+    // sig-keyed effect reconciles it into state by PK.
+    rerender(poolElement({ initialProposals: [arrived] }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("proposal-title")).toHaveTextContent("Green Curry"),
+    );
+    expect(screen.getByText(/proposed by Alex/)).toBeInTheDocument();
+  });
+
+  it("keeps ONE channel across a proposal arriving (no teardown, no re-JOIN)", async () => {
+    // The pre-fix effect was keyed on the proposal-id list, so every proposal
+    // tore the channel down and re-JOINed through a blind window — much worse
+    // once proposals start arriving live.
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+    expect(rt.channels).toHaveLength(1);
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+    });
+    await act(async () => {
+      rerender(poolElement({ initialProposals: [proposals[0], arrived] }));
+    });
+
+    expect(rt.channels).toHaveLength(1);
+    expect(rt.removeChannel).not.toHaveBeenCalled();
+  });
+
+  it("coalesces a burst of arrivals into at most one refresh in flight", async () => {
+    renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+      rt.handlers.proposals({ ...proposalInsert, new: { ...proposalInsert.new, id: "p4" } });
+      rt.handlers.proposals({ ...proposalInsert, new: { ...proposalInsert.new, id: "p5" } });
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+    expect(rt.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("pays exactly ONE follow-up refresh for the arrivals that raced the snapshot", async () => {
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+      rt.handlers.proposals({ ...proposalInsert, new: { ...proposalInsert.new, id: "p4" } });
+    });
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+
+    // The snapshot lands (it may predate p4's commit), so one more is owed.
+    await act(async () => {
+      rerender(poolElement({ initialProposals: [proposals[0], arrived] }));
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(2));
+    expect(rt.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("treats a proposals DELETE as a refresh trigger too", async () => {
+    renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals({
+        eventType: "DELETE",
+        new: {},
+        old: { id: "p1", week_id: "w-1" },
+      });
+    });
+
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not clobber live-merged reactions when the same snapshot re-renders", async () => {
+    // Proposals are state now, seeded from props by SIGNATURE — an unchanged
+    // snapshot must not reset anything the channel already merged.
+    const { rerender } = renderPool({
+      initialProposals: [proposals[0]],
+      initialReactions: [],
+    });
+    await connected();
+    act(() => {
+      rt.handlers.reactions({
+        eventType: "INSERT",
+        new: { id: "r9", proposal_id: "p1", member_id: "alex", kind: THUMBS },
+        old: {},
+      });
+    });
+    const btn = screen.getByRole("button", { name: new RegExp(`React ${THUMBS}`) });
+    await waitFor(() => expect(btn).toHaveTextContent("1"));
+
+    await act(async () => {
+      rerender(poolElement({ initialProposals: [proposals[0]], initialReactions: [] }));
+    });
+
+    expect(btn).toHaveTextContent("1");
+  });
+
+  it("sorts a live-arrived proposal below every reacted one, atop the zero-reaction group", async () => {
+    // The nudge sort (lib/social/nudge.ts) ranks by positive-reaction count
+    // desc, tiebreaking most-recent-first. A brand-new proposal has zero
+    // reactions, so it lands below the reacted one and above the older
+    // zero-reaction one — asserted with a reacted proposal present.
+    const reacted: ProposalView = {
+      id: "p-reacted",
+      dishId: "d-r",
+      createdAt: "2026-06-21T10:00:00.000Z",
+      title: "Popular Pasta",
+      note: null,
+      sourceUrl: null,
+      proposerName: "Alex",
+    };
+    const older: ProposalView = {
+      id: "p-older",
+      dishId: "d-o",
+      createdAt: "2026-06-22T10:00:00.000Z",
+      title: "Quiet Quiche",
+      note: null,
+      sourceUrl: null,
+      proposerName: "Alex",
+    };
+    const reactions: ReactionRow[] = [
+      { id: "r1", proposal_id: "p-reacted", member_id: "me", kind: THUMBS },
+    ];
+
+    const { rerender } = renderPool({
+      initialProposals: [reacted, older],
+      initialReactions: reactions,
+    });
+    await connected();
+
+    act(() => {
+      rt.handlers.proposals(proposalInsert);
+    });
+    await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
+
+    // The server snapshot arrives in created_at order; the pool re-sorts it.
+    rerender(
+      poolElement({
+        initialProposals: [reacted, older, arrived],
+        initialReactions: reactions,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByTestId("proposal-title").map((el) => el.textContent),
+      ).toEqual(["Popular Pasta", "Green Curry", "Quiet Quiche"]),
+    );
+  });
+
+  it("re-subscribes when the VIEWED WEEK changes (a stable-id dependency)", async () => {
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
+    await connected();
+    expect(rt.channels).toHaveLength(1);
+
+    await act(async () => {
+      rerender(poolElement({ weekId: "w-2", initialProposals: [] }));
+    });
+    await waitFor(() => expect(rt.filters.proposals).toBe("week_id=eq.w-2"));
+
+    expect(rt.channels).toHaveLength(2);
+  });
+});
+
 describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
   it("asks the SERVER for the authoritative snapshot after a reconnect", async () => {
     const initialReactions: ReactionRow[] = [
       { id: "r1", proposal_id: "p1", member_id: "me", kind: THUMBS },
     ];
     const { rerender } = renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialReactions,
     });
     await connected();
@@ -504,17 +775,12 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     // The server's truth arrives as new props: the thumbs is gone, a heart was
     // added. State converges on it (reconcileByPk), with no dup or loss.
     rerender(
-      <ProposalPool
-        householdId="hh-1"
-        currentMemberId="me"
-        weekStart="2026-06-22"
-        proposals={[proposals[0]]}
-        initialReactions={[
+      poolElement({
+        initialProposals: [proposals[0]],
+        initialReactions: [
           { id: "r2", proposal_id: "p1", member_id: "alex", kind: HEART },
-        ]}
-        initialComments={[]}
-        memberNames={memberNames}
-      />,
+        ],
+      }),
     );
 
     const heart = screen.getByRole("button", { name: new RegExp(`React ${HEART}`) });
@@ -525,19 +791,21 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
   });
 
   it("does not refresh on the FIRST subscribe (only after a drop)", async () => {
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     await connected();
 
     expect(rt.refresh).not.toHaveBeenCalled();
   });
 
-  it("still refreshes for a drop that happened BEFORE a proposal-set change", async () => {
+  it("still refreshes for a drop that happened BEFORE the channel was replaced", async () => {
     // The fix must not trade a spurious refresh for a MISSED one. `wasDisconnected`
     // deliberately outlives any single channel: a genuine drop recorded on the old
     // channel is still owed a server re-render once the replacement connects. This
     // is the test that fails if someone later "simplifies" the ref to a per-effect
-    // variable — which the cancelled-guard makes tempting.
-    const { rerender } = renderPool({ proposals: [proposals[0]] });
+    // variable — which the cancelled-guard makes tempting. (Since #64 only a
+    // stable-id change — navigating to another week — replaces the channel; a
+    // proposal arriving no longer does.)
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
     await connected();
 
     // A real drop on the live channel — no recovery yet.
@@ -546,19 +814,9 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     });
     expect(rt.refresh).not.toHaveBeenCalled();
 
-    // Now the proposal set changes, tearing that channel down mid-drop.
+    // Now the viewed week changes, tearing that channel down mid-drop.
     await act(async () => {
-      rerender(
-        <ProposalPool
-          householdId="hh-1"
-          currentMemberId="me"
-          weekStart="2026-06-22"
-          proposals={proposals}
-          initialReactions={[]}
-          initialComments={[]}
-          memberNames={memberNames}
-        />,
-      );
+      rerender(poolElement({ weekId: "w-2", initialProposals: [] }));
     });
     await connected();
 
@@ -566,22 +824,12 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
   });
 
-  it("still refreshes for a drop that happens AFTER a proposal-set change", async () => {
-    const { rerender } = renderPool({ proposals: [proposals[0]] });
+  it("still refreshes for a drop that happens AFTER the channel was replaced", async () => {
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
     await connected();
 
     await act(async () => {
-      rerender(
-        <ProposalPool
-          householdId="hh-1"
-          currentMemberId="me"
-          weekStart="2026-06-22"
-          proposals={proposals}
-          initialReactions={[]}
-          initialComments={[]}
-          memberNames={memberNames}
-        />,
-      );
+      rerender(poolElement({ weekId: "w-2", initialProposals: [] }));
     });
     await connected();
     expect(rt.refresh).not.toHaveBeenCalled();
@@ -595,28 +843,18 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     await waitFor(() => expect(rt.refresh).toHaveBeenCalledTimes(1));
   });
 
-  it("does not refresh when a proposal-set change re-subscribes the channel", async () => {
-    // The effect is keyed on the proposal ids, so adding a proposal tears the
-    // channel down and opens a new one. Teardown emits CLOSED — but that is US
-    // closing the socket, not the network dropping it, so the fresh channel's
-    // first SUBSCRIBED must NOT be treated as a reconnect. Otherwise every new
-    // idea posted to the board costs an extra server re-render.
-    const { rerender } = renderPool({ proposals: [proposals[0]] });
+  it("does not refresh when a week change re-subscribes the channel", async () => {
+    // A stable-id change (another week) tears the channel down and opens a new
+    // one. Teardown emits CLOSED — but that is US closing the socket, not the
+    // network dropping it, so the fresh channel's first SUBSCRIBED must NOT be
+    // treated as a reconnect, or every navigation would cost an extra server
+    // re-render on top of the one the navigation already does.
+    const { rerender } = renderPool({ initialProposals: [proposals[0]] });
     await connected();
     expect(rt.refresh).not.toHaveBeenCalled();
 
     await act(async () => {
-      rerender(
-        <ProposalPool
-          householdId="hh-1"
-          currentMemberId="me"
-          weekStart="2026-06-22"
-          proposals={proposals}
-          initialReactions={[]}
-          initialComments={[]}
-          memberNames={memberNames}
-        />,
-      );
+      rerender(poolElement({ weekId: "w-2", initialProposals: [] }));
     });
     await connected();
 
@@ -627,7 +865,7 @@ describe("ProposalPool — drop + reconnect resilience (issue #114)", () => {
     // The #114 regression: the reconnect handler replaced state with the EMPTY
     // result of an anon read. Until the server snapshot lands, state stands.
     renderPool({
-      proposals: [proposals[0]],
+      initialProposals: [proposals[0]],
       initialComments: [
         {
           id: "c1",
@@ -657,7 +895,7 @@ describe("ProposalPool — an unauthenticated socket is never reported as Live",
     // would be a lie — the exact silent-failure mode #44 fixed on the wire.
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
 
-    renderPool({ proposals: [proposals[0]] });
+    renderPool({ initialProposals: [proposals[0]] });
     await connected();
 
     expect(rt.setAuthTokens).toEqual([]);

@@ -224,10 +224,14 @@ export default async function BoardPage({
             />
             <ProposalPool
               householdId={householdId ?? ""}
+              // The Realtime scope for `proposals` (#64): week_id is a real
+              // column on the row, so another week's activity can't refresh
+              // this page. RLS still enforces the household.
+              weekId={weekId}
               currentMemberId={currentMemberId}
               weekStart={weekStart}
               weekStartDay={weekStartDay}
-              proposals={proposals}
+              initialProposals={proposals}
               initialReactions={reactions}
               initialComments={comments}
               memberNames={memberNames}
