@@ -525,3 +525,66 @@ app, not the issue body. The PO's "re-verify before Ready" step paid for itself 
 - Locally, with `fullyParallel` on, the two staple-promoting specs can race: they share user A's
   household, so one spec's "Complete trip" archives the other's item. CI runs one worker. Run local
   E2E with `CI=1` (hit by the #197 dev).
+
+### 2026-09-15 — a cross-cutting primitive shipped; nobody ever wired it up (#17 grooming)
+
+#16 landed the `events` table, RLS, the taxonomy enum and a typed emission helper, with a WIRING NOTE
+in the migration saying each feature slice would emit its own events "in that slice's own PR". Five
+slices later, `grep -rn "emitEvent"` finds **one** production call site out of ten event types. #17's
+dashboard would have shipped with every panel empty, and nothing would have failed — an unemitted
+event throws no error, breaks no test, and reads as "no activity yet".
+
+The split itself was right (primitive first, adoption per slice). What was missing is that **the
+adoption half was never a board item.** A note inside a migration is not a tracker. **Lesson:** when
+splitting a cross-cutting primitive from its per-slice adoption, create the adoption issue(s) at the
+moment of the split, or add the emit line to each slice's own acceptance criteria — a WIRING NOTE in
+SQL is invisible to everyone downstream. Generalizes beyond analytics to any
+"we'll call this from each feature later" primitive.
+
+### 2026-09-15 — two issues, two migrations, and #68 still isn't done
+
+Grooming #64 and #17 found both need a DB migration (Realtime publication + replica identity;
+owner-only `events_select`). Migrations don't auto-reach cloud prod, so each is a manual
+`supabase db push` someone has to remember after merge — the footgun PLAN.md warns about and #63 hit
+for real. Mitigation this round: #64's migration deliberately also covers `slot_dishes` so its
+follow-up (#209) ships with no SQL, turning three applies into two. That's a workaround, not a fix.
+**Observation:** the cost of #68 is now being paid in grooming decisions (bundling unrelated tables
+into one migration to save an apply), not just in deploy risk. Worth weighing when it's next prioritized.
+
+### 2026-09-15 — a filed bug's stated cause was one layer too shallow (#64)
+
+#64 said the board's Realtime channel doesn't subscribe to `proposals`. True — and not the blocker.
+`proposals` isn't in the `supabase_realtime` publication at all, so Postgres emits nothing for it; no
+client-side change could have fixed it. Re-verification also found two latent defects on the same code
+path (no channel at all on a zero-proposal week; the subscription keyed on the proposal-id list, so it
+re-JOINs on every change) that would have made a naive fix look half-broken. **Lesson:** for a
+"live updates don't arrive" bug, check the storage layer (publication membership, replica identity)
+*before* the client subscription. Same root shape as #63.
+
+### 2026-09-15 — QA of #213 (#210 event emission): what mutation testing found that a green suite didn't
+
+- **A green suite is not evidence; a killed mutant is.** #213's 758 passing tests told me nothing on
+  their own. Deleting each emission and each silence guard (17 mutants) and watching a test go red
+  told me everything — including that one mutation to `emitEvent` turns 7 files red, which is what
+  "analytics can never break a user action" actually looks like when it's true. Worth making the
+  default QA move for any "emit X at Y" issue, and a good substitute for auditing TDD order after
+  the fact: tests written after the code routinely survive mutation, and these didn't.
+- **The reference call site was the untested one.** #210 and ADR 0014 both point at
+  `app/recipes/new/actions.ts:80` as "the one that was already wired" — and it has no test at all
+  (mutant survives; filed #215). The pattern to watch: when an issue says "do it like the existing
+  one", nobody checks whether the existing one is covered. *Audit the exemplar, not just the copies.*
+- **Guards that catch a different failure than the one the tests force are invisible.** Every call
+  site tests a throwing *insert* — which `emitEvent` swallows first, so the outer `try/catch` in
+  `emitSignIn`/`recordSessionStartAction` is never reached and can be deleted with the suite green
+  (#216). Two layers of defence, one of them unproven, and no amount of coverage % would have said so.
+- **"`next build` doesn't work in a worktree" is a myth that cost this PR its local E2E.** The
+  worktree had an *empty* `node_modules/`; vitest and tsc only worked because they resolved from the
+  parent checkout. After `npm ci` in the worktree, both `npm run build` and the full Playwright suite
+  ran fine. Devs are skipping the E2E tier on a false belief — add `npm ci` to the worktree setup.
+- **The `fullyParallel` staple-promotion race bit again** (already logged 2026-09-11, hit by the #197
+  dev, now by QA). Third occurrence. It costs every newcomer the same 10 minutes of "is this my bug?"
+  Time to stop logging it and fix it: `workers: process.env.CI ? 1 : 1` or per-spec household seeding.
+- **Two agent sessions shared one local Supabase stack and one of them removed it mid-run.** All 12
+  containers vanished (`supabase stop` semantics) while I was querying `events`. If concurrent
+  sessions are the norm, `db:start`/`db:stop` needs a refcount or each worktree needs its own project
+  id — otherwise one agent silently breaks another's evidence.

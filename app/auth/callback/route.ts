@@ -18,17 +18,65 @@
  * success redirect response FIRST and have `setAll` write onto it — never onto
  * the `next/headers` store (whose writes do not propagate to a freshly
  * constructed `NextResponse.redirect()`).
+ *
+ * Analytics (issue #210): a successful exchange emits `sign_in` — see
+ * `emitSignIn` below for why it can be skipped, and why it can never break the
+ * sign-in.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "@/lib/database.types";
 
+import { emitEvent } from "@/lib/analytics/events";
 import { safeRedirectPath } from "@/lib/auth/redirect";
 import { requestOrigin } from "@/lib/http/request-origin";
 import { authCookieOptions } from "@/lib/supabase/cookie-options";
 import { readSupabaseEnv } from "@/lib/supabase/env";
+
+/**
+ * Emit `sign_in` for a just-authenticated user (ADR 0014).
+ *
+ * Two constraints shape this:
+ *   1. `events.household_id` is NOT NULL and `events_insert` checks it against
+ *      `public.current_household_id()`, so a FIRST-TIME user — who has no
+ *      household until they create or join one — has nothing to attribute the
+ *      event to. Resolve the household and emit only when it is non-null; skip
+ *      silently otherwise (never a placeholder household).
+ *   2. Analytics must never fail or slow down a sign-in. The household RPC and
+ *      the member lookup are issued in PARALLEL (one extra round-trip, not
+ *      two), and the whole block is wrapped so nothing here — not even a thrown
+ *      transport error — can change the redirect the caller gets.
+ *
+ * `member_id` is the pseudonymous app member, resolved from the VERIFIED user id
+ * the exchange returned (never from the request). No Google identity is touched.
+ */
+async function emitSignIn(
+  supabase: SupabaseClient<Database>,
+  userId: string | null | undefined,
+): Promise<void> {
+  try {
+    const [household, member] = await Promise.all([
+      supabase.rpc("current_household_id"),
+      userId
+        ? supabase.from("members").select("id").eq("user_id", userId).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    const householdId = household.data;
+    if (!householdId) return;
+
+    await emitEvent(supabase, {
+      householdId,
+      memberId: member.data?.id ?? null,
+      eventType: "sign_in",
+    });
+  } catch {
+    // Never let analytics touch the sign-in.
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -66,10 +114,12 @@ export async function GET(request: NextRequest) {
     cookieOptions: cookieSecurity,
   });
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     return NextResponse.redirect(`${origin}/login?error=oauth`);
   }
+
+  await emitSignIn(supabase, data?.user?.id);
 
   return response;
 }

@@ -14,10 +14,17 @@
  * — and `grocery_items`'s composite FK `(week_id, household_id) → weeks` makes a
  * row in someone else's week literally unstorable (#13). `householdId` is never
  * read from the request; it comes from `resolveGroceryActor` only.
+ *
+ * Analytics (issue #210): `grocery_list_built` on a successful rebuild and
+ * `trip_completed` on a finished trip — counts and ids only, never an item name
+ * (the shopper's own words) and never the promotable candidates. Per ADR 0012
+ * "we have it" is a PANTRY FACT, not a trip: `setHaveItAction` emits nothing,
+ * and neither do the ad-hoc/check-off/section edits.
  */
 
 import { revalidatePath } from "next/cache";
 
+import { emitEvent } from "@/lib/analytics/events";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { resolveGroceryActor } from "./actor";
@@ -94,7 +101,15 @@ export async function buildGroceryListAction(
     householdId: actor.householdId,
     weekId,
   });
-  if (result.ok) revalidatePath(GROCERY_PATH);
+  if (result.ok) {
+    await emitEvent(supabase, {
+      householdId: actor.householdId,
+      memberId: actor.memberId,
+      eventType: "grocery_list_built",
+      payload: { weekId, added: result.added, removed: result.removed },
+    });
+    revalidatePath(GROCERY_PATH);
+  }
   return result;
 }
 
@@ -206,7 +221,17 @@ export async function completeTripAction(
     householdId: actor.householdId,
     weekId,
   });
-  if (result.ok) revalidatePath(GROCERY_PATH);
+  if (result.ok) {
+    // `archived` is a count; `result.promotable` carries item NAMES and is
+    // deliberately not part of the payload.
+    await emitEvent(supabase, {
+      householdId: actor.householdId,
+      memberId: actor.memberId,
+      eventType: "trip_completed",
+      payload: { weekId, archived: result.archived },
+    });
+    revalidatePath(GROCERY_PATH);
+  }
   return result;
 }
 

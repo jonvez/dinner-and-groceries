@@ -17,11 +17,12 @@ import { emitEvent, type EmitEventInput, type EventType } from "./events";
  */
 
 /** Records every insert so the emitted row shape is assertable. */
-function makeClient(opts: { insertError?: unknown } = {}) {
+function makeClient(opts: { insertError?: unknown; insertThrows?: boolean } = {}) {
   const inserts: { table: string; vals: Record<string, unknown> }[] = [];
 
   const from = vi.fn((table: string) => ({
     insert: vi.fn((vals: Record<string, unknown>) => {
+      if (opts.insertThrows) throw new Error("analytics transport down");
       inserts.push({ table, vals });
       return Promise.resolve({ error: opts.insertError ?? null });
     }),
@@ -110,6 +111,20 @@ describe("emitEvent", () => {
     const result = await emitEvent(client, BASE);
 
     expect(result.ok).toBe(false);
+  });
+
+  /**
+   * A transport-level failure (DNS/socket/fetch) THROWS rather than returning
+   * `{ error }`. Every call site is a user action that must still succeed, so
+   * the helper has to swallow that too — "fails closed" means never throws.
+   */
+  it("fails closed when the insert THROWS (never propagates to the caller)", async () => {
+    const { client } = makeClient({ insertThrows: true });
+
+    await expect(emitEvent(client, BASE)).resolves.toEqual({
+      ok: false,
+      error: "Failed to record analytics event.",
+    });
   });
 });
 
