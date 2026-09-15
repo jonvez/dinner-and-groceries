@@ -18,7 +18,7 @@
 --
 -- pgTAP test (issues #16, #17). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(18);
+select plan(19);
 
 create schema if not exists tests;
 
@@ -98,6 +98,33 @@ select lives_ok(
   $$insert into public.events (household_id, member_id, event_type, payload)
     values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'a0000002-0000-0000-0000-000000000002', 'reaction_added', '{}')$$,
   'allow-same: a NON-owner member can still emit an event in H'
+);
+
+-- ---- THE READ-BACK TRAP (issue #17; security review of PR #223, F2). Making
+--      SELECT owner-only silently narrows the WRITE path too for anyone who
+--      reads back what they wrote: PostgreSQL requires the SELECT policy to
+--      pass for a RETURNING row, so a NON-owner's `insert ... returning` is
+--      rejected outright while the identical statement succeeds for the owner.
+--
+--      Nothing is broken today — `emitEvent` issues a bare `.insert()` with no
+--      `.select()` (supabase-js sends `Prefer: return=minimal`, so no
+--      RETURNING clause is generated). This pins the trap so it cannot be
+--      walked into: adding a read-back to the emit path is a very natural
+--      change (e.g. to correlate an event id), and it would break emission for
+--      BOTH teens while continuing to work perfectly for the owner — the one
+--      person most likely to be testing it. `emitEvent` swallows the error, so
+--      the first symptom would be a dashboard quietly under-reporting the kids,
+--      which is the exact number this whole feature exists to get right.
+--
+--      If this assertion ever fails, do NOT relax it by loosening
+--      `events_select` — keep the insert write-only (see the warning comment in
+--      `lib/analytics/events.ts`). ----
+select throws_ok(
+  $$insert into public.events (household_id, member_id, event_type, payload)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'a0000002-0000-0000-0000-000000000002', 'reaction_added', '{}')
+    returning id$$,
+  '42501', null,
+  'deny-readback: a NON-owner''s INSERT ... RETURNING is denied (RETURNING needs the SELECT policy)'
 );
 
 -- ---- member_id may be null: a pre-membership usage event (e.g. sign_in) ----
