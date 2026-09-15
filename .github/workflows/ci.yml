@@ -404,11 +404,17 @@ jobs:
       # ::add-mask:: is registered BEFORE the value can reach any later log line.
       # Requires secretmanager.secretAccessor on this secret for the DEPLOY SA
       # only — explicitly NOT the Cloud Run runtime compute SA (ADR 0015 § 8).
+      #
+      # `${URI//%/%25}`: the runner un-escapes %25 -> %, %0A -> LF and %0D -> CR in
+      # workflow-command DATA, so masking a raw URI that contains any of them would
+      # register a mask string that never matches the real secret — leaving the
+      # credential unmasked for the whole job. The runbook mandates an alphanumeric
+      # password, but that is a human instruction and this is the enforcement.
       - name: Fetch the migration connection URI from Secret Manager
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         run: |
           URI="$(gcloud secrets versions access latest --secret=SUPABASE_MIGRATION_DB_URL --project=${{ vars.GCP_PROJECT_ID }})"
-          echo "::add-mask::$URI"
+          echo "::add-mask::${URI//%/%25}"
           echo "SUPABASE_MIGRATION_DB_URL=$URI" >> "$GITHUB_ENV"
 
       # Pre-flight: prod's history BEFORE anything is attempted. On a red run
@@ -432,6 +438,11 @@ jobs:
       # repo's migration history IS prod's migration history.
       - name: Assert every repo migration is applied (post-flight)
         if: ${{ steps.gate.outputs.enabled == 'true' }}
+        # `shell: bash` (not the default `bash -e {0}`) adds `-o pipefail`, so a
+        # failed `migration list` is caught here instead of being swallowed by the
+        # `tee` on the right of the pipe. The guards below already fail closed on
+        # the resulting error text; this just reports the real cause.
+        shell: bash
         run: |
           npx supabase migration list --db-url "$SUPABASE_MIGRATION_DB_URL" | tee migration-list.txt
           # Rows look like:  " 20260101000000 | 20260101000000 | 2026-01-01 00:00:00 "
@@ -458,6 +469,17 @@ jobs:
           fi
           if [ -n "$drift" ]; then
             echo "::error::prod migration history does not match the repo:"; echo "$drift"; exit 1
+          fi
+          # Checked AFTER the drift check so the more specific message wins: a
+          # remote-ahead row also skews this count, and `drift:` names the version.
+          # `rows >= 1` catches "parsed nothing" but not "parsed SOME" — a TRUNCATED
+          # capture has no drift row and would report success on the strength of the
+          # rows that did survive. Every repo migration appears in `migration list`
+          # (applied or not), so the row count must equal the file count exactly.
+          expected="$(ls supabase/migrations/*.sql | wc -l | tr -d ' ')"
+          if [ "${rows:-0}" -ne "$expected" ]; then
+            echo "::error::parsed $rows migration rows but the repo has $expected files — refusing to call that success."
+            exit 1
           fi
           echo "Prod migration history matches the repo ($rows migrations)."
 

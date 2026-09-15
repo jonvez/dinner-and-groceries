@@ -47,6 +47,24 @@ function jobBlock(name: string): string {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
+/**
+ * One job block with whole-line comments removed — the same executable view as
+ * `ciYmlExecutable`, scoped to a single job.
+ *
+ * Every assertion that greps the migrate job's *steps* runs against this rather
+ * than the raw text. A config-invariant test that greps a file must grep the
+ * executable view of it: the raw block includes explanatory comments, and an
+ * assertion a comment can satisfy guards nothing. This bit us for real — the
+ * masking-order assertion below passed with the masking line deleted outright,
+ * because `::add-mask::` also appears in the comment eight lines above the step.
+ */
+function jobBlockExecutable(name: string): string {
+  return jobBlock(name)
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+}
+
 /** The `needs:` entries of a job, whether written inline or as a block list. */
 function jobNeeds(name: string): string[] {
   const block = jobBlock(name);
@@ -71,13 +89,13 @@ describe("migrate job applies migrations to prod before the app deploys", () => 
 
   it("runs migrate only on pushes to main — never on a pull request", () => {
     // A PR (least of all a fork's) must never reach the prod credential.
-    expect(jobBlock("migrate")).toMatch(
+    expect(jobBlockExecutable("migrate")).toMatch(
       /if:\s*\$\{\{\s*github\.ref\s*==\s*'refs\/heads\/main'\s*&&\s*github\.event_name\s*==\s*'push'\s*\}\}/,
     );
   });
 
   it("pushes with an explicit --db-url and --yes (no prompt, no link state)", () => {
-    const block = jobBlock("migrate");
+    const block = jobBlockExecutable("migrate");
     expect(block).toMatch(/supabase db push[^\n]*--db-url "\$SUPABASE_MIGRATION_DB_URL"/);
     expect(block).toMatch(/supabase db push[^\n]*--yes/);
   });
@@ -90,12 +108,30 @@ describe("migrate job applies migrations to prod before the app deploys", () => 
   });
 
   it("masks the connection URI before it is written to $GITHUB_ENV", () => {
-    const block = jobBlock("migrate");
-    const mask = block.indexOf("::add-mask::");
-    const envWrite = block.indexOf('SUPABASE_MIGRATION_DB_URL=$URI" >> "$GITHUB_ENV');
-    expect(mask, "migrate must ::add-mask:: the fetched URI").toBeGreaterThan(-1);
+    // Indices are compared inside the EXECUTABLE view and both are pinned to a
+    // whole `echo` line, never to the bare `::add-mask::` token: the step is
+    // preceded by a comment that names the token, and matching that comment made
+    // this assertion pass even with the masking line deleted.
+    const block = jobBlockExecutable("migrate");
+    const mask = block.search(/^\s*echo "::add-mask::/m);
+    const envWrite = block.search(/^\s*echo "SUPABASE_MIGRATION_DB_URL=\$URI" >> "\$GITHUB_ENV"/m);
+    expect(mask, "migrate must ::add-mask:: the fetched URI in an executable step").toBeGreaterThan(
+      -1,
+    );
     expect(envWrite, "migrate must export the URI via $GITHUB_ENV").toBeGreaterThan(-1);
     expect(mask).toBeLessThan(envWrite);
+  });
+
+  it("percent-escapes the URI before masking it", () => {
+    // The runner un-escapes %25 -> %, %0A -> LF and %0D -> CR in workflow-command
+    // DATA, so `::add-mask::` on a raw URI containing any of them registers a mask
+    // string that never matches the real secret — leaving the prod credential
+    // unmasked for the whole job. The runbook mandates an alphanumeric password to
+    // avoid this, but nothing in the pipeline enforces a human instruction.
+    expect(
+      jobBlockExecutable("migrate"),
+      "migrate must mask `${URI//%/%25}`, not the raw `$URI`",
+    ).toMatch(/^\s*echo "::add-mask::\$\{URI\/\/%\/%25\}"$/m);
   });
 
   it("never binds the migration URI to Cloud Run, and still fetches no service-role key", () => {
@@ -118,7 +154,7 @@ describe("migrate job applies migrations to prod before the app deploys", () => 
   });
 
   it("serializes prod applies with its own never-cancelling concurrency group", () => {
-    expect(jobBlock("migrate")).toMatch(
+    expect(jobBlockExecutable("migrate")).toMatch(
       /^\s{4}concurrency:\n\s{6}group:\s*prod-migrate\n\s{6}cancel-in-progress:\s*false\n/m,
     );
   });
