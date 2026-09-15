@@ -7,9 +7,18 @@
 -- UPDATE/DELETE grant to `authenticated`, so clients can neither mutate nor
 -- delete an emitted event (defense in depth: privilege check fails before RLS).
 --
--- pgTAP test (issue #16). One rolled-back transaction; fixtures inlined.
+-- ASYMMETRIC by design since issue #17 (ADR 0014): SELECT is OWNER-only,
+-- INSERT stays household-scoped. Every member emits events; only the household
+-- owner may read them. The PO dashboard exists for the parent alone (north
+-- star: never a kid-facing scorecard), so the boundary is RLS — not the
+-- `/dashboard` route check, which is only the route's behaviour. Without the
+-- owner term in `events_select`, any member (the teens included) could read
+-- every event row straight through the Data API and the route check would be a
+-- curtain over an open door. The deny case below is what proves that shut.
+--
+-- pgTAP test (issues #16, #17). One rolled-back transaction; fixtures inlined.
 begin;
-select plan(11);
+select plan(18);
 
 create schema if not exists tests;
 
@@ -58,11 +67,21 @@ select is(
   true, 'events has RLS FORCEd (owner not exempt)'
 );
 
--- ---- allow-same: H member reads H's event ----
+-- ---- allow-owner: the H OWNER reads H's event (the PO dashboard's read) ----
+select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
+select is(
+  (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  1, 'allow-owner: the H owner can read H''s event'
+);
+
+-- ---- DENY-NON-OWNER (issue #17, the owner gate): a same-household member who
+--      is NOT the owner reads ZERO event rows, even in their OWN household.
+--      This is the assertion that makes `/dashboard`'s 404 more than cosmetic:
+--      it holds for a raw Data API query that never touches the route. ----
 select tests.authenticate_as('22222222-2222-2222-2222-222222222222');
 select is(
   (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  1, 'allow-same: H member can read H''s event'
+  0, 'deny-non-owner: a same-household NON-owner member reads no event rows'
 );
 
 -- ---- deny-cross: H member cannot read K's event ----
@@ -71,20 +90,21 @@ select is(
   0, 'deny-cross: H member cannot read K''s event'
 );
 
--- ---- allow-same: H member can emit (insert) an event in H (H now has 2) ----
-insert into public.events (household_id, member_id, event_type, payload)
-values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'a0000002-0000-0000-0000-000000000002', 'reaction_added', '{}');
-select is(
-  (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
-  2, 'allow-same: H member can emit an event in H (H now has 2)'
+-- ---- allow-same INSERT: a NON-owner member still emits events. Every member
+--      emits, only the owner reads — so the insert is asserted with lives_ok
+--      (the emitter can no longer read back what it wrote), and the row is
+--      counted below as the owner. ----
+select lives_ok(
+  $$insert into public.events (household_id, member_id, event_type, payload)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'a0000002-0000-0000-0000-000000000002', 'reaction_added', '{}')$$,
+  'allow-same: a NON-owner member can still emit an event in H'
 );
 
 -- ---- member_id may be null: a pre-membership usage event (e.g. sign_in) ----
-insert into public.events (household_id, member_id, event_type, payload)
-values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', null, 'session_start', '{}');
-select is(
-  (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and member_id is null),
-  1, 'member_id may be null: a null-member usage event is accepted'
+select lives_ok(
+  $$insert into public.events (household_id, member_id, event_type, payload)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', null, 'session_start', '{}')$$,
+  'member_id may be null: a null-member usage event is accepted'
 );
 
 -- ---- taxonomy enforced at the DB layer: an out-of-taxonomy event_type is
@@ -125,6 +145,41 @@ select throws_ok(
 select throws_ok(
   $$truncate public.events$$,
   '42501', null, 'append-only: client TRUNCATE of the events log is denied'
+);
+
+-- ---- the OWNER's new read access is SELECT-only: append-only is unchanged for
+--      them too (issue #17). Reading every event does not imply editing one —
+--      there is no UPDATE/DELETE policy AND no UPDATE/DELETE grant, and FORCE
+--      RLS keeps even a table owner non-exempt. ----
+select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
+select is(
+  (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  3, 'allow-owner: the owner reads the member-emitted rows too (H now has 3)'
+);
+select throws_ok(
+  $$update public.events set payload = '{"tamper": true}'
+    where id = 'ce000001-0000-0000-0000-000000000001'$$,
+  '42501', null, 'append-only: the OWNER cannot UPDATE an event either'
+);
+select throws_ok(
+  $$delete from public.events where id = 'ce000001-0000-0000-0000-000000000001'$$,
+  '42501', null, 'append-only: the OWNER cannot DELETE an event either'
+);
+select throws_ok(
+  $$truncate public.events$$,
+  '42501', null, 'append-only: the OWNER cannot TRUNCATE the events log either'
+);
+
+-- ---- deny-cross for the owner gate: being an owner grants no reach into
+--      ANOTHER household's events (K's owner sees only K's row). ----
+select tests.authenticate_as('33333333-3333-3333-3333-333333333333');
+select is(
+  (select count(*)::int from public.events where household_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  0, 'deny-cross: K''s OWNER cannot read H''s events'
+);
+select is(
+  (select count(*)::int from public.events where household_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
+  1, 'allow-owner: K''s owner reads K''s own event'
 );
 select tests.clear_auth();
 
