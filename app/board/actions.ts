@@ -11,10 +11,16 @@
  * date and re-normalized to the household's canonical week boundary so a crafted
  * value can't create an off-grid week. RLS still scopes every write to the
  * caller's household regardless.
+ *
+ * `proposal_created` (ADR 0004 taxonomy; issue #210) is emitted on BOTH propose
+ * paths once the write has landed — ids only, never the title or the note the
+ * member typed. `emitEvent` fails closed internally, so analytics can never
+ * turn a successful propose into an error.
  */
 
 import { revalidatePath } from "next/cache";
 
+import { emitEvent } from "@/lib/analytics/events";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { proposeExistingDish, proposeNewDish } from "./actions-core";
@@ -47,6 +53,17 @@ export async function proposeNewDishAction(
   });
   if (!result.ok) return { error: result.error };
 
+  await emitEvent(supabase, {
+    householdId: actor.householdId,
+    memberId: actor.memberId,
+    eventType: "proposal_created",
+    payload: {
+      proposalId: result.proposalId,
+      dishId: result.dishId,
+      weekId: week.weekId,
+    },
+  });
+
   revalidatePath("/board");
   return { added: true };
 }
@@ -66,14 +83,25 @@ export async function recycleDishAction(
   );
   if ("error" in week) return { error: week.error };
 
+  const dishId = String(formData.get("dishId") ?? "");
+
   const result = await proposeExistingDish(supabase, {
     householdId: actor.householdId,
     weekId: week.weekId,
     proposedBy: actor.memberId,
-    dishId: String(formData.get("dishId") ?? ""),
+    dishId,
     note: String(formData.get("note") ?? ""),
   });
   if (!result.ok) return { error: result.error };
+
+  // Recycling reuses the library dish, so the dish id is the (now validated by
+  // a successful write) submitted one — no `dishes` row was created.
+  await emitEvent(supabase, {
+    householdId: actor.householdId,
+    memberId: actor.memberId,
+    eventType: "proposal_created",
+    payload: { proposalId: result.proposalId, dishId, weekId: week.weekId },
+  });
 
   revalidatePath("/board");
   return { added: true };
