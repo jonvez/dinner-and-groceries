@@ -109,7 +109,7 @@ describe("summarizeDashboard — adoption", () => {
       ev("sign_in", "m-kai", ago(20)), // in the window, not the week
     ];
     const { adoption } = summarizeDashboard(events, MEMBERS, { now: NOW });
-    expect(adoption.activeToday).toBe(1);
+    expect(adoption.activeLast24h).toBe(1);
     expect(adoption.activeThisWeek).toBe(2);
   });
 
@@ -147,6 +147,89 @@ describe("summarizeDashboard — adoption", () => {
     );
     expect(adoption.hasActivity).toBe(false);
     expect(adoption.usageEvents).toBe(0);
+  });
+});
+
+/**
+ * The headline is a ROLLING 24 HOURS, not a UTC calendar day (#228).
+ *
+ * It used to bucket by UTC day and compare against `dayKey(now)`. For a Pacific
+ * household the UTC day rolls over at 17:00 local, so from 5pm onwards the
+ * figure read 0 even while the family was actively using the app that
+ * afternoon — wrong at exactly the hour a parent is most likely to look.
+ *
+ * A rolling window is timezone-independent, needs no read of
+ * `households.timezone`, and cannot read 0 during the family's own afternoon.
+ * The per-member `activeDays` counts stay UTC calendar days: those are a trend,
+ * where a fixed bucket is fine.
+ */
+describe("summarizeDashboard — the headline is a rolling 24 hours (#228)", () => {
+  it("counts an event from 2 hours ago", () => {
+    const { adoption } = summarizeDashboard([ev("session_start", "m-jojo", ago(0, 2))], MEMBERS, {
+      now: NOW,
+    });
+    expect(adoption.activeLast24h).toBe(1);
+  });
+
+  it("does NOT count an event from 25 hours ago", () => {
+    const { adoption } = summarizeDashboard([ev("session_start", "m-jojo", ago(0, 25))], MEMBERS, {
+      now: NOW,
+    });
+    expect(adoption.activeLast24h).toBe(0);
+    // Still real usage, just not in the last 24h.
+    expect(adoption.activeThisWeek).toBe(1);
+  });
+
+  it("counts the family's own afternoon after the UTC day has rolled over", () => {
+    // The #228 repro. Jojo opens the app at 10:00 America/Los_Angeles, which is
+    // 17:00Z — already "tomorrow" in UTC terms by the time Jon looks at 20:00
+    // Pacific (03:00Z the next day). Ten hours earlier the SAME local day, and
+    // the old UTC-day bucket reported it as nobody.
+    const morningPacific = "2026-09-15T17:00:00.000Z";
+    const eveningPacific = new Date("2026-09-16T03:00:00.000Z");
+    const { adoption } = summarizeDashboard(
+      [ev("session_start", "m-jojo", morningPacific)],
+      MEMBERS,
+      { now: eveningPacific },
+    );
+    expect(adoption.activeLast24h).toBe(1);
+    expect(adoption.activeThisWeek).toBe(1);
+  });
+
+  it("includes an event exactly 24 hours old and excludes one a millisecond older", () => {
+    // Closed at the boundary, like the 30-day window and the 7-day one.
+    const exactly = new Date(NOW.getTime() - 86_400_000).toISOString();
+    const older = new Date(NOW.getTime() - 86_400_000 - 1).toISOString();
+    expect(
+      summarizeDashboard([ev("session_start", "m-jojo", exactly)], MEMBERS, { now: NOW }).adoption
+        .activeLast24h,
+    ).toBe(1);
+    expect(
+      summarizeDashboard([ev("session_start", "m-jojo", older)], MEMBERS, { now: NOW }).adoption
+        .activeLast24h,
+    ).toBe(0);
+  });
+
+  it("counts DISTINCT MEMBERS in the window, not events", () => {
+    const events = [
+      ev("session_start", "m-jojo", ago(0, 1)),
+      ev("session_start", "m-jojo", ago(0, 3)),
+      ev("sign_in", "m-jon", ago(0, 5)),
+    ];
+    expect(summarizeDashboard(events, MEMBERS, { now: NOW }).adoption.activeLast24h).toBe(2);
+  });
+
+  it("leaves per-member activeDays on UTC calendar days — only the headline rolls", () => {
+    // Two events 3 hours apart straddling a UTC midnight: ONE rolling-24h
+    // member, but still TWO distinct UTC active days for the trend.
+    const now = new Date("2026-09-16T02:00:00.000Z");
+    const events = [
+      ev("session_start", "m-jojo", "2026-09-15T23:00:00.000Z"),
+      ev("session_start", "m-jojo", "2026-09-16T01:00:00.000Z"),
+    ];
+    const { adoption } = summarizeDashboard(events, MEMBERS, { now });
+    expect(adoption.activeLast24h).toBe(1);
+    expect(adoption.byMember.find((m) => m.memberId === "m-jojo")!.activeDays).toBe(2);
   });
 });
 
@@ -242,7 +325,7 @@ describe("summarizeDashboard — an empty database", () => {
     expect(summary.adoption).toEqual({
       hasActivity: false,
       byMember: [],
-      activeToday: 0,
+      activeLast24h: 0,
       activeThisWeek: 0,
       usageEvents: 0,
       unattributedUsageEvents: 0,

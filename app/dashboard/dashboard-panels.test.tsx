@@ -36,7 +36,7 @@ const ev = (
 
 const BUSY: DashboardEvent[] = [
   ev("session_start", "m-jon", ago(0)),
-  ev("session_start", "m-jojo", ago(1)),
+  ev("session_start", "m-jojo", ago(2)),
   ev("sign_in", "m-jojo", ago(4)),
   ev("proposal_created", "m-jojo", ago(2)),
   ev("reaction_added", "m-jojo", ago(2)),
@@ -63,14 +63,24 @@ describe("DashboardPanels — with activity", () => {
     expect(screen.getByTestId("window-label")).toHaveTextContent(/last 30 days/i);
   });
 
-  it("shows active days per member and the daily/weekly active counts", () => {
+  it("shows active days per member and the rolling/weekly active counts", () => {
     renderSummary(BUSY);
     const adoption = screen.getByRole("region", { name: /adoption/i });
     expect(adoption).toBeInTheDocument();
-    expect(screen.getByTestId("active-today")).toHaveTextContent("1");
+    expect(screen.getByTestId("active-last-24h")).toHaveTextContent("1");
     expect(screen.getByTestId("active-this-week")).toHaveTextContent("2");
     expect(screen.getByTestId("active-days-m-jojo")).toHaveTextContent("2");
     expect(screen.getByTestId("active-days-m-kai")).toHaveTextContent("0");
+  });
+
+  it("labels the headline as a rolling 24 hours, never 'today' (#228)", () => {
+    // A calendar "today" read 0 during the family's own Pacific afternoon. The
+    // figure is a rolling window now, and the label has to say so — a wrong
+    // label is the same lie as a wrong number.
+    renderSummary(BUSY);
+    const adoption = screen.getByRole("region", { name: /adoption/i });
+    expect(adoption).toHaveTextContent(/active in the last 24 hours/i);
+    expect(adoption).not.toHaveTextContent(/active today/i);
   });
 
   it("shows per-member participation counts by display name", () => {
@@ -109,7 +119,7 @@ describe("DashboardPanels — empty states", () => {
     renderSummary([ev("trip_completed", "m-jon", ago(1))]);
     const adoption = screen.getByRole("region", { name: /adoption/i });
     expect(adoption).toHaveTextContent(/no activity yet/i);
-    expect(screen.queryByTestId("active-today")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("active-last-24h")).not.toBeInTheDocument();
   });
 
   it("says nobody has planned together yet instead of an all-zero table", () => {

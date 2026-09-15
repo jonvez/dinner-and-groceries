@@ -16,10 +16,21 @@
  *     is out. Future-stamped and unparseable timestamps are ignored rather than
  *     counted — a skewed clock is not participation.
  *   - **Adoption** = active DAYS per member from `session_start` / `sign_in`,
- *     plus DAU/WAU as DISTINCT MEMBERS. Days are UTC calendar days: the
- *     household's timezone lives on `households`, but reading it here would
- *     make the dashboard's own numbers depend on a second table for a figure
- *     that is only ever read as a trend. Stated so nobody debugs it as an
+ *     plus the two headline "how many people" figures as DISTINCT MEMBERS.
+ *
+ *     Both headlines are ROLLING WINDOWS — the last 24 hours and the last 7
+ *     days — not calendar buckets (#228). A calendar "today" has to be
+ *     evaluated in SOME timezone, and in UTC it rolls over at 17:00 Pacific, so
+ *     the headline read 0 every evening while the family was actively using the
+ *     app that afternoon: wrong at exactly the hour a parent is most likely to
+ *     look. A rolling window is timezone-independent, needs no read of
+ *     `households.timezone`, and cannot read 0 during the household's own
+ *     afternoon. Closed at the boundary, like the 30-day window.
+ *
+ *     Per-member `activeDays` DOES still bucket by UTC calendar day. That is
+ *     deliberate and is fine: it is a trend ("how many days did each person show
+ *     up"), where a fixed bucket in a fixed zone is the point, and it is never
+ *     read as "was anyone here today". Stated so nobody debugs it as an
  *     off-by-one.
  *   - **Unattributed usage events** (`member_id is null` — a `sign_in` before a
  *     household exists, or a removed member's surviving rows) are counted in
@@ -63,6 +74,14 @@ export const WINDOW_DAYS = 30;
 
 /** The trailing window used for the "this week" active count. */
 const WEEK_DAYS = 7;
+
+/**
+ * The trailing window behind the headline active figure (#228). A ROLLING day,
+ * deliberately not a calendar one — see the module header.
+ */
+const RECENT_HOURS = 24;
+
+const MS_PER_HOUR = 3_600_000;
 
 const MS_PER_DAY = 86_400_000;
 
@@ -125,8 +144,12 @@ export type AdoptionPanel = {
   /** false ⇒ render "no activity yet", not a row of zeroes. */
   hasActivity: boolean;
   byMember: MemberAdoption[];
-  /** Distinct members with a usage event today (UTC). */
-  activeToday: number;
+  /**
+   * Distinct members with a usage event in the ROLLING last 24 hours. Not a
+   * calendar day: a UTC "today" read 0 during the household's own Pacific
+   * afternoon (#228).
+   */
+  activeLast24h: number;
   /** Distinct members with a usage event in the last 7 days. */
   activeThisWeek: number;
   usageEvents: number;
@@ -182,7 +205,7 @@ export function summarizeDashboard(
   { now, readFailed = false }: { now: Date; readFailed?: boolean },
 ): DashboardSummary {
   const start = windowStart(now);
-  const today = dayKey(now);
+  const recentStart = new Date(now.getTime() - RECENT_HOURS * MS_PER_HOUR);
   const weekStart = new Date(now.getTime() - WEEK_DAYS * MS_PER_DAY);
 
   const roster = new Map(members.map((m) => [m.id, m.displayName]));
@@ -212,7 +235,7 @@ export function summarizeDashboard(
   let participationTotal = 0;
   let completed = 0;
   let listsBuilt = 0;
-  const todayMembers = new Set<string>();
+  const recentMembers = new Set<string>();
   const weekMembers = new Set<string>();
 
   for (const event of events) {
@@ -234,8 +257,10 @@ export function summarizeDashboard(
           break;
         }
         const memberId = event.memberId!;
+        // The per-member trend keeps its UTC calendar-day buckets; the two
+        // headlines are rolling windows (#228).
         activeDays.get(memberId)!.add(dayKey(at));
-        if (dayKey(at) === today) todayMembers.add(memberId);
+        if (at >= recentStart) recentMembers.add(memberId);
         if (at >= weekStart) weekMembers.add(memberId);
         break;
       }
@@ -277,7 +302,7 @@ export function summarizeDashboard(
         displayName: m.displayName,
         activeDays: activeDays.get(m.id)!.size,
       })),
-      activeToday: todayMembers.size,
+      activeLast24h: recentMembers.size,
       activeThisWeek: weekMembers.size,
       usageEvents,
       unattributedUsageEvents,
