@@ -1,15 +1,16 @@
 "use client";
 
 /**
- * The week's shared idea pool with its SOCIAL layer (issue #9): emoji reactions
- * and comments on each proposal, pushed live via Supabase Realtime — with
- * graceful degradation when Realtime drops.
+ * The week's shared idea pool with its SOCIAL layer (issue #9): the proposals
+ * themselves plus emoji reactions and comments on each, pushed live via Supabase
+ * Realtime — with graceful degradation when Realtime drops.
  *
  * Correctness vs. enhancement (ADR 0003; SPEC error-handling):
- *   - The initial reactions/comments are server-rendered (RLS-scoped) and passed
- *     in as props, so the pool is fully correct with ZERO Realtime. Acting on a
- *     proposal goes through a server action that `revalidatePath`s the board, so
- *     the actor's own view refreshes via a normal fetch regardless of Realtime.
+ *   - The initial proposals/reactions/comments are server-rendered (RLS-scoped)
+ *     and passed in as props, so the pool is fully correct with ZERO Realtime.
+ *     Acting on a proposal goes through a server action that `revalidatePath`s the
+ *     board, so the actor's own view refreshes via a normal fetch regardless of
+ *     Realtime.
  *   - Realtime is a pure ENHANCEMENT: a single channel (filtered by household_id —
  *     a real column — and RLS-gated, so no cross-household leakage) merges other
  *     members' changes into local state, keyed by PK (`mergeChange`). The week
@@ -17,6 +18,21 @@
  *     so we scope by the week's proposal ids) is applied to incoming INSERT/UPDATE
  *     rows; DELETEs are applied by PK and are naturally week-scoped because local
  *     state only ever holds this week's rows.
+ *   - `proposals` themselves (issue #64, ADR 0013) are bound on the SAME channel,
+ *     filtered by `week_id` (a real column on the row — the precise scope; RLS
+ *     still enforces the household). A proposals change is a TRIGGER, not a
+ *     payload to render: the payload carries the table's own columns only, with
+ *     no dish title and no proposer name — both come from server-side joins
+ *     (app/board/page.tsx) — so rendering it would flash "Untitled dish". Instead
+ *     we `router.refresh()`, the server re-renders the authoritative joined
+ *     snapshot, and the sig-keyed effect below reconciles it by PK. Bursts
+ *     coalesce (lib/social/refresh-coalescer.ts) so a flurry of ideas can't storm
+ *     the server.
+ *   - The subscription effect depends on STABLE IDS ONLY (`householdId`,
+ *     `weekId`). It used to be keyed on the proposal-id list, so every proposal
+ *     tore the channel down and re-JOINed through the blind window documented
+ *     below — unacceptable once proposals arrive live. The week's proposal ids,
+ *     which scope incoming reactions/comments, are therefore read from a REF.
  *   - On a drop + reconnect we ask the SERVER to re-render the authoritative
  *     snapshot (`router.refresh()`), and the sig-keyed effect below
  *     `reconcileByPk`s the new props — the server is the source of truth, so
@@ -35,7 +51,14 @@
  */
 
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useActionState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { createClient } from "@/lib/supabase/browser";
 import {
@@ -49,6 +72,10 @@ import {
   reconcileByPk,
   type RealtimeChange,
 } from "@/lib/social/reconcile";
+import {
+  createServerRefreshCoalescer,
+  type ServerRefreshCoalescer,
+} from "@/lib/social/refresh-coalescer";
 import { safeHttpUrl } from "@/lib/web/safe-url";
 import { orderedDayOfWeek } from "@/lib/week/boundary";
 import { DAY_SHORT_NAMES, MEAL_TYPES, mealTypeLabel } from "@/lib/week/labels";
@@ -90,12 +117,15 @@ export type CommentRow = {
 
 export type ProposalPoolProps = {
   householdId: string;
+  /** The viewed week's row id — the Realtime scope for `proposals` (#64). */
+  weekId: string;
   currentMemberId: string;
   /** The viewed week's start (YYYY-MM-DD) — the slot target for tap-to-slot. */
   weekStart: string;
   /** Household week-start day, for ordering the day picker (Monday=1 default). */
   weekStartDay?: number;
-  proposals: ProposalView[];
+  /** The server's joined, RLS-scoped snapshot — seeds state, see `proposalsSig`. */
+  initialProposals: ProposalView[];
   initialReactions: ReactionRow[];
   initialComments: CommentRow[];
   /** member id -> display name, for attributing comments that arrive live. */
@@ -105,6 +135,14 @@ export type ProposalPoolProps = {
 // Stable signatures so the prop->state reconcile effect only fires when the
 // server snapshot actually changed (e.g. after a revalidatePath), not on every
 // render (which would clobber Realtime-applied local state).
+function proposalsSig(rows: ProposalView[]): string {
+  return rows
+    .map(
+      (p) =>
+        `${p.id}:${p.title}:${p.note ?? ""}:${p.sourceUrl ?? ""}:${p.proposerName ?? ""}:${p.createdAt}`,
+    )
+    .join("|");
+}
 function reactionsSig(rows: ReactionRow[]): string {
   return rows.map((r) => `${r.id}:${r.proposal_id}:${r.member_id}:${r.kind}`).join("|");
 }
@@ -114,14 +152,20 @@ function commentsSig(rows: CommentRow[]): string {
 
 export function ProposalPool({
   householdId,
+  weekId,
   currentMemberId,
   weekStart,
   weekStartDay = 1,
-  proposals,
+  initialProposals,
   initialReactions,
   initialComments,
   memberNames,
 }: ProposalPoolProps) {
+  // Proposals are STATE, not a raw prop (#64): the sig-keyed effect below is what
+  // applies a refreshed server snapshot without clobbering the rest of the board.
+  const [proposals, setProposals] = useState<ProposalView[]>(() =>
+    reconcileByPk(initialProposals),
+  );
   const [reactions, setReactions] = useState<ReactionRow[]>(() =>
     reconcileByPk(initialReactions),
   );
@@ -141,11 +185,41 @@ export function ProposalPool({
     routerRef.current = router;
   }, [router]);
 
+  /**
+   * "Something changed → ask the SERVER to re-render" (#64/ADR 0013 §2), with at
+   * most one round trip in flight so a flurry of ideas can't storm the server.
+   * Built once on mount (it reads the router ref, so it must not be constructed
+   * during render) and torn down with the component.
+   */
+  const refresherRef = useRef<ServerRefreshCoalescer | null>(null);
+  useEffect(() => {
+    const refresher = createServerRefreshCoalescer({
+      refresh: () => routerRef.current.refresh(),
+    });
+    refresherRef.current = refresher;
+    return () => {
+      refresher.stop();
+      refresherRef.current = null;
+    };
+  }, []);
+  /** Ask for a server re-render (a no-op before mount — nothing is in flight). */
+  const requestRefresh = useCallback(() => {
+    refresherRef.current?.request();
+  }, []);
+
   const proposalIds = useMemo(
     () => new Set(proposals.map((p) => p.id)),
     [proposals],
   );
-  const proposalIdList = useMemo(() => proposals.map((p) => p.id), [proposals]);
+  // Read by the reactions/comments handlers to apply the week scope. A REF, so
+  // the subscription below never depends on the proposal set — the whole point
+  // of #64's third defect (a re-JOIN per proposal, through the blind window).
+  // A reaction for a proposal that arrived live but whose snapshot hasn't landed
+  // yet is dropped here and then comes in WITH that snapshot, so nothing is lost.
+  const proposalIdsRef = useRef(proposalIds);
+  useEffect(() => {
+    proposalIdsRef.current = proposalIds;
+  }, [proposalIds]);
 
   // Nudge sort: attach each proposal's CURRENT reactions (server snapshot +
   // any live merges) and order by positive-reaction count desc, tiebreak
@@ -164,11 +238,17 @@ export function ProposalPool({
   // snapshot is authoritative; Realtime-applied local rows that are also in the
   // snapshot reconcile by PK (no dup), and any not yet in it re-arrive via the
   // channel. Keyed by signature so Realtime updates don't trigger a reset.
+  const pSig = proposalsSig(initialProposals);
   const rSig = reactionsSig(initialReactions);
   const cSig = commentsSig(initialComments);
   useEffect(() => {
     // Sync from the server snapshot (external system), not deriving local
     // render state — the blessed setState-in-effect case per the rule docs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setProposals(reconcileByPk(initialProposals));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pSig]);
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setReactions(reconcileByPk(initialReactions));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,10 +259,19 @@ export function ProposalPool({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cSig]);
 
+  // A fresh server snapshot landed, so the refresh it answered is done: release
+  // the coalescer (and pay the single follow-up owed to anything that arrived
+  // while that round trip was in flight).
+  useEffect(() => {
+    refresherRef.current?.settled();
+  }, [pSig, rSig, cSig]);
+
   // Single Realtime channel for the week's social signals.
   const wasDisconnected = useRef(false);
   useEffect(() => {
-    if (proposalIdList.length === 0) return;
+    // Note what is NOT here: the proposal set. A week with ZERO proposals still
+    // needs a channel, or the FIRST idea of the week could never arrive live.
+    if (!householdId || !weekId) return;
     const supabase = createClient();
     let cancelled = false;
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -224,11 +313,30 @@ export function ProposalPool({
           {
             event: "*",
             schema: "public",
+            table: "proposals",
+            // `week_id` IS a column on proposals, so this is the precise scope
+            // (another week's activity must not refresh this page). RLS still
+            // enforces the household on every delivery.
+            filter: `week_id=eq.${weekId}`,
+          },
+          () => {
+            // Deliberately ignoring the payload: it has no joined dish title or
+            // proposer name, so it is a trigger only. The server re-renders the
+            // snapshot; the sig-keyed effect above reconciles it by PK. NEVER a
+            // browser-client read (anon => RLS denial => blank board, #114).
+            requestRefresh();
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
             table: "reactions",
             filter: `household_id=eq.${householdId}`,
           },
           (payload) => {
-            const change = toChange<ReactionRow>(payload, proposalIds);
+            const change = toChange<ReactionRow>(payload, proposalIdsRef.current);
             if (change) setReactions((prev) => mergeChange(prev, change));
           },
         )
@@ -241,16 +349,17 @@ export function ProposalPool({
             filter: `household_id=eq.${householdId}`,
           },
           (payload) => {
-            const change = toChange<CommentRow>(payload, proposalIds);
+            const change = toChange<CommentRow>(payload, proposalIdsRef.current);
             if (change) setComments((prev) => mergeChange(prev, change));
           },
         )
         .subscribe((status) => {
           // A torn-down channel still reports CLOSED as it goes. That is US
-          // closing it (a re-subscribe after the proposal set changed), not the
-          // network dropping — so this effect's channel must go quiet the moment
-          // it is cancelled, or the replacement channel would read the shared
-          // `wasDisconnected` flag as a reconnect and refresh for nothing.
+          // closing it (a re-subscribe after the viewed WEEK changed — since #64
+          // nothing else churns these deps), not the network dropping — so this
+          // effect's channel must go quiet the moment it is cancelled, or the
+          // replacement channel would read the shared `wasDisconnected` flag as a
+          // reconnect and refresh for nothing.
           if (cancelled) return;
           if (status === "SUBSCRIBED") {
             setLive(true);
@@ -259,7 +368,9 @@ export function ProposalPool({
               // Re-render the RLS-scoped snapshot ON THE SERVER; the sig-keyed
               // effect above reconciles the new props. (A browser-client read
               // would run as anon and blank the board — see the file header.)
-              routerRef.current.refresh();
+              // Through the same coalescer as the proposals trigger: ONE refresh
+              // path, so a reconnect during a burst doesn't double up.
+              requestRefresh();
             }
           } else if (
             status === "CHANNEL_ERROR" ||
@@ -279,8 +390,9 @@ export function ProposalPool({
       authenticator.stop();
       if (channel) void supabase.removeChannel(channel);
     };
+    // STABLE IDS ONLY (#64): a proposal arriving must not tear the channel down.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [householdId, proposalIdList.join(",")]);
+  }, [householdId, weekId]);
 
   return (
     <section aria-label="This week's ideas" className="space-y-3">
