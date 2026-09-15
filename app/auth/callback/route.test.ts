@@ -13,6 +13,11 @@ import { NextRequest } from "next/server";
  * We mock `@supabase/ssr` so the fake client's `exchangeCodeForSession`
  * triggers `setAll` (exactly what the real SSR client does once the exchange
  * succeeds), then assert the returned response advertises those cookies.
+ *
+ * It also covers `sign_in` emission (issue #210). `events.household_id` is NOT
+ * NULL and the INSERT policy checks it against `current_household_id()`, so a
+ * brand-new user has nothing to attribute the event to: emit only when the
+ * household resolves, and NEVER let analytics fail or change the sign-in.
  */
 
 const { createServerClientMock } = vi.hoisted(() => ({
@@ -56,12 +61,33 @@ const SESSION_COOKIES = [
   },
 ];
 
+/** Analytics rows the route inserted, recorded by the fake client below. */
+const inserts: { table: string; vals: Record<string, unknown> }[] = [];
+
+type StubOptions = {
+  error?: unknown;
+  /** What `current_household_id()` resolves to (null = no household yet). */
+  householdId?: string | null;
+  /** The member row for the signed-in user (null = none). */
+  memberId?: string | null;
+  /** Make the analytics insert blow up mid-flight. */
+  throwOnInsert?: boolean;
+};
+
 /**
  * Build a fake SSR client. When `exchangeCodeForSession` is called we invoke
  * the captured `setAll` with the session cookies — mirroring the real client,
  * which writes the session cookies through the `setAll` callback on success.
+ * It also answers the `current_household_id()` RPC, the member lookup and the
+ * `events` insert, so `sign_in` emission is assertable on the real row.
  */
-function stubClientThatSetsCookies(opts: { error: unknown } = { error: null }) {
+function stubClientThatSetsCookies(opts: StubOptions = {}) {
+  const {
+    error = null,
+    householdId = "hh-1",
+    memberId = "m-1",
+    throwOnInsert = false,
+  } = opts;
   let capturedSetAll: ((cookies: typeof SESSION_COOKIES) => void) | undefined;
 
   createServerClientMock.mockImplementation((_url, _key, config) => {
@@ -69,14 +95,36 @@ function stubClientThatSetsCookies(opts: { error: unknown } = { error: null }) {
     return {
       auth: {
         exchangeCodeForSession: vi.fn(async () => {
-          if (!opts.error) {
+          if (!error) {
             capturedSetAll?.(SESSION_COOKIES);
           }
-          return { error: opts.error };
+          return {
+            data: { user: error ? null : { id: "auth-user-1" } },
+            error,
+          };
         }),
       },
+      rpc: vi.fn(async () => ({ data: householdId })),
+      from: vi.fn((table: string) => ({
+        insert: (vals: Record<string, unknown>) => {
+          if (throwOnInsert) throw new Error("analytics transport down");
+          inserts.push({ table, vals });
+          return Promise.resolve({ error: null });
+        },
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({
+              data: memberId ? { id: memberId } : null,
+            }),
+          }),
+        }),
+      })),
     };
   });
+}
+
+function emitted() {
+  return inserts.filter((row) => row.table === "events").map((row) => row.vals);
 }
 
 function makeRequest(query: string) {
@@ -84,6 +132,7 @@ function makeRequest(query: string) {
 }
 
 beforeEach(() => {
+  inserts.length = 0;
   createServerClientMock.mockReset();
   cookieStoreMock.getAll.mockReset().mockReturnValue([]);
   cookieStoreMock.set.mockReset();
@@ -123,6 +172,57 @@ describe("GET /auth/callback", () => {
     expect(res.cookies.get("sb-127-auth-token")?.value).toBe(
       "access-token-value",
     );
+  });
+
+  it("emits exactly one sign_in when the caller already has a household", async () => {
+    stubClientThatSetsCookies();
+
+    const res = await GET(makeRequest("?code=valid-code"));
+
+    expect(res.status).toBe(307);
+    expect(emitted()).toEqual([
+      {
+        household_id: "hh-1",
+        member_id: "m-1",
+        event_type: "sign_in",
+        payload: {},
+      },
+    ]);
+  });
+
+  it("emits NOTHING for a first-time user with no household, and still signs them in", async () => {
+    stubClientThatSetsCookies({ householdId: null, memberId: null });
+
+    const res = await GET(makeRequest("?code=valid-code&next=/join"));
+
+    // `events.household_id` is NOT NULL — there is nothing to attribute to yet.
+    expect(emitted()).toEqual([]);
+    // The sign-in is untouched: still a cookie-carrying redirect to /join.
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/join");
+    expect(res.cookies.get("sb-127-auth-token")?.value).toBe(
+      "access-token-value",
+    );
+  });
+
+  it("signs the user in normally when the analytics insert THROWS", async () => {
+    stubClientThatSetsCookies({ throwOnInsert: true });
+
+    const res = await GET(makeRequest("?code=valid-code"));
+
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/");
+    expect(res.cookies.get("sb-127-auth-token")?.value).toBe(
+      "access-token-value",
+    );
+  });
+
+  it("emits no sign_in when the code exchange fails", async () => {
+    stubClientThatSetsCookies({ error: new Error("bad code") });
+
+    await GET(makeRequest("?code=bad-code"));
+
+    expect(emitted()).toEqual([]);
   });
 
   it("redirects to /login?error=oauth and sets NO session cookies when the exchange fails", async () => {

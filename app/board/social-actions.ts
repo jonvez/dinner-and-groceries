@@ -13,10 +13,17 @@
  * (proposal_id, household_id) FK guarantee a member can only react/comment on a
  * proposal within their own household. The reaction `kind` is constrained to the
  * fixed palette server-side here AND in core (defense in depth).
+ *
+ * Analytics (issue #210): `reaction_added` is emitted ONLY when the toggle turns
+ * a reaction ON — an un-react emits nothing, because there is no
+ * `reaction_removed` in the taxonomy and adding one would be a migration plus an
+ * ADR amendment (ADR 0014). `comment_added` records that a comment happened and
+ * on which proposal; the comment BODY never leaves the `comments` table.
  */
 
 import { revalidatePath } from "next/cache";
 
+import { emitEvent } from "@/lib/analytics/events";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 import { isReactionKind } from "@/lib/social/palette";
 
@@ -42,13 +49,25 @@ export async function reactAction(
   const actor = await resolveActor(supabase);
   if (!actor) return { error: GENERIC_ERROR };
 
+  const proposalId = String(formData.get("proposalId") ?? "");
+
   const result = await toggleReaction(supabase, {
     householdId: actor.householdId,
-    proposalId: String(formData.get("proposalId") ?? ""),
+    proposalId,
     memberId: actor.memberId,
     kind,
   });
   if (!result.ok) return { error: result.error };
+
+  // Toggle-ON only. `kind` is a palette emoji (a fixed enum, not free text).
+  if (result.toggled === "on") {
+    await emitEvent(supabase, {
+      householdId: actor.householdId,
+      memberId: actor.memberId,
+      eventType: "reaction_added",
+      payload: { proposalId, kind },
+    });
+  }
 
   revalidatePath("/board");
   return { toggled: result.toggled };
@@ -62,13 +81,23 @@ export async function addCommentAction(
   const actor = await resolveActor(supabase);
   if (!actor) return { error: GENERIC_ERROR };
 
+  const proposalId = String(formData.get("proposalId") ?? "");
+
   const result = await addComment(supabase, {
     householdId: actor.householdId,
-    proposalId: String(formData.get("proposalId") ?? ""),
+    proposalId,
     memberId: actor.memberId,
     body: String(formData.get("body") ?? ""),
   });
   if (!result.ok) return { error: result.error };
+
+  // Ids only — the comment text stays in `comments`, never in an event payload.
+  await emitEvent(supabase, {
+    householdId: actor.householdId,
+    memberId: actor.memberId,
+    eventType: "comment_added",
+    payload: { proposalId },
+  });
 
   revalidatePath("/board");
   return { added: true };

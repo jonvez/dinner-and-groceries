@@ -12,10 +12,15 @@
  * validated against the allowed set HERE and again in core (defense in depth);
  * `dishId` / `slotDishId` are scoped by RLS + the composite FKs, so a member can
  * only slot a dish in — and unslot a slot_dishes row of — their own household.
+ *
+ * Analytics (issue #210): `slot_filled` is emitted on a successful slot only.
+ * Unslotting emits NOTHING — there is no `slot_emptied` in the taxonomy, and the
+ * dashboard counts menus that got agreed, not edits back and forth.
  */
 
 import { revalidatePath } from "next/cache";
 
+import { emitEvent } from "@/lib/analytics/events";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 import { isValidDayOfWeek } from "@/lib/week/boundary";
 import { isMealType } from "@/lib/week/labels";
@@ -54,14 +59,24 @@ export async function slotDishAction(
   );
   if ("error" in week) return { error: week.error };
 
+  const dishId = String(formData.get("dishId") ?? "");
+
   const result = await slotDish(supabase, {
     householdId: actor.householdId,
     weekId: week.weekId,
-    dishId: String(formData.get("dishId") ?? ""),
+    dishId,
     dayOfWeek,
     mealType,
   });
   if (!result.ok) return { error: result.error };
+
+  // `dayOfWeek` / `mealType` are the validated coordinates the write used.
+  await emitEvent(supabase, {
+    householdId: actor.householdId,
+    memberId: actor.memberId,
+    eventType: "slot_filled",
+    payload: { slotDishId: result.slotDishId, dishId, dayOfWeek, mealType },
+  });
 
   revalidatePath("/board");
   return { slotted: true };

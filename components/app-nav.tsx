@@ -3,12 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { SessionBeacon } from "@/components/session-beacon";
+
 /**
  * Global navigation for the authenticated app shell (issue #12z). Rendered by
  * every signed-in screen (Home, Board, Recipes, Groceries; Dashboard later). The
  * login/join screens deliberately do NOT render it. `usePathname` marks the
  * current section — Home matches only the exact root so it isn't "active" on
  * every page.
+ *
+ * Because it is the one component on every signed-in screen and on no
+ * signed-out one, it is also where the `session_start` beacon mounts (issue
+ * #210) — it renders nothing and emits at most one event per browser session.
+ * The nav's own link list stays static and propless (ADR 0014).
  *
  * On a phone (below `sm`) the brand takes its own line and the four links sit
  * on the line below, each link narrower (`px-2`) and a 40px-tall tap target, so
@@ -33,6 +40,7 @@ export function AppNav() {
   const pathname = usePathname();
   return (
     <nav aria-label="Main" className="border-border border-b">
+      <SessionBeacon />
       <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-1 px-6 py-3">
         <span className="w-full text-sm font-semibold tracking-tight sm:mr-3 sm:w-auto">
           Dinner &amp; Groceries
