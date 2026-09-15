@@ -9,12 +9,28 @@ CI/deploy posture. Workflow: [`.github/workflows/ci.yml`](../.github/workflows/c
 |---------|-----|--------------|
 | Every PR (+ push to `main`) | `verify` | `npm run lint`, `npm run typecheck`, `npm test` (Vitest). Any failure exits non-zero and **blocks merge**. |
 | Every PR (+ push to `main`) | `e2e` | Boot ephemeral local Supabase → export its URL/anon key → `npm run build` (standalone, bundle inlined against the local stack) → install Chromium → `npm run test:e2e` (Playwright: signed-out smoke **plus** the authenticated loop — board render, propose/react/comment, and a two-context live Realtime guard). |
-| Merge to `main` only | `deploy` | Docker build → Artifact Registry → Cloud Run (WIF auth). Guarded; no-op only while GCP wiring vars are unset. |
+| Merge to `main` only | `migrate` | Applies `supabase/migrations/` to the cloud Supabase **prod** database (`supabase db push`), then asserts prod's history matches the repo. Runs **before** `deploy`. Guarded; no-op only while GCP wiring vars are unset. See [`migrate` — prod migrations](#migrate--prod-migrations-adr-0015). |
+| Merge to `main` only | `deploy` | Docker build → Artifact Registry → Cloud Run (WIF auth). `needs: migrate`, so a failed apply skips the deploy. Guarded; no-op only while GCP wiring vars are unset. |
 
-The `deploy` job has `if: github.ref == 'refs/heads/main' && github.event_name == 'push'`,
-so it never runs on PRs. Even on `main` it first checks `vars.GCP_PROJECT_ID`; if
-unset it prints a notice and no-ops. Nothing fails a PR, and no GCP creds are
-committed.
+Both `migrate` and `deploy` have
+`if: github.ref == 'refs/heads/main' && github.event_name == 'push'`, so neither
+runs on PRs. Even on `main` each first checks `vars.GCP_PROJECT_ID`; if unset it
+prints a notice and no-ops. Nothing fails a PR, and no GCP creds are committed.
+
+### Concurrency: PRs cancel, `main` queues
+
+```yaml
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+```
+
+Superseded **PR** runs are still cancelled (that is where the CI-minute saving
+comes from), but `main` runs **queue**, because a `main` run applies migrations to
+prod and cancelling one mid-apply is not something to design in. The `migrate`
+job additionally holds its own `concurrency: { group: prod-migrate,
+cancel-in-progress: false }`, so prod applies never overlap regardless of trigger
+(including a manual re-run of an older run).
 
 ## Local equivalents
 
@@ -109,6 +125,109 @@ secrets the build reads (see the build-time flow above):
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+### `migrate` — prod migrations (ADR 0015)
+
+Decision of record: **ADR 0015**. Setup, rotation and the red-run playbook:
+**`docs/runbooks/prod-migrations.md`**.
+
+On every push to `main`, after `verify` + `rls` + `e2e` pass, the `migrate` job
+applies `supabase/migrations/` to the cloud Supabase prod database. "Merged" now
+means "applied" — before this, prod's schema moved only when a human remembered
+a manual `supabase db push` (the footgun behind #63 and the 2026-08-12 retro).
+
+```
+npx supabase migration list --db-url "$SUPABASE_MIGRATION_DB_URL"   # pre-flight: log prod's state
+npx supabase db push        --db-url "$SUPABASE_MIGRATION_DB_URL" --yes
+npx supabase migration list --db-url "$SUPABASE_MIGRATION_DB_URL"   # post-flight: parsed + asserted
+```
+
+**The secret: `SUPABASE_MIGRATION_DB_URL`** — the prod **session-pooler**
+connection URI (port **5432**; the 6543 transaction pooler cannot run DDL).
+
+| Property | Value |
+|---|---|
+| Lives in | **GCP Secret Manager only.** Never a GitHub Actions secret, never `.env*`, never in the image. |
+| Read by | The **deploy SA**, via the same keyless WIF exchange `deploy` uses. `roles/secretmanager.secretAccessor` is granted to the deploy SA only — **verified manually at setup** (runbook § 1.6); continuous verification is tracked in **#226**. Nothing in CI re-checks the GCP IAM policy, so treat this as a setup-time property, not an enforced one. |
+| Bound to Cloud Run | **Never.** The running app must not hold a credential that bypasses RLS (ADR 0003). Guarded by `ci-migrate-job.test.ts`. |
+| In logs | Masked with `::add-mask::` before it can reach any later log line, and the value is percent-escaped first (`${URI//%/%25}`) — the runner un-escapes `%25`/`%0A`/`%0D` in workflow-command data, so masking a raw URI containing any of them would register a mask that never matches the real secret. `--debug` is **banned** in this job — it prints the connection string. |
+| Reachable from a PR | No. The job is `push`-to-`main` only, so no PR (least of all a fork's) can reach it. |
+| Rotation | Reset the DB password, then `gcloud secrets versions add`. The job reads `:latest`, so no repo or workflow change. |
+
+No new GitHub secret and no new repo variable exist — ADR 0009's "nothing
+long-lived in GitHub" invariant is intact. The gate is the existing
+`vars.GCP_PROJECT_ID`, so `migrate` is a visible no-op stub until wiring is done.
+
+**Ordering — migrate *before* deploy.** `deploy` has `needs: migrate`, so a
+failed apply skips the deploy and prod keeps old code on old schema: coherent,
+nothing half-shipped. Deploying first would guarantee a window of *new code on
+old schema*, which is the failure this project has already shipped twice.
+`migrate` has `needs: [verify, rls, e2e]` — in particular **`rls`**, so no
+migration reaches prod unless the pgTAP allow/deny suite passed on the PR that
+merged it. Required checks gate *merges*; this gates the *apply*.
+
+Stated precisely, because the difference matters: this is **not** "pgTAP ran on
+the exact commit that applied the migration". On a **docs-only** push the `rls`
+job reports success via the #99 fast-path without running pgTAP, while `migrate`
+— deliberately, it has no path filter — still applies anything pending. A
+docs-only push has no migration of its own to apply, so there is no practical
+hole; the migration it could apply is one that already passed pgTAP as a
+required check on its own PR. `RLS pgTAP (Supabase)` being a *required* check is
+what actually carries the guarantee.
+
+#### The expand-only migration rule
+
+**A migration merged to `main` must be backward compatible with the currently
+deployed app.** Migrate-first means the old container keeps serving against the
+new schema for the length of the deploy — fine for an additive change, broken for
+a narrowing one. So a **contracting** change (drop/rename a column, tighten an
+RLS policy the live app relies on) ships as **two PRs**:
+
+1. the app stops depending on the thing, and deploys;
+2. *then* the contracting migration merges.
+
+This is the price of migrate-first with no staging tier. Related authoring rules:
+applied migrations are **immutable** (fix forward — the CLI silently ignores edits
+to a file already in the history table, so a changed applied file is invisible
+drift); no statements that cannot run inside a transaction
+(`CREATE INDEX CONCURRENTLY`, `VACUUM`), since each file is wrapped in one; and
+consider opening a migration with `set local lock_timeout = '5s';`.
+
+#### Drift is fail-closed
+
+`db push` is itself the drift gate — both drift classes exit **1** and therefore
+block the deploy, including for an unrelated docs-only merge, until a human
+repairs the history (runbook § 3):
+
+| Drift | CLI says | Fix |
+|---|---|---|
+| **Remote-ahead** — prod has a version the repo lacks (hand-applied SQL, or a branch that never merged) | `Remote migration versions not found in local migrations directory` | Merge the branch, or `migration repair --status reverted <version>` |
+| **Out-of-order** — a pending file whose timestamp precedes prod's history head (the two-developer merge race) | `Found local migration files to be inserted before the last migration on remote database` | Rename the file to a later timestamp, then `npx supabase db reset --local`. The workflow must **never** pass `--include-all`. |
+
+`migration list` **always exits 0**, so the post-flight step *parses* its
+pipe-delimited rows and fails on any blank cell on either side. With it, a green
+`migrate` means the repo's migration history **is** prod's migration history.
+
+Two limits, stated rather than hidden: an **edited already-applied** migration is
+undetectable, and `migration list` compares *history*, not *schema* — a change
+made in the dashboard SQL editor that never touches
+`supabase_migrations.schema_migrations` goes unnoticed. A scheduled prod invariant
+check is the named follow-up.
+
+The out-of-order class is also caught **at PR time**, before it can ever red
+`main`: `migrations-monotonic.test.ts` (in `verify`, no credentials) asserts that
+every migration a branch **adds** sorts after every migration already on the base
+branch. That comparison needs the merge base, which is why `verify` checks out
+with `fetch-depth: 0`.
+
+#### No path filter on `migrate`
+
+The docs-only fast-path (#99) is deliberately **not** extended to this job. `db
+push` with nothing pending is a sub-second no-op (`Local database is up to date.`,
+exit 0), so running it unconditionally costs almost nothing and buys two things: a
+path-filter bug can never silently skip a real migration (that failure mode fails
+*open*, which is unacceptable here), and every merge becomes a standing assertion
+that prod's history matches the repo.
 
 ## Ephemeral Supabase for E2E (#24 / #56)
 
