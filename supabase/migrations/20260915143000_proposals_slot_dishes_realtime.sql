@@ -1,0 +1,52 @@
+-- Migration: proposals + slot_dishes realtime (slice 1b, issue #64; ADR 0013)
+--
+-- Make the BOARD live the way the shopping list already is. A new dish proposal
+-- did not reach another member's already-open board (found at the P4
+-- family-validation gate, #54) for a reason no client change could fix:
+-- `public.proposals` is not in the `supabase_realtime` publication, so Postgres
+-- emits nothing for it. `20260625183220_realtime_publication.sql` added only
+-- `reactions, comments` — which is exactly why reactions and comments propagated
+-- while proposals silently did not. `slot_dishes` was absent for the same reason.
+--
+-- Two storage-layer prerequisites, both asserted in
+-- supabase/tests/16_realtime_replica_identity_test.sql:
+--
+--   1. REPLICA IDENTITY FULL, set BEFORE publication membership so no window
+--      exists where events stream with a PK-only change image. Logical
+--      replication emits only the replica-identity columns for a DELETE (and for
+--      an UPDATE's OLD image); under the DEFAULT identity that is the primary key
+--      alone. The board subscribes to `proposals` with `filter: week_id=eq.<id>`
+--      and Realtime evaluates that filter — and the household-scoped RLS SELECT
+--      policies — SERVER-SIDE against the change image, so a PK-only image makes
+--      both miss and the event is dropped before anyone is notified. That is the
+--      #63 bug class (20260721194820, un-react never arriving). `proposals` has
+--      no delete UI today, so its DELETE is not user-reachable yet; `slot_dishes`
+--      DELETE *is* (tap-to-unslot, app/board/slot-actions.ts), and the cost is one
+--      `alter table` line on a small, low-churn table either way.
+--
+--   2. Publication membership — the actual root cause above. Without it the
+--      client subscribes successfully, shows "Live", and receives nothing.
+--
+-- Why `slot_dishes` ships here rather than with its own issue (ADR 0013 §4):
+-- migrations do not auto-reach cloud prod (#68 is still open), so each one costs
+-- a manual `supabase db push` that is easy to forget. One apply covers the whole
+-- live-board story; the live-slotting follow-up (#209) is then client-only, with
+-- no SQL of its own.
+--
+-- Security: no new grants, no schema change, no service-role path, and no row
+-- CONTENT leaves the household. Realtime authorizes INSERT and UPDATE deliveries
+-- against the same household-scoped, FORCEd RLS policies (#13, and
+-- supabase/tests/10_proposals_rls_test.sql / 09_slot_dishes_rls_test.sql) using
+-- the subscriber's own JWT, so adding these tables to the publication widens
+-- exposure no further than SELECT already allows.
+--
+-- The one documented exception is DELETE: Realtime does NOT evaluate RLS on
+-- delete events, and delivers the PRIMARY KEY only — no `week_id`, no
+-- `household_id`, no titles or notes. So an authenticated user who ALREADY knows
+-- another household's row id could observe that it was deleted, and when. No
+-- content, and an unknown PK merges as a no-op on the client. That residual is
+-- already accepted for `reactions`/`comments`/`grocery_items` (20260721194820,
+-- 20260807160917); it is an upstream Realtime limitation.
+alter table public.proposals   replica identity full;
+alter table public.slot_dishes replica identity full;
+alter publication supabase_realtime add table public.proposals, public.slot_dishes;
