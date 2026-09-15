@@ -591,3 +591,36 @@ re-JOINs on every change) that would have made a naive fix look half-broken. **L
   containers vanished (`supabase stop` semantics) while I was querying `events`. If concurrent
   sessions are the norm, `db:start`/`db:stop` needs a refcount or each worktree needs its own project
   id — otherwise one agent silently breaks another's evidence.
+
+### 2026-09-15 — a config-invariant test that greps a file must grep the *executable* view of it (#68 QA)
+
+- **The assertion guarding a prod credential was satisfied by a code comment.** `ci-migrate-job.test.ts`
+  asserted that `::add-mask::` appears before the `$GITHUB_ENV` write by comparing `indexOf` positions
+  in the **raw** job block. An explanatory comment eight lines above the step also contains the token,
+  so the comparison matched the *comment*, which is before the write no matter what the executable
+  steps do. QA killed it twice: moving the masking line after the write, and **deleting it entirely**,
+  both left the suite green. **A config-invariant test must run against the comment-stripped view, and
+  pin its match to a whole executable line, not a bare token.** The file already had exactly that
+  machinery (`ciYmlExecutable`) for the banned-flag assertions — it just wasn't used here. Three more
+  assertions in the same file were load-bearing only by luck: no comment happened to match their
+  regexes, and one more explanatory comment would have made them vacuous too. All four now use it.
+- **The same PR hardened one parser against failing open while shipping an assertion that failed open.**
+  The post-flight drift parser got a deliberate row-count guard *because* a silent no-match would have
+  reported success — the exact reasoning that should have been applied to the masking assertion twenty
+  lines away in the same change. Getting the principle right in one place is not the same as applying
+  it; when you catch yourself writing "this must never fail open" in a comment, go re-read the sibling
+  checks in the same commit.
+- **Mutation-test every ordering and negative assertion.** "It failed before I wrote the code" does not
+  prove it will fail when the code is wrong in a *different* way. The telling detail: assertion #6 *did*
+  appear in the developer's first red run — it failed because the whole job, comment included, was
+  absent. A red that comes from "nothing exists yet" certifies nothing about a later partial
+  regression, which is the only kind a config-invariant test exists to catch. TDD's red step is
+  necessary, not sufficient; the sufficient step is deleting the line you claim to protect.
+- **Restore mutants from a file copy, not `git checkout --`.** Mutating `ci.yml` and restoring with
+  `git checkout -- ci.yml` silently reverted uncommitted fixes to that same file mid-run, and the next
+  mutant's result was measured against the wrong baseline. Commit (or `cp` aside) before mutating, and
+  sanity-check that the *unmutated* baseline is still green between mutants.
+- **Residual, accepted:** the comment-stripped view drops whole-line comments only. A *trailing* comment
+  on an executable line (`run: ... # --yes`) is still visible to these greps. Stripping trailing `#`
+  from YAML is not safe in general (a `#` can be legitimate inside a shell command or quoted string),
+  so this is left as a known limit rather than guessed at.

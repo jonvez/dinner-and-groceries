@@ -148,9 +148,9 @@ connection URI (port **5432**; the 6543 transaction pooler cannot run DDL).
 | Property | Value |
 |---|---|
 | Lives in | **GCP Secret Manager only.** Never a GitHub Actions secret, never `.env*`, never in the image. |
-| Read by | The **deploy SA**, via the same keyless WIF exchange `deploy` uses. `roles/secretmanager.secretAccessor` is granted to that SA **and nothing else**. |
+| Read by | The **deploy SA**, via the same keyless WIF exchange `deploy` uses. `roles/secretmanager.secretAccessor` is granted to the deploy SA only — **verified manually at setup** (runbook § 1.6); continuous verification is tracked in **#226**. Nothing in CI re-checks the GCP IAM policy, so treat this as a setup-time property, not an enforced one. |
 | Bound to Cloud Run | **Never.** The running app must not hold a credential that bypasses RLS (ADR 0003). Guarded by `ci-migrate-job.test.ts`. |
-| In logs | Masked with `::add-mask::` before it can reach any later log line. `--debug` is **banned** in this job — it prints the connection string. |
+| In logs | Masked with `::add-mask::` before it can reach any later log line, and the value is percent-escaped first (`${URI//%/%25}`) — the runner un-escapes `%25`/`%0A`/`%0D` in workflow-command data, so masking a raw URI containing any of them would register a mask that never matches the real secret. `--debug` is **banned** in this job — it prints the connection string. |
 | Reachable from a PR | No. The job is `push`-to-`main` only, so no PR (least of all a fork's) can reach it. |
 | Rotation | Reset the DB password, then `gcloud secrets versions add`. The job reads `:latest`, so no repo or workflow change. |
 
@@ -163,8 +163,17 @@ failed apply skips the deploy and prod keeps old code on old schema: coherent,
 nothing half-shipped. Deploying first would guarantee a window of *new code on
 old schema*, which is the failure this project has already shipped twice.
 `migrate` has `needs: [verify, rls, e2e]` — in particular **`rls`**, so no
-migration reaches prod on a commit whose pgTAP allow/deny suite did not pass.
-Required checks gate *merges*; this gates the *apply*.
+migration reaches prod unless the pgTAP allow/deny suite passed on the PR that
+merged it. Required checks gate *merges*; this gates the *apply*.
+
+Stated precisely, because the difference matters: this is **not** "pgTAP ran on
+the exact commit that applied the migration". On a **docs-only** push the `rls`
+job reports success via the #99 fast-path without running pgTAP, while `migrate`
+— deliberately, it has no path filter — still applies anything pending. A
+docs-only push has no migration of its own to apply, so there is no practical
+hole; the migration it could apply is one that already passed pgTAP as a
+required check on its own PR. `RLS pgTAP (Supabase)` being a *required* check is
+what actually carries the guarantee.
 
 #### The expand-only migration rule
 
