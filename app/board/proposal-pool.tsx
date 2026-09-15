@@ -434,9 +434,15 @@ export function ProposalPool({
 /**
  * Map a raw Postgres Changes payload to a PK-keyed RealtimeChange, applying the
  * week scope. INSERT/UPDATE rows carry `proposal_id`, so they're dropped unless
- * they belong to a proposal in this week. DELETE payloads (default replica
- * identity) carry only the PK — they're applied unconditionally and are a no-op
- * unless the id is in local state, which only ever holds this week's rows.
+ * they belong to a proposal in this week. DELETE payloads carry only the PK —
+ * they're applied unconditionally and are a no-op unless the id is in local
+ * state, which only ever holds this week's rows.
+ *
+ * The PK-only delete image is NOT about our replica identity (that was the
+ * stated cause here before 20260721194820, and it was wrong): Supabase's
+ * `realtime.apply_rls` reduces the delete payload to the primary key for any
+ * RLS-enabled table, whatever its identity. The invariant to rely on is
+ * "RLS enabled ⇒ delete payload is the PK", enforced upstream.
  */
 function toChange<T extends { id: string }>(
   payload: {

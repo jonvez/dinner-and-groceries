@@ -47,6 +47,28 @@
 -- content, and an unknown PK merges as a no-op on the client. That residual is
 -- already accepted for `reactions`/`comments`/`grocery_items` (20260721194820,
 -- 20260807160917); it is an upstream Realtime limitation.
+--
+-- Two corrections from the non-author security review of PR #214, which checked
+-- these claims against a live socket rather than taking them on trust:
+--
+--   1. The PK-only DELETE payload is NOT a consequence of the replica identity.
+--      Supabase's WALRUS function `realtime.apply_rls` carries an explicit guard
+--      -- `not is_rls_enabled or (c).is_pkey` -- so for ANY table with RLS
+--      enabled the delete image is reduced to the primary key, whatever its
+--      identity. FULL identity is what makes the server-side channel filter and
+--      RLS match on delete/update; it buys nothing extra for the client payload,
+--      and it does not widen DELETE at all. Verified live: a socket authed as
+--      household A, subscribed to `public.proposals` with NO filter, received
+--      nothing for household B's INSERT/UPDATE and exactly `{"id": "<uuid>"}`
+--      for its DELETE.
+--   2. What FULL identity DOES widen is UPDATE: the event now carries the full
+--      prior row in `old_record` (previous note text, `proposed_by`,
+--      `household_id`) where the default identity would carry the PK only.
+--      Delivery is still RLS-gated to the same household, `proposals_update` has
+--      both USING and WITH CHECK so a row cannot move households, there is no
+--      edit UI today, and the client handler discards the payload entirely
+--      (it treats a change as a trigger and re-renders on the server). Recorded
+--      here so the next reader does not have to rediscover it.
 alter table public.proposals   replica identity full;
 alter table public.slot_dishes replica identity full;
 alter publication supabase_realtime add table public.proposals, public.slot_dishes;
