@@ -525,3 +525,38 @@ app, not the issue body. The PO's "re-verify before Ready" step paid for itself 
 - Locally, with `fullyParallel` on, the two staple-promoting specs can race: they share user A's
   household, so one spec's "Complete trip" archives the other's item. CI runs one worker. Run local
   E2E with `CI=1` (hit by the #197 dev).
+
+### 2026-09-15 — a cross-cutting primitive shipped; nobody ever wired it up (#17 grooming)
+
+#16 landed the `events` table, RLS, the taxonomy enum and a typed emission helper, with a WIRING NOTE
+in the migration saying each feature slice would emit its own events "in that slice's own PR". Five
+slices later, `grep -rn "emitEvent"` finds **one** production call site out of ten event types. #17's
+dashboard would have shipped with every panel empty, and nothing would have failed — an unemitted
+event throws no error, breaks no test, and reads as "no activity yet".
+
+The split itself was right (primitive first, adoption per slice). What was missing is that **the
+adoption half was never a board item.** A note inside a migration is not a tracker. **Lesson:** when
+splitting a cross-cutting primitive from its per-slice adoption, create the adoption issue(s) at the
+moment of the split, or add the emit line to each slice's own acceptance criteria — a WIRING NOTE in
+SQL is invisible to everyone downstream. Generalizes beyond analytics to any
+"we'll call this from each feature later" primitive.
+
+### 2026-09-15 — two issues, two migrations, and #68 still isn't done
+
+Grooming #64 and #17 found both need a DB migration (Realtime publication + replica identity;
+owner-only `events_select`). Migrations don't auto-reach cloud prod, so each is a manual
+`supabase db push` someone has to remember after merge — the footgun PLAN.md warns about and #63 hit
+for real. Mitigation this round: #64's migration deliberately also covers `slot_dishes` so its
+follow-up (#209) ships with no SQL, turning three applies into two. That's a workaround, not a fix.
+**Observation:** the cost of #68 is now being paid in grooming decisions (bundling unrelated tables
+into one migration to save an apply), not just in deploy risk. Worth weighing when it's next prioritized.
+
+### 2026-09-15 — a filed bug's stated cause was one layer too shallow (#64)
+
+#64 said the board's Realtime channel doesn't subscribe to `proposals`. True — and not the blocker.
+`proposals` isn't in the `supabase_realtime` publication at all, so Postgres emits nothing for it; no
+client-side change could have fixed it. Re-verification also found two latent defects on the same code
+path (no channel at all on a zero-proposal week; the subscription keyed on the proposal-id list, so it
+re-JOINs on every change) that would have made a naive fix look half-broken. **Lesson:** for a
+"live updates don't arrive" bug, check the storage layer (publication membership, replica identity)
+*before* the client subscription. Same root shape as #63.
