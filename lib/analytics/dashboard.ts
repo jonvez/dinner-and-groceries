@@ -36,6 +36,12 @@
  *   - **Empty is said out loud.** Each panel carries `hasActivity`, so the page
  *     can render "no activity yet" instead of a zero-filled panel that reads
  *     like a breakage.
+ *   - **A FAILED read is not an empty one.** A failed read still degrades to
+ *     zeroes rather than throwing, but it sets `readFailed` so the page says
+ *     "couldn't load" instead. Without it, a stale PostgREST schema cache or a
+ *     network blip would tell Jon his family has not opened the app in a month
+ *     — the one failure mode that LIES rather than degrades, on the screen
+ *     whose only job is to report adoption truthfully.
  *   - `recipe_ingested` and `screen_view` have no panel, so they are not even
  *     read (ADR 0014 §2).
  *
@@ -143,6 +149,11 @@ export type TripsPanel = {
 
 export type DashboardSummary = {
   window: { start: string; end: string; days: number };
+  /**
+   * true ⇒ a read FAILED, so every figure below is UNKNOWN, not zero. The page
+   * must render "couldn't load", never the empty state.
+   */
+  readFailed: boolean;
   adoption: AdoptionPanel;
   participation: ParticipationPanel;
   trips: TripsPanel;
@@ -168,7 +179,7 @@ export function windowStart(now: Date): Date {
 export function summarizeDashboard(
   events: DashboardEvent[],
   members: DashboardMember[],
-  { now }: { now: Date },
+  { now, readFailed = false }: { now: Date; readFailed?: boolean },
 ): DashboardSummary {
   const start = windowStart(now);
   const today = dayKey(now);
@@ -256,6 +267,9 @@ export function summarizeDashboard(
 
   return {
     window: { start: start.toISOString(), end: now.toISOString(), days: WINDOW_DAYS },
+    // Pure aggregation always has its data; only the READ can fail, so the
+    // caller passes this through.
+    readFailed,
     adoption: {
       hasActivity: usageEvents > 0,
       byMember: ordered.map((m) => ({
@@ -298,13 +312,19 @@ type MemberRow = { id: string; display_name: string };
  * anyway.
  *
  * Degradation: a failed read yields an empty summary rather than throwing, so
- * the page renders its explicit empty states instead of a 500.
+ * the page renders instead of 500ing — but it is flagged `readFailed`, because
+ * an empty summary and a BROKEN one must never read the same. `error` is
+ * inspected on BOTH reads (an error alongside rows still counts: a partial
+ * result is not the picture we were asked to render).
  */
 export async function loadDashboardSummary(
   supabase: Pick<DbClient, "from">,
   { now = new Date() }: { now?: Date } = {},
 ): Promise<DashboardSummary> {
-  const [{ data: eventRows }, { data: memberRows }] = await Promise.all([
+  const [
+    { data: eventRows, error: eventsError },
+    { data: memberRows, error: membersError },
+  ] = await Promise.all([
     supabase
       .from("events")
       .select("event_type, member_id, created_at")
@@ -312,6 +332,8 @@ export async function loadDashboardSummary(
       .in("event_type", [...DASHBOARD_EVENT_TYPES]),
     supabase.from("members").select("id, display_name"),
   ]);
+
+  const readFailed = Boolean(eventsError) || Boolean(membersError);
 
   const events = ((eventRows ?? []) as unknown as EventRow[]).map((row) => ({
     eventType: row.event_type,
@@ -323,5 +345,5 @@ export async function loadDashboardSummary(
     displayName: row.display_name,
   }));
 
-  return summarizeDashboard(events, members, { now });
+  return summarizeDashboard(events, members, { now, readFailed });
 }
