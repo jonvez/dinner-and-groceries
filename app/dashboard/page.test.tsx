@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { summarizeDashboard } from "@/lib/analytics/dashboard";
+import { summarizeDashboard, type DashboardSummary } from "@/lib/analytics/dashboard";
 
 /**
  * The `/dashboard` owner gate (issue #17, ADR 0014 §3) — the route half of a
@@ -54,10 +54,12 @@ const SUMMARY = summarizeDashboard(
   { now: NOW },
 );
 
-const loadDashboardSummary = vi.fn(async () => SUMMARY);
+const loadDashboardSummary = vi.fn<(...args: unknown[]) => Promise<DashboardSummary>>(
+  async () => SUMMARY,
+);
 vi.mock("@/lib/analytics/dashboard", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/analytics/dashboard")>()),
-  loadDashboardSummary: (...args: unknown[]) => loadDashboardSummary(...(args as [])),
+  loadDashboardSummary: (...args: unknown[]) => loadDashboardSummary(...args),
 }));
 
 // The RLS-scoped cookie-session client the Server Component is handed.
