@@ -763,6 +763,34 @@ Today alone he was pointed at un-merged branch content several times: the runboo
 before it merged, ADR 0015 "read it from PR #212 if it isn't on `main` yet", and every "I'll fix that
 on the branch" where the thing he wanted to read only existed on a feature branch.
 
+**Third instance of the same root cause, added after the fact (Jon, 2026-09-27):** the `.md` paths I
+print into iTerm don't resolve into IntelliJ, and he has struggled to set an iTerm preference for
+reviewing Markdown. He suggested this might be its own item; grouping it here instead, because it is
+the same defect wearing different clothes — **I emit references (a branch name, an absolute file
+path) that his tools cannot open, when I could emit the content.** Note the path case is arguably
+worse than the branch case: a printed path *looks* actionable, so it invites a click that silently
+does nothing useful, whereas a branch name at least announces the work it is asking for. Fixing my
+output removes both without configuring anything; configuring iTerm and IntelliJ only makes the
+symptom cheaper. Do option 1 first and see what is left.
+
+### 2026-09-27 — I said "Starting now" and then ended the turn
+
+Mid-sequence, after reporting that PR #220's migration had applied, I wrote "Next up per your order:
+the two routine Dependabot PRs, then PR #223. Starting now." — and then yielded, taking no action.
+Jon had to reply "go ahead" before anything happened, and asked whether this was yet another retro
+topic. It is.
+
+The work was already authorized (he had said "merge the PR. Then do the Dependabot PRs"), unblocked,
+and mine to do. Nothing was waiting on him. Worse, the message *claimed* action was underway, so the
+stall was invisible: from his side it is indistinguishable from background work running slowly, which
+is exactly the ambiguity this session has been fighting elsewhere (an armed auto-merge on a conflicted
+branch, PR #221, sat inert for ten days looking identical to "in progress").
+
+**Rule:** if a message says work is starting, the tool calls for it belong in that same turn. If the
+turn is ending instead, the message must say what it is waiting for and why. "Starting now" followed
+by silence is a status claim that isn't true yet — the same defect as a green test that asserts
+nothing, applied to prose.
+
 **The asymmetry to fix is mine, not IntelliJ's.** Options, in the order I should reach for them:
 1. **Bring the content to him.** For a doc or a diff, send the file (or paste the relevant section)
    rather than naming a branch. A rendered file lands in front of him; a branch name is a chore.
