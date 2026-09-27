@@ -637,3 +637,32 @@ is `body, date, id, projects, seq, status, supersedes, title, topic` — no `ack
 fire-and-forget, so "was this convention adopted in project X?" is unanswerable from the log. Worth a
 rig-side change to the schema plus the `broadcast-process-change` skill if adoption should be
 trackable.
+
+### 2026-09-27 — the runbook's first real reader hit a stale nav path in step 1.1
+
+Jon started the #68 credential setup and could not find the step at all. The runbook said
+*Project Settings → Database → Database password*; Supabase has since moved it to
+**Database → Settings** in the left sidebar (and `/settings/database` now redirects to
+`/database/settings`). Five minutes lost before the first command ran. Fixed in the same pass, and
+the fix leads with the **direct URL** rather than a click path, on the grounds that a vendor's nav is
+the least durable thing you can write down.
+
+**This is the second failure of the same runbook, in the same class.** The 2026-09-10 entry
+("I wrote the runbook, then handed over commands nobody could run") is about handing a human steps
+the author never executed. That entry's proposed fix — *rehearse before handing over* — was applied
+to the shell commands (`openssl`, `read -rs`, `migration list` were all rehearsed) but **not** to the
+one step that lives in somebody else's UI, because it cannot be rehearsed from a terminal. So the
+rehearsal discipline had a hole exactly where verification was hardest, and that is precisely where
+it broke.
+
+**What actually worked:** opening the page in Jon's own browser and screenshotting it, which located
+the control in one shot and produced the correction. Cheap, and available the whole time.
+
+**Practice to adopt (Jon's call, 2026-09-27):** when a human hits a stale step, correct the doc **in
+that same session**, not as a follow-up — a runbook is only ever read under time pressure, and a
+correction deferred is a correction nobody makes. For third-party UIs specifically: write the URL,
+name the card or button text, and treat any click path as a hint that will rot. Where the step is in
+a UI an agent can reach, verify it by looking at the real page before publishing the instruction.
+
+Related: a runbook step nobody can execute is the same defect class as a test nobody can fail
+(2026-09-15, the vacuous cross-week guard) — written, plausible, and load-bearing on nothing.
