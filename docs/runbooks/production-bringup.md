@@ -149,6 +149,15 @@ In the Supabase dashboard: **New project** → Organization = Jon's → Name e.g
 → **Plan: Free** → generate a DB password (store in Jon's password manager). Copy the
 **project ref** (`<project-ref>`, the subdomain of the project URL).
 
+> **§ 1.2–1.3 are the BRING-UP record, not the ongoing procedure.** Since #68 / **ADR 0015**,
+> schema changes reach cloud prod **automatically**: the `migrate` job in `.github/workflows/ci.yml`
+> runs `supabase db push` against prod on every push to `main`, before the Cloud Run deploy. Do
+> **not** hand-apply migrations — a version applied to prod that is not on `main` is remote-ahead
+> drift and wedges every subsequent deploy until someone runs `migration repair`. For anything
+> ongoing (setup of the credential, rotation, or a red `migrate` run) use
+> **`docs/runbooks/prod-migrations.md`**. The two steps below are kept because they are what was
+> actually done to bring the project up.
+
 ### 1.2 Link the local repo to the prod project
 ```
 supabase link --project-ref <project-ref>
