@@ -615,3 +615,25 @@ warning in a log nobody re-reads mid-task is not a guard. Cheapest fix: fail the
 runner) loudly when those vars are unset outside CI, the way `ci.yml` already greps the emitted
 chunks to verify they were inlined. Same class: this worktree had no `node_modules` of its own, so
 `next build` failed until `npm ci` ran inside it — also already a known trap.
+
+### 2026-09-17 — process-bus evt-0008: qualify issue and PR numbers, never a bare `#N`
+
+Ratified convention, global to anything using GitHub Projects (Jon's words: "a global issue for
+anything using GitHub projects"). Issues take the project prefix — `dinner-and-groceries #177`,
+`Rig #56`. Pull requests take `PR` — `PR #68`. Issue and PR numbering spaces overlap constantly
+inside one repo, so a bare `#56` in a status table forces the reader to open it to learn which it is;
+across several board-run projects the repo name carries real information too.
+
+Applies to prose, tables, summaries, commit bodies, PR descriptions and issue bodies. The one
+exception is GitHub's auto-link trailers, which need the bare form (`Closes #41`, `Refs #56`) — keep
+those bare and qualify the number in the surrounding prose. Related gotcha: `Closes #41, #42, #43`
+closes only #41, because GitHub honours the keyword before the *first* number, so each needs its own
+`Closes`.
+
+Observed while adopting it: **the bus has no ack path.** `mempalace_event_ack` rejects these ids
+(`event 'evt-0008' not found`) because the bus is `~/dev/rig/bus/process-events.jsonl`, whose schema
+is `body, date, id, projects, seq, status, supersedes, title, topic` — no `acks`, no `consumers`, no
+`delivered_to`. None of the eight events to date records who received or applied it. Broadcasts are
+fire-and-forget, so "was this convention adopted in project X?" is unanswerable from the log. Worth a
+rig-side change to the schema plus the `broadcast-process-change` skill if adoption should be
+trackable.
