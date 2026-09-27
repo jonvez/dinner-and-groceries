@@ -28,10 +28,27 @@ re-running is safe: only still-pending files are applied.
 
 ### 1.1 Get a database password for the prod project
 
-Supabase dashboard → project **`dinner-and-groceries`** (ref `wcbjuobzeursmomcoefw`) →
-**Project Settings → Database → Database password → Reset database password**.
+Go straight to the page — **the URL is the durable part, the nav is not**:
 
-The password cannot be read back after creation, so reset it and capture the new one. Use an
+```
+https://supabase.com/dashboard/project/wcbjuobzeursmomcoefw/database/settings
+```
+
+Then: **Database password** card at the top of the page → **Reset password** (button on the right).
+
+If you'd rather click through: left sidebar **Database** (the stacked-disks icon) → **Settings**
+under CONFIGURATION → **Database password**. Note this is *not* under the gear/Project Settings menu,
+which is where an older Supabase layout put it — and where this runbook sent Jon on 2026-09-27,
+costing him the first five minutes of the setup. `/settings/database` now redirects to
+`/database/settings`. Expect the vendor to move this again; trust the URL and the card title over
+any path written down here.
+
+The page warns that resetting "will break any existing connections". Nothing in prod depends on this
+password — the app authenticates with the anon key — but it does invalidate the local `supabase link`
+cache (see the note below).
+
+The password cannot be read back after creation, so reset it and capture the new one **immediately**;
+Supabase shows it once. Use an
 **alphanumeric-only** password — the CLI requires the connection URI to be percent-encoded, and
 alphanumeric sidesteps the whole problem:
 
