@@ -59,9 +59,22 @@ Deployed on Cloud Run (`https://dinner-and-groceries-nr55phmu6q-uc.a.run.app`), 
 Supabase prod project (ref `wcbjuobzeursmomcoefw`, Free tier). Posture of record: ADRs 0009
 (keyless-WIF/Cloud Run) + 0010 (cloud-Supabase-as-prod) + 0011 (Realtime verified live two-client on
 cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-bringup.md`.
-- **Migrations do NOT auto-reach cloud prod.** CI applies migrations only to ephemeral CI Postgres; the
-  cloud Supabase schema changes ONLY via a manual `supabase db push` (login → link `--project-ref
-  wcbjuobzeursmomcoefw` → push). A merged migration is NOT live until that runs — a real footgun.
+- **Migrations reach cloud prod automatically, before the app deploys.** Posture of record: ADR 0015;
+  procedures in `docs/runbooks/prod-migrations.md`. A `migrate` job applies `supabase/migrations/` to
+  prod on every push to `main` after `verify`+`rls`+`e2e`, then asserts prod's migration history
+  matches the repo; `deploy` has `needs: migrate`, so a failed apply leaves prod on old code AND old
+  schema rather than new code on old schema. Consequences worth knowing before writing a migration:
+  - **Expand-only rule.** A migration merged to `main` must be backward compatible with the
+    *currently deployed* app — the old container serves against the new schema for the length of the
+    deploy. A contracting change (drop/rename a column, tighten an RLS policy the live app relies on)
+    ships as two PRs: app stops depending on it and deploys, *then* the contraction merges.
+  - **Applied migrations are immutable.** Fix forward. The CLI silently ignores edits to a file
+    already in prod's history table, so an edited applied migration is invisible drift.
+  - **Drift is fail-closed.** A version in prod that the repo lacks, or a pending file older than
+    prod's history head, exits non-zero and blocks *all* deploys (docs-only merges included) until a
+    human repairs the history. Never hand-apply SQL to prod without the file also landing on `main`.
+  - The credential is one GCP Secret Manager secret (`SUPABASE_MIGRATION_DB_URL`, the session-pooler
+    URI), readable by the deploy SA only, never bound to Cloud Run, never a GitHub secret.
 - **Applying SQL to cloud prod needs no database password.** `npx supabase db query --linked -f <file>`
   runs a SQL file against the linked project through the **Management API on the existing
   `supabase login` token** — no connection string, no tunnel. (`db push` is the one that wants the DB
@@ -113,8 +126,9 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   invocation is `npx supabase` **run from the repo root** — a bare `supabase` is `command not found`,
   and a global install would defeat the #164 pin. `db push` additionally needs the **database
   password** (dashboard -> Project Settings -> Database); `db query --linked` does not, it rides the
-  `supabase login` token. A migration lives only on its feature branch, so applying one to prod means
-  checking that branch out first: schema **then** merge, never the reverse.
+  `supabase login` token. **Merge is now the way a migration reaches prod** (ADR 0015) — do not hand-apply
+  one from a feature branch, since a prod version that is not on `main` is remote-ahead drift and blocks
+  every subsequent deploy.
 - **Auto mode is NOT project-settable** (CC v2.1.142+): `defaultMode: "auto"` in `.claude/settings.json` is
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
