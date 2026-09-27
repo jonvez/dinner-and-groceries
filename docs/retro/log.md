@@ -7,6 +7,14 @@ eventual `build-team` skill and is comparable across projects using the same pro
 
 Format: `### YYYY-MM-DD — <short title>` then **Observation / Impact / Suggested change**.
 
+**Entries propose; the retro decides.** Anything an entry says about a fix is a *candidate*, however
+confidently it is worded — real-time candidates are welcome and often the most valuable part of the
+entry, but the point of the retro is to walk the items one at a time and align on the right answer.
+So: no entry should read as a ratified rule unless a decision was actually taken, in which case name
+who decided and when. Wording like "Rule:", "Convention:", or "Practice to adopt" without an
+attributed decision is a drafting error — it forecloses the conversation the log exists to feed.
+(Jon, 2026-09-27.)
+
 ---
 
 ### 2026-06-19 — Process baseline established
@@ -661,7 +669,7 @@ it broke.
 **What actually worked:** opening the page in Jon's own browser and screenshotting it, which located
 the control in one shot and produced the correction. Cheap, and available the whole time.
 
-**Practice to adopt (Jon's call, 2026-09-27):** when a human hits a stale step, correct the doc **in
+**Candidate practice (mine, not yet agreed — Jon asked for the topic, not this answer):** when a human hits a stale step, correct the doc **in
 that same session**, not as a follow-up — a runbook is only ever read under time pressure, and a
 correction deferred is a correction nobody makes. For third-party UIs specifically: write the URL,
 name the card or button text, and treat any click path as a hint that will rot. Where the step is in
@@ -712,8 +720,10 @@ each because he could not tell what was literal.
    template containing `<NEW_PASSWORD>` — substitute this. Step 1.3 handed him a literal command
    containing `printf 'Paste the connection URI: '` — quoted English that *looks* like a
    placeholder, but must be pasted verbatim. He reasonably asked which part of it to replace, and
-   which delimiter marked the boundary. **Convention, stated once and held to: `<ANGLE_BRACKETS>`
-   are the only thing a reader ever replaces. Everything else is literal.**
+   which delimiter marked the boundary. **Candidate convention: `<ANGLE_BRACKETS>` are the only
+   thing a reader ever replaces, and everything else is literal.** I started applying it immediately
+   in-session because he needed *some* convention to read the next command by; whether it is the one
+   we keep is a retro question.
 2. **An "expected output" sketch that was not the real output.** I told him to expect
    `20260915143000 | <blank> |` with nothing in the third column. The real row carries a timestamp
    there, because `migration list` derives `Time (UTC)` from the version number itself and populates
@@ -786,7 +796,7 @@ stall was invisible: from his side it is indistinguishable from background work 
 is exactly the ambiguity this session has been fighting elsewhere (an armed auto-merge on a conflicted
 branch, PR #221, sat inert for ten days looking identical to "in progress").
 
-**Rule:** if a message says work is starting, the tool calls for it belong in that same turn. If the
+**Candidate rule (mine):** if a message says work is starting, the tool calls for it belong in that same turn. If the
 turn is ending instead, the message must say what it is waiting for and why. "Starting now" followed
 by silence is a status claim that isn't true yet — the same defect as a green test that asserts
 nothing, applied to prose.
