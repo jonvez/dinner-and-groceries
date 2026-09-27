@@ -7,6 +7,14 @@ eventual `build-team` skill and is comparable across projects using the same pro
 
 Format: `### YYYY-MM-DD — <short title>` then **Observation / Impact / Suggested change**.
 
+**Entries propose; the retro decides.** Anything an entry says about a fix is a *candidate*, however
+confidently it is worded — real-time candidates are welcome and often the most valuable part of the
+entry, but the point of the retro is to walk the items one at a time and align on the right answer.
+So: no entry should read as a ratified rule unless a decision was actually taken, in which case name
+who decided and when. Wording like "Rule:", "Convention:", or "Practice to adopt" without an
+attributed decision is a drafting error — it forecloses the conversation the log exists to feed.
+(Jon, 2026-09-27.)
+
 ---
 
 ### 2026-06-19 — Process baseline established
@@ -180,6 +188,9 @@ Raw observations from the first epic-level autonomous run (12c + 12d). Logged as
 - **Observation:** There is **no `supabase db push` anywhere in CI** — migrations are applied only to ephemeral CI Postgres for pgTAP/E2E. The cloud Supabase prod schema changes ONLY via a manual `supabase db push` (the bring-up runbook). So even with a fixed app deploy, `/grocery` would 500 until Jon ran the push by hand.
 - **Impact:** A merged, CI-green migration is **not live** until a human remembers a manual step that lives only in a runbook. Silent divergence between "schema in repo" and "schema in prod."
 - **Suggested change:** automate or explicitly gate the cloud migration push (a deploy-pipeline `db push` step with the access token, or a required manual runbook checkbox in the epic acceptance). Make "migrations applied to prod" part of the definition of *deployed*.
+- **RESOLVED 2026-09-15 (#68, ADR 0015).** A `migrate` job now applies `supabase/migrations/` to prod on every push to `main`, after `verify`+`rls`+`e2e` and **before** `deploy` (`deploy` has `needs: migrate`), with a post-flight `migration list` parse that fails unless prod's history matches the repo. "Migrations applied to prod" is now part of *deployed* by construction rather than by remembering. **It took 34 days and two more incidents to close**, and the thing that finally forced it was not the retro entry — it was the cost leaking into *design*: #64's migration was deliberately widened to cover `slot_dishes` purely to save one manual apply. **A known footgun that nobody schedules eventually starts distorting scope decisions; that distortion is the signal to stop deferring it.**
+- **What worked: rehearsing the tool before designing around it.** The architect exercised the pinned CLI against a throwaway `postgres:15` container — all five paths (clean apply, mid-file failure, resume, remote-ahead drift, out-of-order file) — *before* writing the ADR, and the developer re-ran the same rehearsal before opening the PR. That produced facts the docs do not state: atomicity is **per migration file** (a file failing on statement 2 rolls statement 1 back), `--yes` is mandatory or a non-TTY run hangs on the confirm prompt, `migration list` **always exits 0** so a wrapper must parse it, and an **edited already-applied migration is silently ignored** — no checksum, no warning. Two design decisions came directly out of that (the post-flight parser exists *because* of the exit-0 finding; "applied migrations are immutable" is a process rule *because* CI provably cannot enforce it). **Generalizable:** for any issue whose core is "make an external tool do X in CI", rehearse the tool locally against a disposable target first. The alternative is discovering the tool's real behaviour from a red `main` run against prod.
+- **Residual, deliberately not closed:** a push-to-`main` job can never be a required check, so the only signals for a red `migrate` remain GitHub's notification and the board — the same blind spot as the sibling 2026-08-12 entry above. The durable answer is the **scheduled prod invariant check** (filed as its own issue), not this job.
 
 ### 2026-08-12 — no staging environment (raised for productization)
 
@@ -588,3 +599,219 @@ re-JOINs on every change) that would have made a naive fix look half-broken. **L
   containers vanished (`supabase stop` semantics) while I was querying `events`. If concurrent
   sessions are the norm, `db:start`/`db:stop` needs a refcount or each worktree needs its own project
   id — otherwise one agent silently breaks another's evidence.
+
+### 2026-09-15 — a named regression guard that asserts the wrong thing (QA of #64 / PR #214)
+
+`e2e/authed/realtime.spec.ts` gained a test called *"a proposal on ANOTHER week does not re-render
+this week's open board"*. QA mutated the `proposals` binding back to `household_id=eq.<id>` and the
+test **still passed** (#219): its assertions check *"the other week's content is absent"*, which stays
+true even when the page does re-render, because the server render is week-scoped either way. The AC
+was in fact protected — by three component tests — but the E2E advertised a guard it did not provide.
+That is the same shape of gap that let #64 survive in the first place (the old E2E proposed *before*
+the observer opened the board). **Lesson:** a test that is nominated as *the* regression guard for an
+acceptance criterion has to be proven red by mutating the specific mechanism it names — not by
+reverting the whole feature, which makes everything go red for the wrong reason and hides tests that
+assert nothing. The dev's pre-fix revert here did show red, but for a different cause (no channel at
+all on a zero-proposal week), which masked this.
+
+Also: instant negative assertions (`toHaveCount(0)` immediately after the actor acts) prove almost
+nothing about a *live* path — they resolve on the first poll, before any push could have arrived. A
+negative Realtime assertion needs a bounded settle window, or a positive control that must change.
+
+### 2026-09-15 — the retro log warned about this and it still cost 20 minutes (third time)
+
+The 2026-09-11 entry already says a local `npm run build` for E2E needs `NEXT_PUBLIC_SUPABASE_URL` /
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` at build time. It has now bitten devs on #196, #197 and #64. A
+warning in a log nobody re-reads mid-task is not a guard. Cheapest fix: fail the build (or the E2E
+runner) loudly when those vars are unset outside CI, the way `ci.yml` already greps the emitted
+chunks to verify they were inlined. Same class: this worktree had no `node_modules` of its own, so
+`next build` failed until `npm ci` ran inside it — also already a known trap.
+
+### 2026-09-17 — process-bus evt-0008: qualify issue and PR numbers, never a bare `#N`
+
+Ratified convention, global to anything using GitHub Projects (Jon's words: "a global issue for
+anything using GitHub projects"). Issues take the project prefix — `dinner-and-groceries #177`,
+`Rig #56`. Pull requests take `PR` — `PR #68`. Issue and PR numbering spaces overlap constantly
+inside one repo, so a bare `#56` in a status table forces the reader to open it to learn which it is;
+across several board-run projects the repo name carries real information too.
+
+Applies to prose, tables, summaries, commit bodies, PR descriptions and issue bodies. The one
+exception is GitHub's auto-link trailers, which need the bare form (`Closes #41`, `Refs #56`) — keep
+those bare and qualify the number in the surrounding prose. Related gotcha: `Closes #41, #42, #43`
+closes only #41, because GitHub honours the keyword before the *first* number, so each needs its own
+`Closes`.
+
+Observed while adopting it: **the bus has no ack path.** `mempalace_event_ack` rejects these ids
+(`event 'evt-0008' not found`) because the bus is `~/dev/rig/bus/process-events.jsonl`, whose schema
+is `body, date, id, projects, seq, status, supersedes, title, topic` — no `acks`, no `consumers`, no
+`delivered_to`. None of the eight events to date records who received or applied it. Broadcasts are
+fire-and-forget, so "was this convention adopted in project X?" is unanswerable from the log. Worth a
+rig-side change to the schema plus the `broadcast-process-change` skill if adoption should be
+trackable.
+
+### 2026-09-27 — the runbook's first real reader hit a stale nav path in step 1.1
+
+Jon started the #68 credential setup and could not find the step at all. The runbook said
+*Project Settings → Database → Database password*; Supabase has since moved it to
+**Database → Settings** in the left sidebar (and `/settings/database` now redirects to
+`/database/settings`). Five minutes lost before the first command ran. Fixed in the same pass, and
+the fix leads with the **direct URL** rather than a click path, on the grounds that a vendor's nav is
+the least durable thing you can write down.
+
+**This is the second failure of the same runbook, in the same class.** The 2026-09-10 entry
+("I wrote the runbook, then handed over commands nobody could run") is about handing a human steps
+the author never executed. That entry's proposed fix — *rehearse before handing over* — was applied
+to the shell commands (`openssl`, `read -rs`, `migration list` were all rehearsed) but **not** to the
+one step that lives in somebody else's UI, because it cannot be rehearsed from a terminal. So the
+rehearsal discipline had a hole exactly where verification was hardest, and that is precisely where
+it broke.
+
+**What actually worked:** opening the page in Jon's own browser and screenshotting it, which located
+the control in one shot and produced the correction. Cheap, and available the whole time.
+
+**Candidate practice (mine, not yet agreed — Jon asked for the topic, not this answer):** when a human hits a stale step, correct the doc **in
+that same session**, not as a follow-up — a runbook is only ever read under time pressure, and a
+correction deferred is a correction nobody makes. For third-party UIs specifically: write the URL,
+name the card or button text, and treat any click path as a hint that will rot. Where the step is in
+a UI an agent can reach, verify it by looking at the real page before publishing the instruction.
+
+Related: a runbook step nobody can execute is the same defect class as a test nobody can fail
+(2026-09-15, the vacuous cross-week guard) — written, plausible, and load-bearing on nothing.
+
+### 2026-09-15 — a config-invariant test that greps a file must grep the *executable* view of it (#68 QA)
+
+- **The assertion guarding a prod credential was satisfied by a code comment.** `ci-migrate-job.test.ts`
+  asserted that `::add-mask::` appears before the `$GITHUB_ENV` write by comparing `indexOf` positions
+  in the **raw** job block. An explanatory comment eight lines above the step also contains the token,
+  so the comparison matched the *comment*, which is before the write no matter what the executable
+  steps do. QA killed it twice: moving the masking line after the write, and **deleting it entirely**,
+  both left the suite green. **A config-invariant test must run against the comment-stripped view, and
+  pin its match to a whole executable line, not a bare token.** The file already had exactly that
+  machinery (`ciYmlExecutable`) for the banned-flag assertions — it just wasn't used here. Three more
+  assertions in the same file were load-bearing only by luck: no comment happened to match their
+  regexes, and one more explanatory comment would have made them vacuous too. All four now use it.
+- **The same PR hardened one parser against failing open while shipping an assertion that failed open.**
+  The post-flight drift parser got a deliberate row-count guard *because* a silent no-match would have
+  reported success — the exact reasoning that should have been applied to the masking assertion twenty
+  lines away in the same change. Getting the principle right in one place is not the same as applying
+  it; when you catch yourself writing "this must never fail open" in a comment, go re-read the sibling
+  checks in the same commit.
+- **Mutation-test every ordering and negative assertion.** "It failed before I wrote the code" does not
+  prove it will fail when the code is wrong in a *different* way. The telling detail: assertion #6 *did*
+  appear in the developer's first red run — it failed because the whole job, comment included, was
+  absent. A red that comes from "nothing exists yet" certifies nothing about a later partial
+  regression, which is the only kind a config-invariant test exists to catch. TDD's red step is
+  necessary, not sufficient; the sufficient step is deleting the line you claim to protect.
+- **Restore mutants from a file copy, not `git checkout --`.** Mutating `ci.yml` and restoring with
+  `git checkout -- ci.yml` silently reverted uncommitted fixes to that same file mid-run, and the next
+  mutant's result was measured against the wrong baseline. Commit (or `cp` aside) before mutating, and
+  sanity-check that the *unmutated* baseline is still green between mutants.
+- **Residual, accepted:** the comment-stripped view drops whole-line comments only. A *trailing* comment
+  on an executable line (`run: ... # --yes`) is still visible to these greps. Stripping trailing `#`
+  from YAML is not safe in general (a `#` can be legitimate inside a shell command or quoted string),
+  so this is left as a known limit rather than guessed at.
+
+### 2026-09-27 — two conventions I broke while walking Jon through a runbook
+
+Both surfaced in the same ten minutes of the #68 credential setup, and both cost him a round trip
+each because he could not tell what was literal.
+
+1. **Placeholder marking was inconsistent between consecutive steps.** Step 1.2 handed him a
+   template containing `<NEW_PASSWORD>` — substitute this. Step 1.3 handed him a literal command
+   containing `printf 'Paste the connection URI: '` — quoted English that *looks* like a
+   placeholder, but must be pasted verbatim. He reasonably asked which part of it to replace, and
+   which delimiter marked the boundary. **Candidate convention: `<ANGLE_BRACKETS>` are the only
+   thing a reader ever replaces, and everything else is literal.** I started applying it immediately
+   in-session because he needed *some* convention to read the next command by; whether it is the one
+   we keep is a retro question.
+2. **An "expected output" sketch that was not the real output.** I told him to expect
+   `20260915143000 | <blank> |` with nothing in the third column. The real row carries a timestamp
+   there, because `migration list` derives `Time (UTC)` from the version number itself and populates
+   it on whichever side the row exists. He spotted the difference and had to ask whether it was an
+   error case I had failed to mention. An illustration a human diffs against real output has to be
+   the real output, or it manufactures exactly the doubt it was meant to remove — paste a captured
+   sample, don't retype an approximation.
+
+Same family as the 2026-09-27 stale-nav entry above: three defects in one sitting, all in
+instructions handed to a human, none of them in the code.
+
+### 2026-09-27 — empty junk directories accumulating beside the repo (`dinner-and-groceries-56`, `-worktrees`)
+
+Jon found two stray directories in `~/dev` and asked whether they were safe to delete. Both were
+empty shells with no `.git` and no files at all:
+
+- **`dinner-and-groceries-56/`** (2026-08-03) held only an empty `supabase/snippets/`. That is the
+  Supabase CLI scaffolding a project directory after being run from a path that did not exist — the
+  `-56` suffix suggests someone intended a worktree for issue 56, the `cd` failed, and the CLI
+  helpfully created the tree anyway. A failed `cd` that silently *succeeds* at creating a directory
+  is the whole bug.
+- **`dinner-and-groceries-worktrees/`** (2026-08-13) was an abandoned parent directory from before
+  the convention moved worktrees under `.claude/worktrees/`.
+
+Removed with `rmdir` (not `rm -rf`) specifically so that a misreading would fail loudly rather than
+destroy something; both were genuinely empty, and `git worktree prune` found no stale registrations.
+
+**Jon's ask: minimize or eliminate these in future.** Candidate practices, cheapest first:
+1. Never create a sibling directory to the repo. Worktrees belong under `.claude/worktrees/`
+   (already the convention) and scratch work belongs in the session scratchpad.
+2. Any command that takes a path should be run against a path that is verified to exist first —
+   the CLI class of tool will create what it needs rather than telling you your `cd` failed. This is
+   the same "no `cd`-compound commands" rule from CLAUDE.md, arriving from a different direction:
+   `cd X && npx supabase …` where `X` is wrong is exactly what produces one of these.
+3. Prune a finished agent's worktree at hand-off rather than at session end (already proposed in the
+   2026-09-10 entry, now with a second motivation).
+
+### 2026-09-27 — I keep making Jon the middleman between a branch and his IDE
+
+**Jon's words:** he is on IntelliJ, the UI for selecting a branch is not entirely clear, and he would
+"love to not have to be the middleman between steps that you ask me to review on a branch and using
+them in the UI." Filed as its own topic rather than bundled with the junk-directory entry above: that
+one is about agents writing outside the repo, this one is about *review ergonomics* — I hand him a
+location when I should hand him the content.
+
+Today alone he was pointed at un-merged branch content several times: the runbook step in PR #217
+before it merged, ADR 0015 "read it from PR #212 if it isn't on `main` yet", and every "I'll fix that
+on the branch" where the thing he wanted to read only existed on a feature branch.
+
+**Third instance of the same root cause, added after the fact (Jon, 2026-09-27):** the `.md` paths I
+print into iTerm don't resolve into IntelliJ, and he has struggled to set an iTerm preference for
+reviewing Markdown. He suggested this might be its own item; grouping it here instead, because it is
+the same defect wearing different clothes — **I emit references (a branch name, an absolute file
+path) that his tools cannot open, when I could emit the content.** Note the path case is arguably
+worse than the branch case: a printed path *looks* actionable, so it invites a click that silently
+does nothing useful, whereas a branch name at least announces the work it is asking for. Fixing my
+output removes both without configuring anything; configuring iTerm and IntelliJ only makes the
+symptom cheaper. Do option 1 first and see what is left.
+
+### 2026-09-27 — I said "Starting now" and then ended the turn
+
+Mid-sequence, after reporting that PR #220's migration had applied, I wrote "Next up per your order:
+the two routine Dependabot PRs, then PR #223. Starting now." — and then yielded, taking no action.
+Jon had to reply "go ahead" before anything happened, and asked whether this was yet another retro
+topic. It is.
+
+The work was already authorized (he had said "merge the PR. Then do the Dependabot PRs"), unblocked,
+and mine to do. Nothing was waiting on him. Worse, the message *claimed* action was underway, so the
+stall was invisible: from his side it is indistinguishable from background work running slowly, which
+is exactly the ambiguity this session has been fighting elsewhere (an armed auto-merge on a conflicted
+branch, PR #221, sat inert for ten days looking identical to "in progress").
+
+**Candidate rule (mine):** if a message says work is starting, the tool calls for it belong in that same turn. If the
+turn is ending instead, the message must say what it is waiting for and why. "Starting now" followed
+by silence is a status claim that isn't true yet — the same defect as a green test that asserts
+nothing, applied to prose.
+
+**The asymmetry to fix is mine, not IntelliJ's.** Options, in the order I should reach for them:
+1. **Bring the content to him.** For a doc or a diff, send the file (or paste the relevant section)
+   rather than naming a branch. A rendered file lands in front of him; a branch name is a chore.
+2. **Land docs first, separately.** Docs-only PRs fast-path the heavy gates and merge in about a
+   minute, so a doc he needs to *read* should be on `main` before I ask him to read it — which is
+   what actually happened with the runbook, and the one step he tried to follow from a branch is the
+   one that went wrong.
+3. **Only ask him to check out a branch when he must run the app**, and when so, hand him a single
+   copy-pasteable command rather than a UI path — and check whether IntelliJ can be driven from the
+   CLI for that (`idea diff`, or opening a worktree directory directly), so the IDE lands on the
+   right state without him navigating a branch selector.
+
+Worth a short experiment rather than a design: next time review is needed, try option 1 and see
+whether it removes the step entirely.
