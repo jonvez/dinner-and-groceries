@@ -588,3 +588,52 @@ re-JOINs on every change) that would have made a naive fix look half-broken. **L
   containers vanished (`supabase stop` semantics) while I was querying `events`. If concurrent
   sessions are the norm, `db:start`/`db:stop` needs a refcount or each worktree needs its own project
   id — otherwise one agent silently breaks another's evidence.
+
+### 2026-09-15 — a named regression guard that asserts the wrong thing (QA of #64 / PR #214)
+
+`e2e/authed/realtime.spec.ts` gained a test called *"a proposal on ANOTHER week does not re-render
+this week's open board"*. QA mutated the `proposals` binding back to `household_id=eq.<id>` and the
+test **still passed** (#219): its assertions check *"the other week's content is absent"*, which stays
+true even when the page does re-render, because the server render is week-scoped either way. The AC
+was in fact protected — by three component tests — but the E2E advertised a guard it did not provide.
+That is the same shape of gap that let #64 survive in the first place (the old E2E proposed *before*
+the observer opened the board). **Lesson:** a test that is nominated as *the* regression guard for an
+acceptance criterion has to be proven red by mutating the specific mechanism it names — not by
+reverting the whole feature, which makes everything go red for the wrong reason and hides tests that
+assert nothing. The dev's pre-fix revert here did show red, but for a different cause (no channel at
+all on a zero-proposal week), which masked this.
+
+Also: instant negative assertions (`toHaveCount(0)` immediately after the actor acts) prove almost
+nothing about a *live* path — they resolve on the first poll, before any push could have arrived. A
+negative Realtime assertion needs a bounded settle window, or a positive control that must change.
+
+### 2026-09-15 — the retro log warned about this and it still cost 20 minutes (third time)
+
+The 2026-09-11 entry already says a local `npm run build` for E2E needs `NEXT_PUBLIC_SUPABASE_URL` /
+`NEXT_PUBLIC_SUPABASE_ANON_KEY` at build time. It has now bitten devs on #196, #197 and #64. A
+warning in a log nobody re-reads mid-task is not a guard. Cheapest fix: fail the build (or the E2E
+runner) loudly when those vars are unset outside CI, the way `ci.yml` already greps the emitted
+chunks to verify they were inlined. Same class: this worktree had no `node_modules` of its own, so
+`next build` failed until `npm ci` ran inside it — also already a known trap.
+
+### 2026-09-17 — process-bus evt-0008: qualify issue and PR numbers, never a bare `#N`
+
+Ratified convention, global to anything using GitHub Projects (Jon's words: "a global issue for
+anything using GitHub projects"). Issues take the project prefix — `dinner-and-groceries #177`,
+`Rig #56`. Pull requests take `PR` — `PR #68`. Issue and PR numbering spaces overlap constantly
+inside one repo, so a bare `#56` in a status table forces the reader to open it to learn which it is;
+across several board-run projects the repo name carries real information too.
+
+Applies to prose, tables, summaries, commit bodies, PR descriptions and issue bodies. The one
+exception is GitHub's auto-link trailers, which need the bare form (`Closes #41`, `Refs #56`) — keep
+those bare and qualify the number in the surrounding prose. Related gotcha: `Closes #41, #42, #43`
+closes only #41, because GitHub honours the keyword before the *first* number, so each needs its own
+`Closes`.
+
+Observed while adopting it: **the bus has no ack path.** `mempalace_event_ack` rejects these ids
+(`event 'evt-0008' not found`) because the bus is `~/dev/rig/bus/process-events.jsonl`, whose schema
+is `body, date, id, projects, seq, status, supersedes, title, topic` — no `acks`, no `consumers`, no
+`delivered_to`. None of the eight events to date records who received or applied it. Broadcasts are
+fire-and-forget, so "was this convention adopted in project X?" is unanswerable from the log. Worth a
+rig-side change to the schema plus the `broadcast-process-change` skill if adoption should be
+trackable.
