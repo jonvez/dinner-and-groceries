@@ -702,3 +702,78 @@ Related: a runbook step nobody can execute is the same defect class as a test no
   on an executable line (`run: ... # --yes`) is still visible to these greps. Stripping trailing `#`
   from YAML is not safe in general (a `#` can be legitimate inside a shell command or quoted string),
   so this is left as a known limit rather than guessed at.
+
+### 2026-09-27 — two conventions I broke while walking Jon through a runbook
+
+Both surfaced in the same ten minutes of the #68 credential setup, and both cost him a round trip
+each because he could not tell what was literal.
+
+1. **Placeholder marking was inconsistent between consecutive steps.** Step 1.2 handed him a
+   template containing `<NEW_PASSWORD>` — substitute this. Step 1.3 handed him a literal command
+   containing `printf 'Paste the connection URI: '` — quoted English that *looks* like a
+   placeholder, but must be pasted verbatim. He reasonably asked which part of it to replace, and
+   which delimiter marked the boundary. **Convention, stated once and held to: `<ANGLE_BRACKETS>`
+   are the only thing a reader ever replaces. Everything else is literal.**
+2. **An "expected output" sketch that was not the real output.** I told him to expect
+   `20260915143000 | <blank> |` with nothing in the third column. The real row carries a timestamp
+   there, because `migration list` derives `Time (UTC)` from the version number itself and populates
+   it on whichever side the row exists. He spotted the difference and had to ask whether it was an
+   error case I had failed to mention. An illustration a human diffs against real output has to be
+   the real output, or it manufactures exactly the doubt it was meant to remove — paste a captured
+   sample, don't retype an approximation.
+
+Same family as the 2026-09-27 stale-nav entry above: three defects in one sitting, all in
+instructions handed to a human, none of them in the code.
+
+### 2026-09-27 — empty junk directories accumulating beside the repo (`dinner-and-groceries-56`, `-worktrees`)
+
+Jon found two stray directories in `~/dev` and asked whether they were safe to delete. Both were
+empty shells with no `.git` and no files at all:
+
+- **`dinner-and-groceries-56/`** (2026-08-03) held only an empty `supabase/snippets/`. That is the
+  Supabase CLI scaffolding a project directory after being run from a path that did not exist — the
+  `-56` suffix suggests someone intended a worktree for issue 56, the `cd` failed, and the CLI
+  helpfully created the tree anyway. A failed `cd` that silently *succeeds* at creating a directory
+  is the whole bug.
+- **`dinner-and-groceries-worktrees/`** (2026-08-13) was an abandoned parent directory from before
+  the convention moved worktrees under `.claude/worktrees/`.
+
+Removed with `rmdir` (not `rm -rf`) specifically so that a misreading would fail loudly rather than
+destroy something; both were genuinely empty, and `git worktree prune` found no stale registrations.
+
+**Jon's ask: minimize or eliminate these in future.** Candidate practices, cheapest first:
+1. Never create a sibling directory to the repo. Worktrees belong under `.claude/worktrees/`
+   (already the convention) and scratch work belongs in the session scratchpad.
+2. Any command that takes a path should be run against a path that is verified to exist first —
+   the CLI class of tool will create what it needs rather than telling you your `cd` failed. This is
+   the same "no `cd`-compound commands" rule from CLAUDE.md, arriving from a different direction:
+   `cd X && npx supabase …` where `X` is wrong is exactly what produces one of these.
+3. Prune a finished agent's worktree at hand-off rather than at session end (already proposed in the
+   2026-09-10 entry, now with a second motivation).
+
+### 2026-09-27 — I keep making Jon the middleman between a branch and his IDE
+
+**Jon's words:** he is on IntelliJ, the UI for selecting a branch is not entirely clear, and he would
+"love to not have to be the middleman between steps that you ask me to review on a branch and using
+them in the UI." Filed as its own topic rather than bundled with the junk-directory entry above: that
+one is about agents writing outside the repo, this one is about *review ergonomics* — I hand him a
+location when I should hand him the content.
+
+Today alone he was pointed at un-merged branch content several times: the runbook step in PR #217
+before it merged, ADR 0015 "read it from PR #212 if it isn't on `main` yet", and every "I'll fix that
+on the branch" where the thing he wanted to read only existed on a feature branch.
+
+**The asymmetry to fix is mine, not IntelliJ's.** Options, in the order I should reach for them:
+1. **Bring the content to him.** For a doc or a diff, send the file (or paste the relevant section)
+   rather than naming a branch. A rendered file lands in front of him; a branch name is a chore.
+2. **Land docs first, separately.** Docs-only PRs fast-path the heavy gates and merge in about a
+   minute, so a doc he needs to *read* should be on `main` before I ask him to read it — which is
+   what actually happened with the runbook, and the one step he tried to follow from a branch is the
+   one that went wrong.
+3. **Only ask him to check out a branch when he must run the app**, and when so, hand him a single
+   copy-pasteable command rather than a UI path — and check whether IntelliJ can be driven from the
+   CLI for that (`idea diff`, or opening a worktree directory directly), so the IDE lands on the
+   right state without him navigating a branch selector.
+
+Worth a short experiment rather than a design: next time review is needed, try option 1 and see
+whether it removes the step entirely.
