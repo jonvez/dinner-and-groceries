@@ -146,3 +146,63 @@ convenient and should stay that way without being designed *for* it).
 ---
 
 *Next: plan mode, 2026-09-28 or later. This file is the input, not the output.*
+
+---
+
+## 7. Seed data — what is actually in the house, 2026-09-27
+
+Captured verbatim from Jon the evening this brief was written, for two purposes: planning *this*
+week for real, and serving as the worked example the design has to handle on a repeating basis.
+
+**Proteins on hand**
+- 3.5 lb St. Louis-style pork ribs — his instinct: an Asian-style spare ribs preparation.
+- 1 lb bacon — the kids like spaghetti carbonara.
+
+**Leftovers / breakfast-leaning**
+- Oatmeal, strawberries, leftover waffles. Mostly for Jon. The waffles and strawberries "might play
+  to varying degrees" with the kids.
+
+**Lunch patterns, by person**
+- Younger kid: peanut butter and Nutella sandwich, usual.
+- Older kid: udon with sesame and black vinegar sauce and chives — **fresh chives are in the house,
+  so this is live for this week.**
+- Household rotation: tomato soup with a small pasta (fideo, ditalini or orzo); grilled cheese
+  sometimes.
+
+**Snacks:** a whole separate conversation, explicitly a future iteration.
+
+### Why this section changes a design question
+
+The brief's §3c framed meal modes as differing by *horizon and intensity* — dinner planned furthest
+out, then breakfast, then lunch. The seed data shows a second axis that is arguably stronger:
+
+**Dinner is a shared meal. Breakfast and lunch are individual.**
+
+Jon's breakfast is not the kids' breakfast; the younger kid's lunch is not the older kid's lunch. In
+his words, "there is a differential between what I like to eat for breakfast and what my kids like to
+eat for breakfast … and that should also factor into the productization plan."
+
+Today's data model has no per-member preference concept at all — dishes, proposals and slots are
+household-scoped, which is exactly right for the dinner loop the MVP was built around. Applying the
+dinner model to breakfast and lunch would produce a household breakfast nobody wants.
+
+Open questions this raises for the spec session:
+- Is a per-person preference a **profile** (durable: "the younger one eats PB+Nutella"), a **pattern**
+  (observed: what actually got eaten), or just **per-person slots** on the existing board?
+- Does the north star — kids participate in deciding — even apply to lunch, or is lunch a
+  *provisioning* problem (make sure the ingredients exist) rather than a *deciding* one?
+- If breakfast and lunch are largely standing patterns, is the useful output a menu at all, or a
+  **restock list** derived from patterns? That would make the grocery list, not the board, the
+  primary surface for two of the three meals.
+
+### The two horizons Jon is holding at once
+
+Worth stating plainly, because they pull in different directions and the session should not conflate
+them:
+1. **This week, concretely.** Ribs, bacon, chives, leftovers — plan it, and generate the gap list.
+2. **The repeating capability.** What does the app do, every week, without a human assembling the
+   context by hand?
+
+The first is doable tonight with no app changes at all. The second is the actual project. The first
+is most valuable as evidence for the second — it shows what inputs the assistant needed, where they
+came from, and which of them the app already knows.
