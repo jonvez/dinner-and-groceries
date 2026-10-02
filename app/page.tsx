@@ -17,8 +17,10 @@ export const dynamic = "force-dynamic";
  *
  * This is the "land in the shared household" state (issue #6, criterion 6) — a
  * basic authenticated household-home. The week-board / proposals UI is Slice 1b.
- * Owners additionally get the invite generator here (criterion 2); the
- * owner-only gate is RLS-enforced, this just shows/hides the panel.
+ * Owners additionally get the invite generator here (criterion 2) and the only
+ * link to the owner-only dashboard (#17, ADR 0014 §4 — it gets no nav entry);
+ * both owner-only gates are enforced server-side (RLS on `invites` and on
+ * `events`, plus a 404 on `/dashboard`), so this just shows/hides the UI.
  */
 export default async function Home() {
   const supabase = await createServerComponentClient();
@@ -51,7 +53,26 @@ export default async function Home() {
           Plan this week
         </Link>
 
-        {isOwner ? <InvitePanel /> : null}
+        {isOwner ? (
+          <>
+            <InvitePanel />
+            {/*
+              The ONLY way into the PO dashboard (issue #17, ADR 0014 §4).
+              Deliberately here and not in `AppNav`: the nav is a static,
+              propless list rendered on every signed-in screen, and a
+              "Dashboard" tab the teens can see but cannot open raises exactly
+              the questions this feature must never raise. `/dashboard` 404s for
+              a non-owner and `events_select` is owner-only in RLS, so this
+              link is convenience, not the boundary.
+            */}
+            <Link
+              href="/dashboard"
+              className="text-muted-foreground text-sm underline underline-offset-4"
+            >
+              Dashboard
+            </Link>
+          </>
+        ) : null}
 
         <form action="/auth/signout" method="post">
           <button

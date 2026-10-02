@@ -73,6 +73,20 @@ export async function emitEvent(
   input: EmitEventInput,
 ): Promise<EmitResult> {
   try {
+    // WRITE-ONLY, DELIBERATELY. Never add `.select()` / `.single()` here.
+    //
+    // Since #17 (migration 20260916120000) `events_select` is OWNER-only while
+    // `events_insert` stays household-scoped, and PostgreSQL requires the
+    // SELECT policy to pass for a RETURNING row. A read-back therefore turns a
+    // bare insert into `insert ... returning`, which is DENIED for every
+    // non-owner — proven in `supabase/tests/15_events_rls_test.sql`
+    // ("deny-readback"). Emission would keep working perfectly for the owner,
+    // the person most likely to be testing it, and silently break for both
+    // teens; this function swallows the error and no call site checks the
+    // result, so the first visible symptom would be a PO dashboard quietly
+    // under-reporting the kids — the exact number the dashboard exists to get
+    // right. If you need the event id, generate it client-side rather than
+    // reading it back, and do NOT loosen `events_select` to get it.
     const { error } = await supabase.from("events").insert({
       household_id: input.householdId,
       member_id: input.memberId ?? null,

@@ -7,10 +7,16 @@ import { SessionBeacon } from "@/components/session-beacon";
 
 /**
  * Global navigation for the authenticated app shell (issue #12z). Rendered by
- * every signed-in screen (Home, Board, Recipes, Groceries; Dashboard later). The
- * login/join screens deliberately do NOT render it. `usePathname` marks the
- * current section — Home matches only the exact root so it isn't "active" on
- * every page.
+ * every signed-in screen (Home, Board, Recipes, Groceries — and `/dashboard`,
+ * which deliberately gets NO entry of its own: see below). The login/join
+ * screens deliberately do NOT render it. `usePathname` marks the current
+ * section — Home matches only the exact root so it isn't "active" on every page.
+ *
+ * The owner-only PO dashboard (#17) is reachable ONLY from the owner-only
+ * region of Home. A "Dashboard" tab every member can see but only the owner can
+ * open would raise exactly the questions the north star forbids, and gating one
+ * would mean threading `isOwner` through every page that renders this component
+ * (ADR 0014 §4).
  *
  * Because it is the one component on every signed-in screen and on no
  * signed-out one, it is also where the `session_start` beacon mounts (issue
