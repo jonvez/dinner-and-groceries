@@ -206,3 +206,73 @@ them:
 The first is doable tonight with no app changes at all. The second is the actual project. The first
 is most valuable as evidence for the second — it shows what inputs the assistant needed, where they
 came from, and which of them the app already knows.
+
+---
+
+## 8. Post-mortem: the 2026-09-30 rib cook (the first real test of this workflow)
+
+Jon cooked Asian-style St. Louis ribs with a quick-pickled cucumber side, planned live in conversation
+with the assistant. **Verdict from the table: moderate success.** Meat cooked well; flavour too sweet
+and too salty; glaze sat on the surface rather than penetrating; pickles soft and slightly sweet. All
+three failures are informative, and none of them is a cooking-skill problem.
+
+### What failed, and what it says about the product
+
+**1. Nobody totalled the plate.** Salt arrived in the rub *and* a third of a cup of soy in the glaze.
+Sugar arrived in the rub, the glaze, and the sriracha. Each component was reasonable alone; the sum
+was not, and the glaze reduction concentrated both. *Product implication:* a menu-aware tool is the
+only thing positioned to catch this — it is the one actor that sees every component of a plate at
+once. A recipe card alone would not have caught it either, because the rub and the glaze were two
+"recipes".
+
+**2. The method had no interior pathway.** The structure was American barbecue (dry rub → long dry
+cook → late glaze) wearing Asian flavours. Chinese spare ribs get flavour inside either by **overnight
+marinade** (char siu) or by **braising in the liquid**. The kid's observation — "the flavour didn't
+make it into the meat" — was a correct diagnosis of an architectural choice, not a timing miss.
+*Product implication:* the fix (marinate the night before) is a **scheduling fact that a recipe card
+cannot express** — it belongs to a planner that knows what Thursday dinner is on Wednesday night.
+This is the strongest argument in the brief for planning horizon as a feature rather than a
+convenience.
+
+**3. Ingredient substitution silently changed the outcome.** English cucumber was used because it was
+what the house had; it is the softest common variety, and four hours in brine guaranteed limp. The
+tradeoff was never surfaced at the moment of choosing. *Product implication:* an inventory-aware
+planner that proposes dishes from what is on hand will constantly make exactly this substitution. It
+needs to say what the substitution costs, or it will quietly produce mediocre food and the user will
+conclude the recipes are bad.
+
+### Corrections, recorded for the next attempt
+- Pick one carrier per axis: salty rub + glaze cut with water/stock, **or** light rub + full-strength
+  soy glaze. Not both.
+- Roughly half the sweetener, materially more acid.
+- Marinate overnight in the soy/ginger/garlic/shaoxing base, then roast, then glaze.
+- Kirby or Persian cucumbers; 1 tbsp sugar or none; salt-and-ice 20 minutes before brining.
+
+## 9. Prep scheduling — a pillar this brief was missing
+
+**Jon's words:** "one of my chief complaints about online recipes is that often you get to a step and
+you realize you could have prepped something twenty minutes prior, but now you have to start from
+your back foot."
+
+This is not a recipe-formatting problem. It is a **scheduling problem across a menu**: given the
+dishes, their dependencies, the equipment (one oven, N burners), and a target eat-time, produce a
+time-ordered plan computed **backwards** from when people sit down.
+
+The rib cook is the existence proof. The artifact that actually carried the evening was not the
+recipe — it was the timeline: *rub by 3:15, oven at 3:30, pickles now, hold at 170°F from 4:30, glaze
+at 5:15, bok choy at 5:40, eat at 6.* No recipe site produces that, because it only exists once you
+know the whole menu and the target time. It also absorbed a mid-cook surprise (ribs done early) by
+converting slack into a hold rather than a rush.
+
+Why it is a good fit for *this* app specifically: it already knows the week's menu, the dishes and
+their ingredients. A standalone recipe app would have to ask for all of it.
+
+Open questions for the spec session:
+- Is the output a **schedule per cooking session** (one evening) or **per week** (including the
+  overnight marinade that has to start the night before)?
+- How much does it need to know about equipment to be useful — is "one oven" enough, or does it need
+  burner counts and pan sizes before the advice stops being generic?
+- Does it replan when reality moves (the ribs finished 15 minutes early), or is it a static plan the
+  cook adapts? The hold-versus-rush decision was the single most useful piece of advice all evening,
+  and it was a *replan*.
+- Where does it surface — the board, the dish detail, or a "cook mode" that only exists on the day?
