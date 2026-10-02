@@ -133,6 +133,21 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
   in `.claude/settings.json` is still honored.
+- **CI E2E pulls 13 images anonymously from Docker Hub**, from a runner IP shared with every other
+  GitHub customer, so a heavy CI day exhausts the allowance and `supabase start` fails with
+  `toomanyrequests: Data limit exceeded` across every image. **Retrying makes it worse** — a rate
+  limit counts attempts, and one logical E2E run can burn ~78 of them (13 images × 3 in-job attempts
+  × a manual re-run). When it hits, wait for the window rather than re-running. The pgTAP image was
+  moved to a public ECR mirror long ago, which is why this looks solved and isn't; #236 covers the
+  images `supabase start` pulls implicitly.
+- **Local Supabase stack footguns, both of which have produced false conclusions about code:**
+  1. `npm run db:reset` **in a worktree can delete or restore an un-merged migration file** — the CLI
+     treats `supabase/.branches/_current_branch` as the source of truth, not your checkout. Check
+     `git status` after any reset, and prefer `psql -f <migration>` when verifying SQL that is not yet
+     on `main`.
+  2. The stack is **one global instance**, not per-worktree. Two sessions working at once will stop,
+     reset and reseed each other's database mid-verification. Check `npx supabase status` before
+     concluding a test failure is real.
 
 ### Conventions
 - Board ops go through the `ghpm` wrapper / `github-project-board` skill — never hand-roll `gh`/GraphQL.
