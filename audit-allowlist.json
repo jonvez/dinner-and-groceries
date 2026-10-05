@@ -1,0 +1,12 @@
+{
+  "$comment": "Advisories the weekly audit accepts on purpose. Read by scripts/audit-gate.mjs; policy in docs/decisions/0016-audit-allowlist-with-expiry.md. Each entry is one GHSA on one package, with a reason and an expiry. When it expires the audit goes red: check for a fix, then renew deliberately or remove.",
+  "exceptions": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "expires": "2027-01-05",
+      "reason": "No patched braces exists (every version flagged; latest 3.0.3 from 2024). Dev-only: eslint-config-next -> @next/eslint-plugin-next -> fast-glob -> micromatch -> braces, globbing our own lint patterns, so the stack-exhaustion DoS needs attacker-controlled glob input we never take. npm's only 'fix' downgrades eslint-config-next to 14.x.",
+      "adr": "docs/decisions/0016-audit-allowlist-with-expiry.md"
+    }
+  ]
+}
