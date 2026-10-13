@@ -8,6 +8,7 @@
     "start": "next start",
     "start:standalone": "rm -rf .next/standalone/.next/static .next/standalone/public && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public && node .next/standalone/server.js",
     "icons:generate": "node scripts/generate-icons.mjs",
+    "audit:gate": "node scripts/audit-gate.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
