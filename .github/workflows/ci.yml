@@ -140,8 +140,26 @@ jobs:
     name: RLS pgTAP (Supabase)
     needs: changes
     runs-on: ubuntu-latest
+    # packages: read lets the job's GITHUB_TOKEN pull the Supabase stack images
+    # from ghcr.io, and the env makes the CLI pull them from there instead of
+    # its default, anonymous public.ecr.aws. That anonymous quota is shared by
+    # every GitHub runner and was failing this job (#236, ADR 0017). The token
+    # is short-lived and job-scoped; no long-lived credential (ADR 0009).
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "Log in to ghcr.io (Supabase stack images, #236)"
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       # Every step below is guarded on the docs-only fast-path (#99): a docs-only
       # diff skips the whole ephemeral-Supabase + pgTAP run, and the job still
@@ -161,21 +179,11 @@ jobs:
       # the OAuth flow, but GoTrue wants the vars present at boot, so we pass
       # harmless non-secret placeholders here. Real Google creds are a human/
       # Secret-Manager concern (see README "Google OAuth setup").
-      # Anonymous Docker Hub pulls occasionally hit `toomanyrequests: Rate
-      # exceeded`, hard-failing this (required) job on a transient, non-test
-      # failure. Retry with backoff, cleaning up between attempts, so a rate
-      # limit self-recovers instead of burning a re-run cycle. No-op on the
-      # happy path: a first-try success just breaks out of the loop.
+      # scripts/ci/supabase-start.sh retries transient failures but fails fast
+      # on a registry rate limit, where a retry only spends more quota (#236).
       - name: Start local Supabase stack
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: |
-          for attempt in 1 2 3; do
-            if npx supabase start; then break; fi
-            echo "supabase start failed (attempt $attempt) — cleaning up and retrying"
-            npx supabase stop --no-backup || true
-            sleep $((attempt * 15))
-            [ "$attempt" = 3 ] && { echo "supabase start failed after 3 attempts"; exit 1; }
-          done
+        run: scripts/ci/supabase-start.sh
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
           SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
@@ -184,7 +192,7 @@ jobs:
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: npx supabase db reset --local
 
-      # `supabase test db` pulls pg_prove from public.ecr.aws on demand; that pull
+      # `supabase test db` pulls pg_prove from ghcr.io (the job's registry env) on demand; that pull
       # occasionally times out and would fail this (required) check on a transient
       # registry hiccup. Warm the image with retries first so the test step finds it
       # cached. Best-effort: if all retries fail (sustained outage), the test step's
@@ -193,7 +201,7 @@ jobs:
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           for i in 1 2 3; do
-            if docker pull public.ecr.aws/supabase/pg_prove:3.36; then break; fi
+            if docker pull ghcr.io/supabase/pg_prove:3.36; then break; fi
             echo "pg_prove image pull attempt $i failed; retrying in 10s..."
             sleep 10
           done
@@ -229,8 +237,26 @@ jobs:
     name: Playwright smoke E2E
     needs: changes
     runs-on: ubuntu-latest
+    # packages: read lets the job's GITHUB_TOKEN pull the Supabase stack images
+    # from ghcr.io, and the env makes the CLI pull them from there instead of
+    # its default, anonymous public.ecr.aws. That anonymous quota is shared by
+    # every GitHub runner and was failing this job (#236, ADR 0017). The token
+    # is short-lived and job-scoped; no long-lived credential (ADR 0009).
+    permissions:
+      contents: read
+      packages: read
+    env:
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: "Log in to ghcr.io (Supabase stack images, #236)"
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       # Every step below is guarded on the docs-only fast-path (#99): a docs-only
       # diff skips the whole build + ephemeral-Supabase + Playwright run, and the
@@ -249,21 +275,11 @@ jobs:
       # it via env()); the E2E flows never touch Google — sessions are seeded via
       # email/password — so harmless non-secret placeholders suffice (same pattern
       # as the rls job).
-      # Anonymous Docker Hub pulls occasionally hit `toomanyrequests: Rate
-      # exceeded`, hard-failing this (required) job on a transient, non-test
-      # failure. Retry with backoff, cleaning up between attempts, so a rate
-      # limit self-recovers instead of burning a re-run cycle. No-op on the
-      # happy path: a first-try success just breaks out of the loop.
+      # scripts/ci/supabase-start.sh retries transient failures but fails fast
+      # on a registry rate limit, where a retry only spends more quota (#236).
       - name: Start ephemeral Supabase
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
-        run: |
-          for attempt in 1 2 3; do
-            if npx supabase start; then break; fi
-            echo "supabase start failed (attempt $attempt) — cleaning up and retrying"
-            npx supabase stop --no-backup || true
-            sleep $((attempt * 15))
-            [ "$attempt" = 3 ] && { echo "supabase start failed after 3 attempts"; exit 1; }
-          done
+        run: scripts/ci/supabase-start.sh
         env:
           SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
           SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-placeholder-secret
