@@ -276,3 +276,63 @@ Open questions for the spec session:
   cook adapts? The hold-versus-rush decision was the single most useful piece of advice all evening,
   and it was a *replan*.
 - Where does it surface — the board, the dish detail, or a "cook mode" that only exists on the day?
+
+---
+
+## 10. Jon's candidates, 2026-10-02
+
+Added at his direction as **candidates for later discussion, not decisions** — his words: "I'm open to
+changing my views upon discussion, but not right now." Recorded so the spec session has his position
+as a starting point rather than reconstructing it.
+
+### 10a. Stored card *and* computed plan — not an either/or
+
+§9 framed this as a choice: is a recipe card a record the app stores, or a plan the app computes?
+Jon's answer is **both, in sequence**:
+
+> "It's computed plan at mealtime, then burned out to dinner-and-groceries. From there it could change
+> again, but I like the idea of storing it until it does change."
+
+So: compute the plan when it is needed (which is when eat-time, the rest of the menu and what is in
+the house are all known), then **persist the result** as the card. The stored card is the current best
+version, authoritative until something recomputes it.
+
+Questions this shape raises, for the session rather than now:
+- What triggers a recompute — a changed eat-time, a substituted ingredient, a new dish on the same
+  night, or only an explicit ask?
+- When a recompute disagrees with the stored card, is that a new version, a diff to approve, or a
+  silent overwrite? (The §8 corrections argue for versions: the *history* of what changed and why is
+  the part that made attempt two better than attempt one.)
+- Does the stored card keep the timeline it was computed with, or only the recipe, with the timeline
+  recomputed on each cook? A timeline is relative to an eat-time, so storing it verbatim ages badly.
+
+### 10b. Information architecture: the grocery list may deserve the front door
+
+Observed adoption: the dashboard shows all usage attributed to Jon, but **the kids do use the grocery
+list**, and it is "at least in the household conversation." The app's IA is currently built around
+weekly menu planning — the board is the centre of gravity, and the list is downstream of it.
+
+Jon's candidate: **evolve toward the grocery list being more forward.**
+
+Worth noting as evidence rather than argument: slice 1d (grocery) is the surface that has generated
+nearly all real-use feedback — dinner-and-groceries #171, #170, #185, #197, and the whole
+sections epic came from the family actually using it, while the board's feedback has come mostly from
+the validation gate rather than daily use.
+
+Tension to resolve in discussion, not here: the north star is the kids participating in *deciding*,
+and the board is where deciding happens. If the list becomes the front door, does the decision loop
+get quieter, or does it get *more* use because people arrive somewhere they already value? This is a
+genuine trade, not a layout preference.
+
+### 10c. Grocery list: move "Add something else" to the top, with a border
+
+> "The add item should move to the top of the list with maybe a border around it because it's hard to
+> differentiate from the ingredients that have already been added."
+
+Small and concrete. Note this is the same form dinner-and-groceries #185 reshaped (Item on its own
+line, Add beside it) and #197 fixed (suggestions no longer trap the fields) — both of which addressed
+*internal* layout. This is about the form's **position and separation relative to the list**, which
+neither touched.
+
+Not filed as an issue yet, per Jon's instruction to hold all three as brief candidates. It is small
+enough to be a single session's work whenever he wants it.

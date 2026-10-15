@@ -40,5 +40,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # npm audit, minus the advisories in audit-allowlist.json — each one
+      # scoped to a single GHSA on a single package, and expiring (ADR 0016).
+      # Anything else at moderate or above still fails.
       - name: Audit
-        run: npm audit --audit-level=moderate
+        run: npm run audit:gate
