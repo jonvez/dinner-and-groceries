@@ -815,3 +815,34 @@ nothing, applied to prose.
 
 Worth a short experiment rather than a design: next time review is needed, try option 1 and see
 whether it removes the step entirely.
+
+### 2026-10-02 — proposed skill: the serial merge-queue driver (and where skill proposals should live)
+
+**The pattern.** Under this repo's strict branch protection, merges are serial: every merge puts every
+other open PR BEHIND, each needing `gh pr update-branch` plus a full re-run of four checks. Over this
+session I wrote the same ~50-line driver **three times** (the scratchpad is session-scoped and was
+cleared twice), so the knowledge is clearly durable while the artifact was not.
+
+What it encodes, none of which is obvious:
+- Serial merge with automatic `update-branch` between each PR.
+- **An armed auto-merge on a conflicted branch is silently inert** — it neither retries nor complains.
+  PR #221 sat that way for ten days looking identical to "in progress"; the driver surfaces DIRTY as a
+  stop rather than waiting forever.
+- Dependabot PRs cannot be fast-updated on a lockfile conflict; they need a `@dependabot rebase`
+  comment instead, and re-commenting on every poll is spam, so the asked-state has to be tracked.
+- Treat FAILURE/CANCELLED/TIMED_OUT as stop conditions, not retry conditions.
+
+**Candidate (mine, not decided):** promote it to `~/dev/rig/scripts/` as a real script, or a small
+skill if the board-interaction parts grow. It is cross-project by nature — it is about GitHub branch
+protection, not about this app.
+
+**Jon's routing question, 2026-10-02: where do proposed skills live?** There is no such place today —
+`rig/docs/superpowers/` has `plans/` and `specs/`, neither of which is a proposal backlog. His
+proposal, adopted as the working answer unless the retro says otherwise: **capture the proposal in the
+originating project's retro log; if it ratifies into something cross-project, publish it to the process
+bus** (`rig/bus/process-events.jsonl`) **via the `broadcast-process-change` skill.** That matches the
+path process conventions already take here, and keeps per-project noise out of the bus until something
+is actually agreed.
+
+Worth noting at the retro: the bus has no ack path (2026-09-17 entry), so "which projects adopted this
+skill?" would be unanswerable for the same reason "did evt-0008 land?" is.
