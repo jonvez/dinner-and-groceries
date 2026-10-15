@@ -133,13 +133,15 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   silently ignored (a repo can't self-grant auto). To use auto mode here, `Shift+Tab` each session or launch
   `claude --permission-mode auto`. Persistent-everywhere only via `~/.claude/settings.json`. The `allow` list
   in `.claude/settings.json` is still honored.
-- **CI E2E pulls 13 images anonymously from Docker Hub**, from a runner IP shared with every other
-  GitHub customer, so a heavy CI day exhausts the allowance and `supabase start` fails with
-  `toomanyrequests: Data limit exceeded` across every image. **Retrying makes it worse** — a rate
-  limit counts attempts, and one logical E2E run can burn ~78 of them (13 images × 3 in-job attempts
-  × a manual re-run). When it hits, wait for the window rather than re-running. The pgTAP image was
-  moved to a public ECR mirror long ago, which is why this looks solved and isn't; #236 covers the
-  images `supabase start` pulls implicitly.
+- **CI pulls the Supabase stack images from `ghcr.io`, not the CLI default (ADR 0017).** The CLI's
+  default registry is **`public.ecr.aws`** (not Docker Hub, which #98 and #236 originally blamed),
+  pulled anonymously from runner IPs shared by every GitHub customer. On a heavy CI day that shared
+  quota runs out (`toomanyrequests: Data limit exceeded`). The `rls` and `e2e` jobs now set
+  `SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io` and log in with the job's `GITHUB_TOKEN`
+  (`packages: read`). **On a Supabase CLI bump, check every image the new version pins exists on
+  `ghcr.io/supabase/`**, or `supabase start` fails in CI. `scripts/ci/supabase-start.sh` fails fast on
+  a rate limit instead of retrying, since retries spend the quota they're waiting for. If it still
+  fires, the login or override is missing from that job.
 - **Local Supabase stack footguns, both of which have produced false conclusions about code:**
   1. `npm run db:reset` **in a worktree can delete or restore an un-merged migration file** — the CLI
      treats `supabase/.branches/_current_branch` as the source of truth, not your checkout. Check
