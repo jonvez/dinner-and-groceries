@@ -158,6 +158,9 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   `.deps-refresh.yml` (`tier: product`). Never hand-roll one: the tier means any NEW package in the lock
   diff — even dev-only — stops the pass for a `third-party-security-review`, and expensive gates must be
   green before merge.
+- `npm audit` is gated by `scripts/audit-gate.mjs` with an **expiring allowlist**
+  (`audit-allowlist.json`, ADR 0016). An entry needs an advisory ID, reason and expiry; a lapsed
+  entry fails the audit workflow, so re-justify or fix it, never just bump the date.
 - Persona agents are global + dispatchable. Things is **not** used for this project (board is the tracker).
 
 ### Blockers
