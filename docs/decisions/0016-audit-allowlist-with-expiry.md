@@ -60,6 +60,9 @@ anyway.
 
 The first exception is `braces` / GHSA-vfj7-8cjw-p6xm, **expiring 2027-01-05** (one quarter).
 
+**Update 2026-10-28:** GitHub withdrew GHSA-vfj7-8cjw-p6xm on 2026-10-23, so the exception went
+stale and was removed. The allowlist is now empty; the mechanism stays for the next unfixable one.
+
 ## Consequences
 
 - The weekly audit goes green again and means something: red means a new or re-expired finding.
