@@ -24,6 +24,9 @@ export type RecipeDetail = {
   cookMinutes: number | null;
   totalMinutes: number | null;
   ingredientLines: string[];
+  // Free-text method (chronological cook timeline; format in ./method-parse.ts),
+  // stored in the existing `description` column. Null when the recipe has none.
+  method: string | null;
 };
 
 export async function loadRecipeDetail(
@@ -33,7 +36,7 @@ export async function loadRecipeDetail(
   const { data: dish } = await supabase
     .from("dishes")
     .select(
-      "id, title, image_url, source_url, prep_minutes, cook_minutes, total_minutes",
+      "id, title, description, image_url, source_url, prep_minutes, cook_minutes, total_minutes",
     )
     .eq("id", id)
     .maybeSingle();
@@ -63,5 +66,6 @@ export async function loadRecipeDetail(
     cookMinutes: dish.cook_minutes,
     totalMinutes: dish.total_minutes,
     ingredientLines: (ingredients ?? []).map((row) => row.raw_text),
+    method: dish.description ?? null,
   };
 }
