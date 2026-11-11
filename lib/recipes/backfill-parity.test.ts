@@ -40,11 +40,26 @@ describe.each(FIXTURES)("backfill parity fixture %s", (key, file) => {
   });
 
   it("expects exactly what parseMethod returns", () => {
-    const fromTs = parseMethod(fixture).map((p) => ({
-      title: p.title,
-      intro: p.intro,
-      steps: p.steps.map((s) => ({ body: s.body, notes: s.notes })),
-    }));
-    expect(JSON.parse(dollarBlock(`${key}_expected`))).toEqual(fromTs);
+    expect(JSON.parse(dollarBlock(`${key}_expected`))).toEqual(toParityShape(parseMethod(fixture)));
+  });
+});
+
+function toParityShape(phases: ReturnType<typeof parseMethod>) {
+  return phases.map((p) => ({
+    title: p.title,
+    intro: p.intro,
+    steps: p.steps.map((s) => ({ body: s.body, notes: s.notes })),
+  }));
+}
+
+// Interior carriage returns: Postgres `.` matches \r, so the SQL backfill keeps
+// "1. a\rb" as a step; parseMethod must too. A raw CR can't live safely in a
+// fixture file or a dollar block, so the block spells it `\r` and BOTH sides
+// expand it (the pgTAP file with replace(method, '\r', E'\r')).
+describe("backfill parity fixture cr (interior carriage returns)", () => {
+  it("expects exactly what parseMethod returns", () => {
+    const method = dollarBlock("cr_method").replaceAll("\\r", "\r");
+    expect(method).toContain("\r");
+    expect(JSON.parse(dollarBlock("cr_expected"))).toEqual(toParityShape(parseMethod(method)));
   });
 });

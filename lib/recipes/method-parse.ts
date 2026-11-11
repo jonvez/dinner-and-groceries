@@ -36,8 +36,11 @@ export function parseMethod(method: string): Phase[] {
   for (const raw of method.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
-    const step = line.match(/^\d+\.\s+(.*)$/);
-    const note = line.match(/^[-*]\s+(.*)$/);
+    // dotAll (`s`): `.` must match an interior \r, as Postgres `.` does in the
+    // SQL backfill. It also keeps these linear: without it `.*` stops at the
+    // \r, `$` fails, and `\s+` / `.*` backtrack quadratically.
+    const step = line.match(/^\d+\.\s+(.*)$/s);
+    const note = line.match(/^[-*]\s+(.*)$/s);
     if (line.startsWith("## ")) {
       phases.push({ title: line.slice(3).trim(), intro: [], steps: [] });
     } else if (step) {
@@ -56,8 +59,11 @@ export function parseMethod(method: string): Phase[] {
 }
 
 export function parseSpans(text: string): Span[] {
+  // A chip's text excludes "[" as well as "]". With only "]" excluded, a run of
+  // "[" matched from every offset and the split went quadratic (a stored DoS:
+  // this runs on every render, server-side too).
   return text
-    .split(/(\[\[[^\]]+\]\]|\*\*[^*]+\*\*)/g)
+    .split(/(\[\[[^\[\]]+\]\]|\*\*[^*]+\*\*)/g)
     .filter((part) => part !== "")
     .map((part): Span => {
       if (part.startsWith("[[") && part.endsWith("]]")) {

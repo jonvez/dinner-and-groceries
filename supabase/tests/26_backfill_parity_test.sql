@@ -11,7 +11,7 @@
 --
 -- One rolled-back transaction; fixtures inlined so the file is self-contained.
 begin;
-select plan(14);
+select plan(15);
 
 create schema if not exists tests;
 
@@ -384,6 +384,28 @@ $edge_expected$[
   }
 ]$edge_expected$::jsonb);
 
+-- cr: interior carriage returns. Postgres `.` matches \r, so these lines are
+-- steps/notes, not intro. The block spells each CR as the two characters `\r`
+-- (a raw CR can't safely live in a dollar block); the dish below and
+-- lib/recipes/backfill-parity.test.ts both expand them to a real CR.
+insert into tests.fixtures (key, method, expected) values ('cr',
+$cr_method$## Sear\rand rest
+Intro\rline.
+1. Sear\rthen flip.
+- Hot\rpan.
+2. \rStarts after a CR.
+$cr_method$,
+$cr_expected$[
+  {
+    "title": "Sear\rand rest",
+    "intro": ["Intro\rline."],
+    "steps": [
+      {"body": "Sear\rthen flip.", "notes": ["Hot\rpan."]},
+      {"body": "Starts after a CR.", "notes": []}
+    ]
+  }
+]$cr_expected$::jsonb);
+
 -- One dish per fixture, its method in the legacy `description` column, plus a
 -- dish with a blank description that must be left alone.
 insert into public.dishes (id, household_id, title, description, created_by) values
@@ -391,7 +413,8 @@ insert into public.dishes (id, household_id, title, description, created_by) val
   ('0d000002-0000-0000-0000-000000000002', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'No-boil rigatoni',   (select method from tests.fixtures where key = 'rigatoni'), 'a0000001-0000-0000-0000-000000000001'),
   ('0d000003-0000-0000-0000-000000000003', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Edge cases',         (select method from tests.fixtures where key = 'edge'),     'a0000001-0000-0000-0000-000000000001'),
   ('0d000004-0000-0000-0000-000000000004', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Blank method',       E'  \n\n ',                                                  'a0000001-0000-0000-0000-000000000001'),
-  ('0d000005-0000-0000-0000-000000000005', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'CRLF method',        replace((select method from tests.fixtures where key = 'rigatoni'), E'\n', E'\r\n'), 'a0000001-0000-0000-0000-000000000001');
+  ('0d000005-0000-0000-0000-000000000005', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'CRLF method',        replace((select method from tests.fixtures where key = 'rigatoni'), E'\n', E'\r\n'), 'a0000001-0000-0000-0000-000000000001'),
+  ('0d000006-0000-0000-0000-000000000006', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Interior CR method', replace((select method from tests.fixtures where key = 'cr'), '\r', E'\r'),     'a0000001-0000-0000-0000-000000000001');
 
 -- 1-3: the helper exists but no client role can call it
 select has_function('public', '_backfill_dish_method', array['uuid'], '_backfill_dish_method(uuid) exists');
@@ -441,6 +464,12 @@ select is(
   (select description from public.dishes where id = '0d000001-0000-0000-0000-000000000001'),
   (select method from tests.fixtures where key = 'soup'),
   'description is untouched by the backfill');
+
+-- 15: an interior CR stays inside its step / note / title / intro line
+select is(
+  tests.method_of('0d000006-0000-0000-0000-000000000006'),
+  (select expected from tests.fixtures where key = 'cr'),
+  'parity: interior carriage returns parse exactly as parseMethod parses them');
 
 select * from finish();
 rollback;

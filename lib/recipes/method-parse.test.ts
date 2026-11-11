@@ -48,6 +48,44 @@ describe("parseMethod", () => {
   it("returns no phases for blank text", () => {
     expect(parseMethod("  \n\n")).toEqual([]);
   });
+
+  it("keeps an interior carriage return inside a step or note (parity with the SQL backfill)", () => {
+    const [phase] = parseMethod("1. Sear\rthen flip.\n- Hot\rpan.");
+    expect(phase.intro).toEqual([]);
+    expect(phase.steps).toEqual([{ n: 1, body: "Sear\rthen flip.", notes: ["Hot\rpan."] }]);
+  });
+});
+
+/**
+ * ReDoS guard (the bug class of #176). Step bodies are stored text that any
+ * household member can write, parsed on save and rendered (SSR) on every view,
+ * so a quadratic regex here stalls the shared Node process for every
+ * household. Each input is ~200k pathological chars; a linear regex handles it
+ * in a few ms, a quadratic one takes many seconds.
+ */
+describe("method parsing is linear on hostile input", () => {
+  const N = 200_000;
+  const LIMIT_MS = 50;
+  function timeMs(fn: () => unknown): number {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  }
+
+  it("parseSpans: a long run of '['", () => {
+    const text = "[".repeat(N);
+    expect(timeMs(() => parseSpans(text))).toBeLessThan(LIMIT_MS);
+  });
+
+  it("parseMethod: a step marker, a long run of spaces, then an interior CR", () => {
+    const text = `1. ${" ".repeat(N)}x\ry`;
+    expect(timeMs(() => parseMethod(text))).toBeLessThan(LIMIT_MS);
+  });
+
+  it("parseMethod: a note marker, a long run of spaces, then an interior CR", () => {
+    const text = `- ${" ".repeat(N)}x\ry`;
+    expect(timeMs(() => parseMethod(text))).toBeLessThan(LIMIT_MS);
+  });
 });
 
 describe("parseSpans", () => {
@@ -58,6 +96,13 @@ describe("parseSpans", () => {
       { kind: "text", text: ", then " },
       { kind: "strong", text: "skim" },
       { kind: "text", text: "." },
+    ]);
+  });
+
+  it("does not make a chip of text containing '['", () => {
+    expect(parseSpans("[[[[a]]")).toEqual([
+      { kind: "text", text: "[[" },
+      { kind: "ingredient", text: "a" },
     ]);
   });
 
