@@ -7,7 +7,9 @@
  *
  * Ingredient editing is intentionally a single "one per line" textarea, not
  * per-row inputs: raw text is the source of truth (issue #11) and each line is
- * re-parsed via `parseIngredient` server-side on Save.
+ * re-parsed via `parseIngredient` server-side on Save. The method is the same
+ * idea: one markdown textarea, parsed once on Save into phase and step rows
+ * (#272). Both go through the shared atomic `saveRecipe`.
  *
  * Extraction failure (or skipping the fetch entirely) renders the SAME
  * editable form, empty — manual add-by-hand always works, never a dead end.
@@ -28,7 +30,9 @@ type EditableFields = {
   prepMinutes: string;
   cookMinutes: string;
   totalMinutes: string;
+  servings: string;
   ingredientsText: string;
+  methodText: string;
 };
 
 const EMPTY_FIELDS: EditableFields = {
@@ -37,7 +41,9 @@ const EMPTY_FIELDS: EditableFields = {
   prepMinutes: "",
   cookMinutes: "",
   totalMinutes: "",
+  servings: "",
   ingredientsText: "",
+  methodText: "",
 };
 
 function minutesToField(value: number | null): string {
@@ -66,15 +72,18 @@ export function RecipeIngestForm() {
     if (previewState === null) return;
     // Sync from the server action result (external system) into local
     // editable state — the blessed setState-in-effect case per the rule docs.
+    // The preview carries no servings or method, so those keep whatever the
+    // cook already typed.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFields({
+    setFields((f) => ({
+      ...f,
       title: previewState.preview.title,
       imageUrl: previewState.preview.imageUrl ?? "",
       prepMinutes: minutesToField(previewState.preview.prepMinutes),
       cookMinutes: minutesToField(previewState.preview.cookMinutes),
       totalMinutes: minutesToField(previewState.preview.totalMinutes),
       ingredientsText: previewState.preview.ingredientLines.join("\n"),
-    });
+    }));
     setSourceUrl(previewState.ok ? previewState.sourceUrl : "");
   }, [previewState]);
 
@@ -185,16 +194,52 @@ export function RecipeIngestForm() {
           </div>
         </div>
 
+        <label className="text-sm font-medium" htmlFor="ingest-servings">
+          Servings (optional)
+        </label>
+        <input
+          id="ingest-servings"
+          name="servings"
+          maxLength={100}
+          placeholder="6 to 8"
+          value={fields.servings}
+          onChange={(e) => setFields((f) => ({ ...f, servings: e.target.value }))}
+          className={inputClass}
+        />
+
         <label className="text-sm font-medium" htmlFor="ingest-ingredients">
           Ingredients — paste your list here, one per line
         </label>
+        <p id="ingest-ingredients-hint" className="text-muted-foreground text-xs">
+          A line like <code>## Filling</code> starts a group.
+        </p>
         <textarea
           id="ingest-ingredients"
           name="ingredients"
           rows={8}
+          aria-describedby="ingest-ingredients-hint"
           placeholder={"Paste or type your ingredients — one per line:\n2 lb pork shoulder\n1 tbsp ground cumin"}
           value={fields.ingredientsText}
           onChange={(e) => setFields((f) => ({ ...f, ingredientsText: e.target.value }))}
+          className={inputClass}
+        />
+
+        <label className="text-sm font-medium" htmlFor="ingest-method">
+          Method (optional)
+        </label>
+        <p id="ingest-method-hint" className="text-muted-foreground text-xs">
+          <code>## Phase</code> starts a stretch of the cook, <code>1.</code> a step,{" "}
+          <code>-</code> a note on the step above, <code>[[2 cups broth]]</code> an amount
+          shown inline.
+        </p>
+        <textarea
+          id="ingest-method"
+          name="method"
+          rows={10}
+          aria-describedby="ingest-method-hint"
+          placeholder={"## Start\n1. Boil [[1 lb pasta]] in salted water.\n- Stir once so it doesn't stick.\n2. Drain."}
+          value={fields.methodText}
+          onChange={(e) => setFields((f) => ({ ...f, methodText: e.target.value }))}
           className={inputClass}
         />
 

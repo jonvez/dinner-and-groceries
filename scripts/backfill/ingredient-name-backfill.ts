@@ -171,8 +171,9 @@ export function planBackfill(rows: IngredientExportRow[], parse: ParseFn): Backf
     }
 
     const parsed = parse(raw.trim());
-    // Identical fallback to `ingredientRowsFromText` — the name column is NOT
-    // NULL with a non-empty check, so an empty parse keeps the raw line.
+    // Identical fallback to `ingredientsFromText` (lib/recipes/save-recipe.ts):
+    // the name column is NOT NULL with a non-empty check, so an empty parse
+    // keeps the raw line.
     const name = parsed.name.trim() === "" ? parsed.rawText.trim() : parsed.name;
     if (name === "") {
       missingRawText += 1;
