@@ -1,8 +1,13 @@
 /**
- * Pure parser for a recipe's free-text method (stored in `dishes.description`).
- * The method is written as ONE chronological timeline across all of a recipe's
- * components, with each step carrying the ingredients it uses, so the cook never
- * scrolls back up to the ingredient list.
+ * Pure parser for a recipe's method written as markdown (issue #272). Markdown
+ * is only an INPUT format: `saveRecipe` parses it once on save and the rows in
+ * `dish_phases` / `dish_steps` are the truth. The migration's SQL backfill
+ * (`public._backfill_dish_method`) implements the same rules and is pinned to
+ * this parser by `backfill-parity.test.ts` + pgTAP 26.
+ *
+ * The method is ONE chronological timeline across all of a recipe's
+ * components, with each step carrying the ingredients it uses, so the cook
+ * never scrolls back up to the ingredient list.
  *
  * Syntax (a tiny markdown subset; plain text in, plain data out):
  *   "## Phase"     opens a phase (a stretch of the cook, e.g. "While the pork simmers")
@@ -14,7 +19,7 @@
  * Any other non-blank line is phase intro text.
  */
 
-export type Step = { n: number; text: string; notes: string[] };
+export type Step = { n: number; body: string; notes: string[] };
 export type Phase = { title: string; intro: string[]; steps: Step[] };
 export type Span =
   | { kind: "text"; text: string }
@@ -37,7 +42,7 @@ export function parseMethod(method: string): Phase[] {
       phases.push({ title: line.slice(3).trim(), intro: [], steps: [] });
     } else if (step) {
       n += 1;
-      phase().steps.push({ n, text: step[1], notes: [] });
+      phase().steps.push({ n, body: step[1], notes: [] });
     } else if (note) {
       const p = phase();
       const last = p.steps[p.steps.length - 1];
@@ -67,22 +72,4 @@ export function parseSpans(text: string): Span[] {
 
 export function countSteps(phases: Phase[]): number {
   return phases.reduce((sum, p) => sum + p.steps.length, 0);
-}
-
-/** The first step not yet done, or null when every step is done. */
-export function currentStep(total: number, done: ReadonlySet<number>): number | null {
-  for (let n = 1; n <= total; n += 1) if (!done.has(n)) return n;
-  return null;
-}
-
-/** Read persisted progress defensively: anything malformed is a fresh start. */
-export function parseProgress(raw: string | null): Set<number> {
-  try {
-    const value: unknown = JSON.parse(raw ?? "[]");
-    return new Set(
-      Array.isArray(value) ? value.filter((n): n is number => Number.isInteger(n)) : [],
-    );
-  } catch {
-    return new Set();
-  }
 }

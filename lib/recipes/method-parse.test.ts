@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { countSteps, currentStep, parseMethod, parseProgress, parseSpans } from "./method-parse";
+import { countSteps, parseMethod, parseSpans } from "./method-parse";
 
 describe("parseMethod", () => {
   it("groups steps into phases and numbers them across the whole method", () => {
@@ -19,7 +19,7 @@ describe("parseMethod", () => {
     expect(phases.map((p) => p.title)).toEqual(["Start the pork", "While it simmers"]);
     expect(phases[1].intro).toEqual(["Prep what comes later."]);
     // The author restarted at "1."; the cook sees one continuous count.
-    expect(phases.flatMap((p) => p.steps.map((s) => [s.n, s.text]))).toEqual([
+    expect(phases.flatMap((p) => p.steps.map((s) => [s.n, s.body]))).toEqual([
       [1, "Cube the pork."],
       [2, "Into the pot."],
       [3, "Dice the onion."],
@@ -65,28 +65,5 @@ describe("parseSpans", () => {
     expect(parseSpans("<img src=x onerror=alert(1)>")).toEqual([
       { kind: "text", text: "<img src=x onerror=alert(1)>" },
     ]);
-  });
-});
-
-describe("currentStep", () => {
-  it("is the first step not yet done, even if later steps are done", () => {
-    expect(currentStep(4, new Set([1, 3]))).toBe(2);
-  });
-
-  it("is null once every step is done", () => {
-    expect(currentStep(2, new Set([1, 2]))).toBeNull();
-  });
-});
-
-describe("parseProgress", () => {
-  it("reads a saved list of step numbers", () => {
-    expect(parseProgress("[1,2,5]")).toEqual(new Set([1, 2, 5]));
-  });
-
-  it("treats missing or malformed storage as a fresh start", () => {
-    expect(parseProgress(null)).toEqual(new Set());
-    expect(parseProgress("not json")).toEqual(new Set());
-    expect(parseProgress('{"a":1}')).toEqual(new Set());
-    expect(parseProgress('[1,"2",3.5,4]')).toEqual(new Set([1, 4]));
   });
 });

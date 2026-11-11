@@ -4,7 +4,9 @@ import { AppNav } from "@/components/app-nav";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { loadRecipeDetail } from "./detail-core";
+import { IngredientGroups } from "./ingredient-groups";
 import { RecipeMethod } from "./method";
+import { RecipeMeta } from "./recipe-meta";
 
 // Behind the auth/household gate (deny-by-default middleware). Session-dependent
 // + RLS-scoped read — never prerender at build time.
@@ -16,7 +18,7 @@ export const dynamic = "force-dynamic";
  * `app/board/page.tsx`: an async Server Component whose queries all run through
  * the RLS-scoped cookie session. A miss (bad id or another household's recipe)
  * renders the not-found boundary, never a crash and never a cross-household
- * read. Untrusted text (title, ingredient lines) renders as plain React
+ * read. Untrusted text (title, ingredient lines, method) renders as plain React
  * children (escaped by construction) — no `dangerouslySetInnerHTML`.
  */
 export default async function RecipeDetailPage({
@@ -28,12 +30,6 @@ export default async function RecipeDetailPage({
   const supabase = await createServerComponentClient();
   const recipe = await loadRecipeDetail(supabase, id);
   if (!recipe) notFound();
-
-  const times = [
-    recipe.prepMinutes !== null ? { label: "Prep", value: recipe.prepMinutes } : null,
-    recipe.cookMinutes !== null ? { label: "Cook", value: recipe.cookMinutes } : null,
-    recipe.totalMinutes !== null ? { label: "Total", value: recipe.totalMinutes } : null,
-  ].filter((t): t is { label: string; value: number } => t !== null);
 
   return (
     <>
@@ -55,34 +51,22 @@ export default async function RecipeDetailPage({
           />
         ) : null}
 
-        {times.length > 0 ? (
-          <dl className="flex gap-6 text-sm">
-            {times.map((t) => (
-              <div key={t.label}>
-                <dt className="text-muted-foreground">{t.label}</dt>
-                <dd className="font-medium">{t.value} min</dd>
-              </div>
-            ))}
-          </dl>
-        ) : null}
+        <RecipeMeta
+          prepMinutes={recipe.prepMinutes}
+          cookMinutes={recipe.cookMinutes}
+          totalMinutes={recipe.totalMinutes}
+          servings={recipe.servings}
+        />
 
         <details className="space-y-2 rounded-lg border p-3" open={!recipe.method}>
           <summary className="cursor-pointer font-medium">
             {recipe.method ? "All ingredients (for shopping)" : "Ingredients"}
           </summary>
-          {recipe.ingredientLines.length > 0 ? (
-            <ul className="list-disc space-y-1 pl-5 text-sm">
-              {recipe.ingredientLines.map((line, index) => (
-                <li key={index}>{line}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-muted-foreground text-sm">No ingredients yet.</p>
-          )}
+          <IngredientGroups groups={recipe.ingredientGroups} />
         </details>
 
         {recipe.method ? (
-          <RecipeMethod method={recipe.method} dishId={recipe.id} />
+          <RecipeMethod phases={recipe.method.phases} dishId={recipe.id} />
         ) : null}
 
         {recipe.sourceUrl ? (
