@@ -17,6 +17,8 @@
 
 import { useActionState, useEffect, useState } from "react";
 
+import { INGREDIENTS_TEXT_MAX_CHARS, METHOD_TEXT_MAX_CHARS } from "@/lib/recipes/recipe-limits";
+
 import {
   fetchRecipePreviewAction,
   saveIngestedDishAction,
@@ -217,6 +219,7 @@ export function RecipeIngestForm() {
           id="ingest-ingredients"
           name="ingredients"
           rows={8}
+          maxLength={INGREDIENTS_TEXT_MAX_CHARS}
           aria-describedby="ingest-ingredients-hint"
           placeholder={"Paste or type your ingredients — one per line:\n2 lb pork shoulder\n1 tbsp ground cumin"}
           value={fields.ingredientsText}
@@ -236,6 +239,7 @@ export function RecipeIngestForm() {
           id="ingest-method"
           name="method"
           rows={10}
+          maxLength={METHOD_TEXT_MAX_CHARS}
           aria-describedby="ingest-method-hint"
           placeholder={"## Start\n1. Boil [[1 lb pasta]] in salted water.\n- Stir once so it doesn't stick.\n2. Drain."}
           value={fields.methodText}

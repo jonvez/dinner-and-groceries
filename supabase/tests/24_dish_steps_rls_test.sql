@@ -2,13 +2,13 @@
 -- Both are dish children with household_id denormalized (ADR 0003), so they
 -- mirror 17_ingredients_rls_test.sql: allow-same / deny-cross, the composite
 -- FKs (including the phase-belongs-to-the-same-dish hardening), cascade on dish
--- delete, the non-blank body check, and the deferred step-position uniqueness
+-- delete, the non-blank body check, the size caps, and the deferred step-position uniqueness
 -- that lets save_recipe reorder steps inside one transaction. Also pins the two
 -- expand-only columns (ingredients.section, dishes.servings).
 --
 -- One rolled-back transaction; fixtures inlined so the file is self-contained.
 begin;
-select plan(26);
+select plan(32);
 
 create schema if not exists tests;
 
@@ -145,6 +145,28 @@ select is((select count(*)::int from public.dish_steps where phase_id = '0f00000
 delete from public.dishes where id = '0d000002-0000-0000-0000-000000000002';
 select is((select count(*)::int from public.dish_phases where dish_id = '0d000002-0000-0000-0000-000000000002'), 0, 'cascade: deleting a dish removes its phases');
 select is((select count(*)::int from public.dish_steps  where dish_id = '0d000002-0000-0000-0000-000000000002'), 0, 'cascade: deleting a dish removes its steps');
+
+-- 27-32: size caps (security review M1). Any member can write these columns
+-- directly, and step text is rendered on every view, so the table bounds it,
+-- not just save_recipe.
+select throws_ok(
+  $$insert into public.dish_steps (household_id, dish_id, phase_id, position, body) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', '0f000003-0000-0000-0000-000000000003', 10, repeat('x', 4001))$$,
+  '23514', null, 'size cap: a step body over 4000 characters is rejected');
+select lives_ok(
+  $$insert into public.dish_steps (household_id, dish_id, phase_id, position, body) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', '0f000003-0000-0000-0000-000000000003', 11, repeat('x', 4000))$$,
+  'size cap: a step body of exactly 4000 characters is allowed');
+select throws_ok(
+  $$insert into public.dish_steps (household_id, dish_id, phase_id, position, body, notes) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', '0f000003-0000-0000-0000-000000000003', 12, 'Stir.', array(select 'n' from generate_series(1, 51)))$$,
+  '23514', null, 'size cap: more than 50 notes on a step is rejected');
+select throws_ok(
+  $$insert into public.dish_phases (household_id, dish_id, position, intro) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', 10, array(select 'i' from generate_series(1, 51)))$$,
+  '23514', null, 'size cap: more than 50 intro lines on a phase is rejected');
+select throws_ok(
+  $$insert into public.dish_phases (household_id, dish_id, position, title) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', 11, repeat('t', 201))$$,
+  '23514', null, 'size cap: a phase title over 200 characters is rejected');
+select throws_ok(
+  $$update public.dishes set servings = repeat('s', 101) where id = '0d000003-0000-0000-0000-000000000003'$$,
+  '23514', null, 'size cap: servings over 100 characters is rejected');
 
 select * from finish();
 rollback;

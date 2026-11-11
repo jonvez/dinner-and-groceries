@@ -23,6 +23,7 @@ import { safeHttpUrl } from "@/lib/web/safe-url";
 
 import { parseIngredient } from "./ingredient";
 import { parseMethod, type Phase } from "./method-parse";
+import { payloadLimitError, recipeLimitError, textLimitError } from "./recipe-limits";
 
 type DbClient = SupabaseClient<Database>;
 
@@ -138,6 +139,20 @@ export async function saveRecipe(
   const title = input.title.trim();
   if (title === "") return { ok: false, error: "Give the recipe a title." };
 
+  // Size limits, mirroring save_recipe (recipe-limits.ts), before any DB call:
+  // the raw text first (bounds the parsing), then the parsed recipe.
+  const textError = textLimitError(input.methodText, input.ingredientsText);
+  if (textError) return { ok: false, error: textError };
+  const parsedPhases = parseMethod(input.methodText);
+  const ingredients = ingredientsFromText(input.ingredientsText);
+  const servings = blankToNull(input.servings);
+  const limitError = recipeLimitError({
+    phases: parsedPhases,
+    ingredientCount: ingredients.length,
+    servings,
+  });
+  if (limitError) return { ok: false, error: limitError };
+
   const id = input.id ?? null;
   let existing: { id: string; body: string }[] = [];
   if (id !== null) {
@@ -162,13 +177,15 @@ export async function saveRecipe(
     prep_minutes: minutes(input.prepMinutes),
     cook_minutes: minutes(input.cookMinutes),
     total_minutes: minutes(input.totalMinutes),
-    servings: blankToNull(input.servings),
+    servings,
     ...(input.tags !== undefined
       ? { tags: input.tags.map((tag) => tag.trim()).filter((tag) => tag !== "") }
       : {}),
-    ingredients: ingredientsFromText(input.ingredientsText),
-    phases: assignStepIds(parseMethod(input.methodText), existing),
+    ingredients,
+    phases: assignStepIds(parsedPhases, existing),
   };
+  const payloadError = payloadLimitError(recipe);
+  if (payloadError) return { ok: false, error: payloadError };
 
   const { data: dishId, error } = await supabase.rpc("save_recipe", { p_recipe: recipe });
   if (error || !dishId) {

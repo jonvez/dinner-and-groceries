@@ -8,7 +8,7 @@
 --
 -- One rolled-back transaction; fixtures inlined so the file is self-contained.
 begin;
-select plan(38);
+select plan(43);
 
 create schema if not exists tests;
 
@@ -157,6 +157,16 @@ create or replace function tests.update_payload() returns jsonb language sql as 
 $fn$;
 grant execute on function tests.update_payload() to authenticated;
 
+-- A create payload with p_count steps in one untitled phase.
+create or replace function tests.recipe_with_steps(p_title text, p_count int) returns jsonb language sql as $fn$
+  select jsonb_build_object(
+    'id', null, 'title', p_title, 'ingredients', '[]'::jsonb,
+    'phases', jsonb_build_array(jsonb_build_object('title', '', 'intro', '[]'::jsonb, 'steps',
+      (select jsonb_agg(jsonb_build_object('id', null, 'body', 'Step ' || g || '.', 'notes', '[]'::jsonb))
+         from generate_series(1, p_count) g))));
+$fn$;
+grant execute on function tests.recipe_with_steps(text, int) to authenticated;
+
 select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
 
 -- 16: update returns the same id (no duplicate dish)
@@ -232,13 +242,52 @@ select throws_ok(
   $$select public.save_recipe('{"title": "Blank step", "ingredients": [], "phases": [{"title": "", "intro": [], "steps": [{"id": null, "body": "  ", "notes": []}]}]}'::jsonb)$$,
   '23514', null, 'validation: a blank step body is rejected');
 
+-- ---------------------------------------------------------------------------
+-- Payload guards (security review M1): bounded work per call, and well under
+-- PostgREST's 1000-row page so the detail page never silently truncates.
+-- ---------------------------------------------------------------------------
+-- 36: over 256 KiB of payload (here one huge intro line, which no column cap
+-- catches) -> 22023
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, jsonb_build_object(
+    'title', 'Too big', 'ingredients', '[]'::jsonb,
+    'phases', jsonb_build_array(jsonb_build_object('title', '', 'intro', jsonb_build_array(repeat('x', 262144)), 'steps', '[]'::jsonb))
+  )::text),
+  '22023', null, 'guard: a payload over 256 KiB is rejected');
+
+-- 37-38: more than 200 steps -> 22023; exactly 200 is fine
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, tests.recipe_with_steps('Too many steps', 201)::text),
+  '22023', null, 'guard: more than 200 steps is rejected');
+select lives_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, tests.recipe_with_steps('Exactly 200 steps', 200)::text),
+  'guard: exactly 200 steps is allowed');
+
+-- 39: more than 50 phases -> 22023
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, jsonb_build_object(
+    'title', 'Too many phases', 'ingredients', '[]'::jsonb,
+    'phases', (select jsonb_agg(jsonb_build_object('title', 'P' || g, 'intro', '[]'::jsonb, 'steps', '[]'::jsonb)) from generate_series(1, 51) g)
+  )::text),
+  '22023', null, 'guard: more than 50 phases is rejected');
+
+-- 40: more than 200 ingredients -> 22023
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, jsonb_build_object(
+    'title', 'Too many ingredients', 'phases', '[]'::jsonb,
+    'ingredients', (select jsonb_agg(jsonb_build_object('name', 'salt', 'quantity', null, 'unit', null, 'raw_text', 'salt', 'section', null)) from generate_series(1, 201) g)
+  )::text),
+  '22023', null, 'guard: more than 200 ingredients is rejected');
+
 select tests.clear_auth();
 
--- 36-38: nothing leaked into K, and the failed calls wrote nothing
+-- 41-43: nothing leaked into K, and the failed calls wrote nothing
 select is((select title from public.dishes where id = '0d000002-0000-0000-0000-000000000002'), 'K Tacos', 'cross-household: K''s dish untouched');
 select is((select body || '@' || dish_id from public.dish_steps where id = '05000002-0000-0000-0000-000000000002'), 'Warm the tortillas.@0d000002-0000-0000-0000-000000000002', 'cross-household: K''s step untouched');
 select is(
-  (select count(*)::int from public.dishes where title in ('pwned', 'ghost', 'Blank step', '   ')),
+  (select count(*)::int from public.dishes where title in (
+    'pwned', 'ghost', 'Blank step', '   ',
+    'Too big', 'Too many steps', 'Too many phases', 'Too many ingredients')),
   0,
   'failed saves wrote nothing (atomic)');
 

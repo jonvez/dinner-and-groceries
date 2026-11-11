@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { INGREDIENTS_TEXT_MAX_CHARS, METHOD_TEXT_MAX_CHARS } from "./recipe-limits";
 import {
   assignStepIds,
   ingredientsFromText,
@@ -275,6 +276,119 @@ describe("saveRecipe", () => {
         },
       },
     ]);
+  });
+
+  describe("size limits (mirroring save_recipe's guards and column caps)", () => {
+    const steps = (count: number) =>
+      Array.from({ length: count }, (_, i) => `${i + 1}. Step ${i + 1}.`).join("\n");
+
+    async function refused(input: Partial<RecipeInput>) {
+      const { client, rpc, fromTables } = makeClient({});
+      const result = await saveRecipe(client, { ...BASE, id: "dish-9", ...input });
+      // Refused before ANY DB call: not even the update's step read.
+      expect(rpc).not.toHaveBeenCalled();
+      expect(fromTables).toEqual([]);
+      return result;
+    }
+
+    it("refuses a 201-step method with a clear message", async () => {
+      expect(await refused({ methodText: steps(201) })).toEqual({
+        ok: false,
+        error: "A method can have at most 200 steps (this one has 201).",
+      });
+    });
+
+    it("saves a 200-step method", async () => {
+      const { client, rpc } = makeClient({});
+      expect(await saveRecipe(client, { ...BASE, methodText: steps(200) })).toEqual({
+        ok: true,
+        dishId: "d1",
+      });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses more than 50 phases", async () => {
+      const methodText = Array.from({ length: 51 }, (_, i) => `## Part ${i + 1}`).join("\n");
+      expect(await refused({ methodText })).toEqual({
+        ok: false,
+        error: "A method can have at most 50 sections (this one has 51).",
+      });
+    });
+
+    it("refuses more than 200 ingredients", async () => {
+      const ingredientsText = Array.from({ length: 201 }, () => "1 tsp salt").join("\n");
+      expect(await refused({ ingredientsText })).toEqual({
+        ok: false,
+        error: "A recipe can have at most 200 ingredients (this one has 201).",
+      });
+    });
+
+    it("refuses a step over 4000 characters, naming the step", async () => {
+      expect(await refused({ methodText: `1. Short.\n2. ${"x".repeat(4001)}` })).toEqual({
+        ok: false,
+        error: "Step 2 is too long (the limit is 4,000 characters).",
+      });
+    });
+
+    it("counts characters as Postgres does (code points, not UTF-16 units)", async () => {
+      // 4000 emoji are 8000 UTF-16 units but 4000 characters: allowed.
+      const { client, rpc } = makeClient({});
+      const result = await saveRecipe(client, { ...BASE, methodText: `1. ${"🍅".repeat(4000)}` });
+      expect(result.ok).toBe(true);
+      expect(rpc).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a step with more than 50 notes", async () => {
+      const methodText = ["1. Stir.", ...Array.from({ length: 51 }, () => "- again")].join("\n");
+      expect(await refused({ methodText })).toEqual({
+        ok: false,
+        error: "Step 1 has too many notes (the limit is 50).",
+      });
+    });
+
+    it("refuses a section with more than 50 intro lines", async () => {
+      const methodText = ["## Prep", ...Array.from({ length: 51 }, (_, i) => `Line ${i}.`)].join("\n");
+      expect(await refused({ methodText })).toEqual({
+        ok: false,
+        error: "A section can have at most 50 lines before its first step.",
+      });
+    });
+
+    it("refuses a section heading over 200 characters", async () => {
+      expect(await refused({ methodText: `## ${"h".repeat(201)}\n1. Go.` })).toEqual({
+        ok: false,
+        error: "A section heading is too long (the limit is 200 characters).",
+      });
+    });
+
+    it("refuses servings over 100 characters", async () => {
+      expect(await refused({ servings: "s".repeat(101) })).toEqual({
+        ok: false,
+        error: "Servings is too long (the limit is 100 characters).",
+      });
+    });
+
+    it("refuses method or ingredients text longer than the form allows", async () => {
+      expect(await refused({ methodText: "x".repeat(METHOD_TEXT_MAX_CHARS + 1) })).toEqual({
+        ok: false,
+        error: "The method is too long (the limit is 100,000 characters).",
+      });
+      expect(await refused({ ingredientsText: "x".repeat(INGREDIENTS_TEXT_MAX_CHARS + 1) })).toEqual({
+        ok: false,
+        error: "The ingredients list is too long (the limit is 30,000 characters).",
+      });
+    });
+
+    it("refuses a payload over 256 KiB, as save_recipe measures it", async () => {
+      // 90k three-byte chars: under the method's character limit, but ~270 KB.
+      // (Measured on the final payload, step ids included, so a create here.)
+      const { client, rpc } = makeClient({});
+      expect(await saveRecipe(client, { ...BASE, methodText: "€".repeat(90_000) })).toEqual({
+        ok: false,
+        error: "This recipe is too large to save. Try shortening the method or ingredients.",
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    });
   });
 
   it("reports a missing recipe (P0002) distinctly, and anything else generically", async () => {

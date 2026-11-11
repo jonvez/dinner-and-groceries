@@ -20,8 +20,11 @@
 -- ===========================================================================
 -- Ingredient group label ("Filling", "Topping"). null = ungrouped.
 alter table public.ingredients add column section text;
--- Free-text yield ("6 to 8", "1 loaf"). null = unknown.
-alter table public.dishes add column servings text;
+-- Free-text yield ("6 to 8", "1 loaf"). null = unknown. Capped like every new
+-- recipe text column (security review M1); the column is new, so the check is
+-- expand-safe.
+alter table public.dishes add column servings text
+  constraint dishes_servings_length check (length(servings) <= 100);
 
 -- ===========================================================================
 -- 2. dish_phases — a stretch of the cook ("While the pork simmers")
@@ -33,9 +36,11 @@ create table public.dish_phases (
   -- 0-based order within the dish.
   position     integer not null,
   -- '' = the untitled leading phase (steps written before any heading).
-  title        text not null default '',
+  title        text not null default ''
+    constraint dish_phases_title_length check (length(title) <= 200),
   -- Phase-level intro lines / notes.
-  intro        text[] not null default '{}',
+  intro        text[] not null default '{}'
+    constraint dish_phases_intro_count check (cardinality(intro) <= 50),
   created_at   timestamptz not null default now(),
   foreign key (dish_id, household_id)
     references public.dishes (id, household_id) on delete cascade,
@@ -63,8 +68,12 @@ create table public.dish_steps (
   phase_id     uuid not null,
   -- 0-based order across the WHOLE dish (display number = position + 1).
   position     integer not null,
-  body         text not null check (length(trim(body)) > 0),
-  notes        text[] not null default '{}',
+  -- Step text is rendered on every view, so it is size-capped here, not just
+  -- in save_recipe (security review M1). Same for phases above.
+  body        text not null check (length(trim(body)) > 0)
+    constraint dish_steps_body_length check (length(body) <= 4000),
+  notes        text[] not null default '{}'
+    constraint dish_steps_notes_count check (cardinality(notes) <= 50),
   created_at   timestamptz not null default now(),
   foreign key (dish_id, household_id)
     references public.dishes (id, household_id) on delete cascade,
@@ -171,6 +180,13 @@ begin
   if jsonb_typeof(p_recipe) is distinct from 'object' then
     raise exception 'save_recipe: recipe must be a json object' using errcode = '22023';
   end if;
+  -- Bounded work and storage per call (security review M1); saveRecipe
+  -- (lib/recipes/recipe-limits.ts) mirrors every limit here with a friendly
+  -- message. 200 steps also keeps a dish well under PostgREST's 1000-row page,
+  -- so the detail page never silently truncates.
+  if octet_length(p_recipe::text) > 262144 then
+    raise exception 'save_recipe: recipe is too large (max 256 KiB)' using errcode = '22023';
+  end if;
 
   -- Identity from the verified session only.
   select m.id into v_member_id from public.members m where m.user_id = (select auth.uid());
@@ -184,6 +200,17 @@ begin
   end if;
   if jsonb_typeof(v_ingredients) <> 'array' or jsonb_typeof(v_phases) <> 'array' then
     raise exception 'save_recipe: ingredients and phases must be arrays' using errcode = '22023';
+  end if;
+  if jsonb_array_length(v_ingredients) > 200 then
+    raise exception 'save_recipe: too many ingredients (max 200)' using errcode = '22023';
+  end if;
+  if jsonb_array_length(v_phases) > 50 then
+    raise exception 'save_recipe: too many phases (max 50)' using errcode = '22023';
+  end if;
+  if (select count(*)
+        from jsonb_array_elements(v_phases) p,
+             jsonb_array_elements(coalesce(nullif(p.value -> 'steps', 'null'::jsonb), '[]'::jsonb)) s) > 200 then
+    raise exception 'save_recipe: too many steps (max 200)' using errcode = '22023';
   end if;
   if jsonb_typeof(p_recipe -> 'tags') = 'array' then
     v_tags := array(select jsonb_array_elements_text(p_recipe -> 'tags'));

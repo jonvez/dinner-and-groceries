@@ -11,6 +11,8 @@ const actionMocks = vi.hoisted(() => ({
 
 vi.mock("./actions", () => actionMocks);
 
+import { INGREDIENTS_TEXT_MAX_CHARS, METHOD_TEXT_MAX_CHARS } from "@/lib/recipes/recipe-limits";
+
 import { RecipeIngestForm } from "./recipe-ingest-form";
 
 beforeEach(() => {
@@ -29,6 +31,16 @@ describe("RecipeIngestForm", () => {
     expect(screen.getByLabelText(/method/i)).toHaveValue("");
     expect(screen.getByLabelText(/servings/i)).toHaveValue("");
     expect(screen.getByRole("button", { name: "Save to library" })).toBeEnabled();
+  });
+
+  it("caps the method and ingredients textareas at saveRecipe's text limits", () => {
+    render(<RecipeIngestForm />);
+
+    expect(screen.getByLabelText(/method/i)).toHaveAttribute("maxLength", String(METHOD_TEXT_MAX_CHARS));
+    expect(screen.getByLabelText(/ingredients/i)).toHaveAttribute(
+      "maxLength",
+      String(INGREDIENTS_TEXT_MAX_CHARS),
+    );
   });
 
   it("submits the method and servings with the rest of the recipe", async () => {
