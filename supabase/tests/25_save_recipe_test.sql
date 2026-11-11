@@ -8,7 +8,7 @@
 --
 -- One rolled-back transaction; fixtures inlined so the file is self-contained.
 begin;
-select plan(46);
+select plan(48);
 
 create schema if not exists tests;
 
@@ -314,9 +314,22 @@ select throws_ok(
   )::text),
   '22023', null, 'create: a step id from an existing dish in the same household is refused');
 
+-- ---------------------------------------------------------------------------
+-- Household and author come from the session even when the payload names them
+-- (QA TQ-1: dishes RLS doesn't constrain created_by, so only the function body
+-- protects it, and nothing pinned that against a spoofing payload).
+-- ---------------------------------------------------------------------------
+-- 44-45
+insert into tests.saved (key, id) values ('spoof', public.save_recipe(jsonb_build_object(
+  'id', null, 'title', 'Spoofed', 'ingredients', '[]'::jsonb, 'phases', '[]'::jsonb,
+  'created_by', 'a0000002-0000-0000-0000-000000000002',
+  'household_id', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')));
+select is((select created_by from public.dishes where id = (select id from tests.saved where key = 'spoof')), 'a0000001-0000-0000-0000-000000000001'::uuid, 'create: a payload created_by is ignored (the caller''s member id is used)');
+select is((select household_id from public.dishes where id = (select id from tests.saved where key = 'spoof')), 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'create: a payload household_id is ignored (the caller''s household is used)');
+
 select tests.clear_auth();
 
--- 44-46: nothing leaked into K or H's other dish, and the failed calls wrote nothing
+-- 46-48: nothing leaked into K or H's other dish, and the failed calls wrote nothing
 select is((select title from public.dishes where id = '0d000002-0000-0000-0000-000000000002'), 'K Tacos', 'cross-household: K''s dish untouched');
 select is((select body || '@' || dish_id from public.dish_steps where id = '05000002-0000-0000-0000-000000000002'), 'Warm the tortillas.@0d000002-0000-0000-0000-000000000002', 'cross-household: K''s step untouched');
 select is(
