@@ -266,6 +266,16 @@ begin
     end if;
   end if;
 
+  -- A kept step id must be one of THIS dish's steps (security review L1).
+  -- Without this, the upsert below would silently move a step of another dish
+  -- in the household onto this one (on a create too). Another household's
+  -- step is invisible here, so it still fails at the upsert (RLS, 42501).
+  if exists (select 1 from public.dish_steps s
+              where s.id = any (v_kept_ids)
+                and s.dish_id <> v_dish_id) then
+    raise exception 'save_recipe: step belongs to another recipe' using errcode = '22023';
+  end if;
+
   -- 2. Ingredients: replaced wholesale (nothing references their ids yet).
   delete from public.ingredients where dish_id = v_dish_id;
   insert into public.ingredients (household_id, dish_id, name, quantity, unit, raw_text, section, position)

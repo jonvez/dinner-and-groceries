@@ -8,7 +8,7 @@
 --
 -- One rolled-back transaction; fixtures inlined so the file is self-contained.
 begin;
-select plan(43);
+select plan(46);
 
 create schema if not exists tests;
 
@@ -51,7 +51,6 @@ insert into public.dish_phases (id, household_id, dish_id, position, title) valu
   ('0f000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '0d000002-0000-0000-0000-000000000002', 0, 'Prep');
 insert into public.dish_steps (id, household_id, dish_id, phase_id, position, body) values
   ('05000002-0000-0000-0000-000000000002', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '0d000002-0000-0000-0000-000000000002', '0f000002-0000-0000-0000-000000000002', 0, 'Warm the tortillas.');
-
 -- ---------------------------------------------------------------------------
 -- Posture
 -- ---------------------------------------------------------------------------
@@ -279,15 +278,51 @@ select throws_ok(
   )::text),
   '22023', null, 'guard: more than 200 ingredients is rejected');
 
+-- ---------------------------------------------------------------------------
+-- A kept step id must belong to THIS dish (security review L1): a same-
+-- household step from another dish is refused, not silently moved here.
+-- ---------------------------------------------------------------------------
+-- A second H dish + step to aim at (seeded privileged).
+select tests.clear_auth();
+insert into public.dishes (id, household_id, title, created_by) values
+  ('0d000003-0000-0000-0000-000000000003', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'H Rigatoni', 'a0000001-0000-0000-0000-000000000001');
+insert into public.dish_phases (id, household_id, dish_id, position, title) values
+  ('0f000003-0000-0000-0000-000000000003', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', 0, 'Soak');
+insert into public.dish_steps (id, household_id, dish_id, phase_id, position, body) values
+  ('05000003-0000-0000-0000-000000000003', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '0d000003-0000-0000-0000-000000000003', '0f000003-0000-0000-0000-000000000003', 0, 'Soak the pasta.');
+select tests.authenticate_as('11111111-1111-1111-1111-111111111111');
+
+-- 41-42: on update
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, jsonb_build_object(
+    'id', (select id from tests.saved where key = 'dish'), 'title', 'Soup v4', 'ingredients', '[]'::jsonb,
+    'phases', jsonb_build_array(jsonb_build_object('title', '', 'intro', '[]'::jsonb, 'steps', jsonb_build_array(
+      jsonb_build_object('id', '05000003-0000-0000-0000-000000000003', 'body', 'Hijacked.', 'notes', '[]'::jsonb))))
+  )::text),
+  '22023', null, 'update: a step id from another dish in the same household is refused');
+select is(
+  (select body || '@' || dish_id || '@' || position from public.dish_steps where id = '05000003-0000-0000-0000-000000000003'),
+  'Soak the pasta.@0d000003-0000-0000-0000-000000000003@0',
+  'update: the other dish''s step is untouched');
+
+-- 43: on create
+select throws_ok(
+  format($$select public.save_recipe(%L::jsonb)$$, jsonb_build_object(
+    'id', null, 'title', 'Adopter', 'ingredients', '[]'::jsonb,
+    'phases', jsonb_build_array(jsonb_build_object('title', '', 'intro', '[]'::jsonb, 'steps', jsonb_build_array(
+      jsonb_build_object('id', '05000003-0000-0000-0000-000000000003', 'body', 'Hijacked.', 'notes', '[]'::jsonb))))
+  )::text),
+  '22023', null, 'create: a step id from an existing dish in the same household is refused');
+
 select tests.clear_auth();
 
--- 41-43: nothing leaked into K, and the failed calls wrote nothing
+-- 44-46: nothing leaked into K or H's other dish, and the failed calls wrote nothing
 select is((select title from public.dishes where id = '0d000002-0000-0000-0000-000000000002'), 'K Tacos', 'cross-household: K''s dish untouched');
 select is((select body || '@' || dish_id from public.dish_steps where id = '05000002-0000-0000-0000-000000000002'), 'Warm the tortillas.@0d000002-0000-0000-0000-000000000002', 'cross-household: K''s step untouched');
 select is(
   (select count(*)::int from public.dishes where title in (
     'pwned', 'ghost', 'Blank step', '   ',
-    'Too big', 'Too many steps', 'Too many phases', 'Too many ingredients')),
+    'Too big', 'Too many steps', 'Too many phases', 'Too many ingredients', 'Adopter')),
   0,
   'failed saves wrote nothing (atomic)');
 
