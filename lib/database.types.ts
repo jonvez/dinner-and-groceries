@@ -124,6 +124,92 @@ export type Database = {
           },
         ]
       }
+      dish_phases: {
+        Row: {
+          created_at: string
+          dish_id: string
+          household_id: string
+          id: string
+          intro: string[]
+          position: number
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          dish_id: string
+          household_id: string
+          id?: string
+          intro?: string[]
+          position: number
+          title?: string
+        }
+        Update: {
+          created_at?: string
+          dish_id?: string
+          household_id?: string
+          id?: string
+          intro?: string[]
+          position?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dish_phases_dish_id_household_id_fkey"
+            columns: ["dish_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      dish_steps: {
+        Row: {
+          body: string
+          created_at: string
+          dish_id: string
+          household_id: string
+          id: string
+          notes: string[]
+          phase_id: string
+          position: number
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          dish_id: string
+          household_id: string
+          id?: string
+          notes?: string[]
+          phase_id: string
+          position: number
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          dish_id?: string
+          household_id?: string
+          id?: string
+          notes?: string[]
+          phase_id?: string
+          position?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "dish_steps_dish_id_household_id_fkey"
+            columns: ["dish_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "dishes"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "dish_steps_phase_id_dish_id_fkey"
+            columns: ["phase_id", "dish_id"]
+            isOneToOne: false
+            referencedRelation: "dish_phases"
+            referencedColumns: ["id", "dish_id"]
+          },
+        ]
+      }
       dishes: {
         Row: {
           cook_minutes: number | null
@@ -134,6 +220,7 @@ export type Database = {
           id: string
           image_url: string | null
           prep_minutes: number | null
+          servings: string | null
           source_url: string | null
           tags: string[]
           title: string
@@ -148,6 +235,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           prep_minutes?: number | null
+          servings?: string | null
           source_url?: string | null
           tags?: string[]
           title: string
@@ -162,6 +250,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           prep_minutes?: number | null
+          servings?: string | null
           source_url?: string | null
           tags?: string[]
           title?: string
@@ -381,6 +470,7 @@ export type Database = {
           position: number
           quantity: number | null
           raw_text: string
+          section: string | null
           unit: string | null
         }
         Insert: {
@@ -392,6 +482,7 @@ export type Database = {
           position?: number
           quantity?: number | null
           raw_text: string
+          section?: string | null
           unit?: string | null
         }
         Update: {
@@ -403,6 +494,7 @@ export type Database = {
           position?: number
           quantity?: number | null
           raw_text?: string
+          section?: string | null
           unit?: string | null
         }
         Relationships: [
@@ -705,6 +797,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _backfill_dish_method: { Args: { p_dish_id: string }; Returns: undefined }
       accept_invite: {
         Args: { p_display_name: string; p_token: string }
         Returns: string
@@ -723,6 +816,7 @@ export type Database = {
         }[]
       }
       is_household_owner: { Args: never; Returns: boolean }
+      save_recipe: { Args: { p_recipe: Json }; Returns: string }
     }
     Enums: {
       event_type:
