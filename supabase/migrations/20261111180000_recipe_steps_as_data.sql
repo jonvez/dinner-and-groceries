@@ -494,10 +494,20 @@ revoke all on function public._backfill_dish_method(uuid) from public, anon, aut
 
 -- Run it for every dish that has a non-blank legacy method and no rows yet
 -- (in prod: the cilantro lime soup and the no-boil rigatoni).
+--
+-- It must never "succeed" without doing the work (security review I3). Every
+-- table here is FORCE RLS, so a migration role without BYPASSRLS would see zero
+-- dishes and the loop (and any check after it) would pass silently, leaving
+-- the legacy recipes with no method in the new app. With row_security off, a
+-- query RLS would filter raises instead; the check after the loop then proves
+-- every legacy method got rows.
 do $$
 declare
   r record;
+  v_row_security text := current_setting('row_security');
 begin
+  perform set_config('row_security', 'off', true);
+
   for r in
     select d.id
       from public.dishes d
@@ -507,4 +517,13 @@ begin
     perform public._backfill_dish_method(r.id);
     raise notice 'backfilled method for dish %', r.id;
   end loop;
+
+  if exists (select 1
+               from public.dishes d
+              where d.description ~ '\S'
+                and not exists (select 1 from public.dish_phases p where p.dish_id = d.id)) then
+    raise exception 'backfill incomplete: a dish with a legacy method still has no phases';
+  end if;
+
+  perform set_config('row_security', v_row_security, true);
 end $$;
