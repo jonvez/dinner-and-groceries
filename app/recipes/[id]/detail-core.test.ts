@@ -13,6 +13,7 @@ import { loadRecipeDetail } from "./detail-core";
 type DishRow = {
   id: string;
   title: string;
+  description?: string | null;
   image_url: string | null;
   source_url: string | null;
   prep_minutes: number | null;
@@ -79,6 +80,7 @@ describe("loadRecipeDetail", () => {
       cookMinutes: 90,
       totalMinutes: 110,
       ingredientLines: ["2 lb pork shoulder", "1 tbsp ground cumin"],
+      method: null,
     });
   });
 
@@ -100,6 +102,24 @@ describe("loadRecipeDetail", () => {
     expect(detail).not.toBeNull();
     expect(detail?.ingredientLines).toEqual([]);
     expect(detail?.imageUrl).toBeNull();
+  });
+
+  it("passes the stored method (description) through for cook mode", async () => {
+    const client = detailClient({
+      dish: {
+        id: "d4",
+        title: "Soup",
+        description: "## Start\n1. Simmer.",
+        image_url: null,
+        source_url: null,
+        prep_minutes: null,
+        cook_minutes: null,
+        total_minutes: null,
+      },
+      ingredients: [],
+    });
+
+    expect((await loadRecipeDetail(client, "d4"))?.method).toBe("## Start\n1. Simmer.");
   });
 
   it("re-scrubs an unsafe stored image/source URL (defense-in-depth) rather than trusting the stored row", async () => {

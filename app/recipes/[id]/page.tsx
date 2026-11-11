@@ -4,6 +4,7 @@ import { AppNav } from "@/components/app-nav";
 import { createServerComponentClient } from "@/lib/supabase/server-component";
 
 import { loadRecipeDetail } from "./detail-core";
+import { RecipeMethod } from "./method";
 
 // Behind the auth/household gate (deny-by-default middleware). Session-dependent
 // + RLS-scoped read — never prerender at build time.
@@ -65,8 +66,10 @@ export default async function RecipeDetailPage({
           </dl>
         ) : null}
 
-        <section className="space-y-2">
-          <h2 className="font-medium">Ingredients</h2>
+        <details className="space-y-2 rounded-lg border p-3" open={!recipe.method}>
+          <summary className="cursor-pointer font-medium">
+            {recipe.method ? "All ingredients (for shopping)" : "Ingredients"}
+          </summary>
           {recipe.ingredientLines.length > 0 ? (
             <ul className="list-disc space-y-1 pl-5 text-sm">
               {recipe.ingredientLines.map((line, index) => (
@@ -76,7 +79,11 @@ export default async function RecipeDetailPage({
           ) : (
             <p className="text-muted-foreground text-sm">No ingredients yet.</p>
           )}
-        </section>
+        </details>
+
+        {recipe.method ? (
+          <RecipeMethod method={recipe.method} dishId={recipe.id} />
+        ) : null}
 
         {recipe.sourceUrl ? (
           <a
