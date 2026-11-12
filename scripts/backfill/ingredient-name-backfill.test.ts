@@ -60,7 +60,7 @@ describe("planBackfill", () => {
 
   it("NEVER blanks a name: falls back to the raw line exactly as the ingest path does", () => {
     // A line that is nothing but a marker parses to an empty name, and the
-    // column is NOT NULL + non-empty. Same fallback rule as ingredientRowsFromText.
+    // column is NOT NULL + non-empty. Same fallback rule as ingredientsFromText.
     const plan = planBackfill([row({ raw_text: "•", name: "stale" })], parseIngredient);
 
     expect(plan.updates).toEqual([

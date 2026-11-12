@@ -59,16 +59,19 @@ export async function saveIngestedDishAction(
 
   const sourceUrl = String(formData.get("sourceUrl") ?? "").trim();
 
+  // Household and author are NOT passed: save_recipe derives both from the
+  // same verified session in SQL. The actor above gates the call and
+  // attributes the analytics event.
   const result = await saveIngestedDish(supabase, {
-    householdId: actor.householdId,
-    createdBy: actor.memberId,
     title: String(formData.get("title") ?? ""),
     sourceUrl,
     imageUrl: String(formData.get("imageUrl") ?? ""),
     prepMinutes: String(formData.get("prepMinutes") ?? ""),
     cookMinutes: String(formData.get("cookMinutes") ?? ""),
     totalMinutes: String(formData.get("totalMinutes") ?? ""),
+    servings: String(formData.get("servings") ?? ""),
     ingredientsText: String(formData.get("ingredients") ?? ""),
+    methodText: String(formData.get("method") ?? ""),
   });
   if (!result.ok) return { error: result.error };
 
@@ -92,8 +95,8 @@ export async function saveIngestedDishAction(
   // library behind the redirect. `redirect()` throws NEXT_REDIRECT, so nothing
   // after it runs and the success path never returns a value (its type is
   // `never`) — do NOT wrap it in a try/catch that swallows that control-flow
-  // signal. A benign ingredients-partial save is not surfaced inline anymore;
-  // the detail page simply shows the dish with no ingredient lines.
+  // signal. The save is atomic (save_recipe, #272), so there is no partial
+  // outcome to surface: success means the whole recipe landed.
   revalidatePath("/recipes");
   redirect(`/recipes/${result.dishId}`);
 }

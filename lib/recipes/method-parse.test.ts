@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { countSteps, currentStep, parseMethod, parseProgress, parseSpans } from "./method-parse";
+import { countSteps, parseMethod, parseSpans } from "./method-parse";
 
 describe("parseMethod", () => {
   it("groups steps into phases and numbers them across the whole method", () => {
@@ -19,7 +19,7 @@ describe("parseMethod", () => {
     expect(phases.map((p) => p.title)).toEqual(["Start the pork", "While it simmers"]);
     expect(phases[1].intro).toEqual(["Prep what comes later."]);
     // The author restarted at "1."; the cook sees one continuous count.
-    expect(phases.flatMap((p) => p.steps.map((s) => [s.n, s.text]))).toEqual([
+    expect(phases.flatMap((p) => p.steps.map((s) => [s.n, s.body]))).toEqual([
       [1, "Cube the pork."],
       [2, "Into the pot."],
       [3, "Dice the onion."],
@@ -48,6 +48,44 @@ describe("parseMethod", () => {
   it("returns no phases for blank text", () => {
     expect(parseMethod("  \n\n")).toEqual([]);
   });
+
+  it("keeps an interior carriage return inside a step or note (parity with the SQL backfill)", () => {
+    const [phase] = parseMethod("1. Sear\rthen flip.\n- Hot\rpan.");
+    expect(phase.intro).toEqual([]);
+    expect(phase.steps).toEqual([{ n: 1, body: "Sear\rthen flip.", notes: ["Hot\rpan."] }]);
+  });
+});
+
+/**
+ * ReDoS guard (the bug class of #176). Step bodies are stored text that any
+ * household member can write, parsed on save and rendered (SSR) on every view,
+ * so a quadratic regex here stalls the shared Node process for every
+ * household. Each input is ~200k pathological chars; a linear regex handles it
+ * in a few ms, a quadratic one takes many seconds.
+ */
+describe("method parsing is linear on hostile input", () => {
+  const N = 200_000;
+  const LIMIT_MS = 50;
+  function timeMs(fn: () => unknown): number {
+    const start = performance.now();
+    fn();
+    return performance.now() - start;
+  }
+
+  it("parseSpans: a long run of '['", () => {
+    const text = "[".repeat(N);
+    expect(timeMs(() => parseSpans(text))).toBeLessThan(LIMIT_MS);
+  });
+
+  it("parseMethod: a step marker, a long run of spaces, then an interior CR", () => {
+    const text = `1. ${" ".repeat(N)}x\ry`;
+    expect(timeMs(() => parseMethod(text))).toBeLessThan(LIMIT_MS);
+  });
+
+  it("parseMethod: a note marker, a long run of spaces, then an interior CR", () => {
+    const text = `- ${" ".repeat(N)}x\ry`;
+    expect(timeMs(() => parseMethod(text))).toBeLessThan(LIMIT_MS);
+  });
 });
 
 describe("parseSpans", () => {
@@ -61,32 +99,16 @@ describe("parseSpans", () => {
     ]);
   });
 
+  it("does not make a chip of text containing '['", () => {
+    expect(parseSpans("[[[[a]]")).toEqual([
+      { kind: "text", text: "[[" },
+      { kind: "ingredient", text: "a" },
+    ]);
+  });
+
   it("leaves markup-looking text alone (it is rendered as text, never HTML)", () => {
     expect(parseSpans("<img src=x onerror=alert(1)>")).toEqual([
       { kind: "text", text: "<img src=x onerror=alert(1)>" },
     ]);
-  });
-});
-
-describe("currentStep", () => {
-  it("is the first step not yet done, even if later steps are done", () => {
-    expect(currentStep(4, new Set([1, 3]))).toBe(2);
-  });
-
-  it("is null once every step is done", () => {
-    expect(currentStep(2, new Set([1, 2]))).toBeNull();
-  });
-});
-
-describe("parseProgress", () => {
-  it("reads a saved list of step numbers", () => {
-    expect(parseProgress("[1,2,5]")).toEqual(new Set([1, 2, 5]));
-  });
-
-  it("treats missing or malformed storage as a fresh start", () => {
-    expect(parseProgress(null)).toEqual(new Set());
-    expect(parseProgress("not json")).toEqual(new Set());
-    expect(parseProgress('{"a":1}')).toEqual(new Set());
-    expect(parseProgress('[1,"2",3.5,4]')).toEqual(new Set([1, 4]));
   });
 });

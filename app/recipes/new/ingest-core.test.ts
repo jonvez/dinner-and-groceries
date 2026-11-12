@@ -5,7 +5,6 @@ import type { SafeFetchFailure, SafeFetchResult } from "@/lib/http/safe-fetch";
 import {
   EMPTY_RECIPE_PREVIEW,
   fetchRecipePreview,
-  ingredientRowsFromText,
   saveIngestedDish,
   type FetchHtml,
 } from "./ingest-core";
@@ -110,303 +109,163 @@ describe("fetchRecipePreview", () => {
   });
 });
 
-describe("ingredientRowsFromText", () => {
-  it("parses each non-blank line, in order, with household/dish scoping", () => {
-    const rows = ingredientRowsFromText(
-      "2 lb pork shoulder\n\n1 tbsp ground cumin",
-      "hh-1",
-      "d1",
-    );
-    expect(rows).toEqual([
-      {
-        household_id: "hh-1",
-        dish_id: "d1",
-        name: "pork shoulder",
-        quantity: 2,
-        unit: "lb",
-        raw_text: "2 lb pork shoulder",
-        position: 0,
-      },
-      {
-        household_id: "hh-1",
-        dish_id: "d1",
-        name: "ground cumin",
-        quantity: 1,
-        unit: "tbsp",
-        raw_text: "1 tbsp ground cumin",
-        position: 1,
-      },
-    ]);
-  });
-
-  it("falls back to the raw line as the name when parsing yields no name (e.g. a bare quantity)", () => {
-    const rows = ingredientRowsFromText("2", "hh-1", "d1");
-    expect(rows).toEqual([
-      {
-        household_id: "hh-1",
-        dish_id: "d1",
-        name: "2",
-        quantity: 2,
-        unit: null,
-        raw_text: "2",
-        position: 0,
-      },
-    ]);
-  });
-
-  it("returns no rows for blank input", () => {
-    expect(ingredientRowsFromText("   \n\n  ", "hh-1", "d1")).toEqual([]);
-  });
-});
-
-type Result = { data: unknown; error: unknown };
-
-function makeSaveClient(opts: { dish?: Result; ingredientsError?: unknown }) {
-  const dishesInsert: unknown[] = [];
-  const ingredientsInsert: unknown[] = [];
-  const fromTables: string[] = [];
-
-  const from = vi.fn((table: string) => {
-    fromTables.push(table);
-    if (table === "dishes") {
-      return {
-        insert: vi.fn((vals: unknown) => {
-          dishesInsert.push(vals);
-          return {
-            select: () => ({
-              single: async () => opts.dish ?? { data: { id: "d1" }, error: null },
-            }),
-          };
-        }),
-      };
-    }
-    return {
-      insert: vi.fn((vals: unknown) => {
-        ingredientsInsert.push(vals);
-        return Promise.resolve({ error: opts.ingredientsError ?? null });
-      }),
-    };
-  });
-
+/**
+ * `saveIngestedDish` is now a thin adapter over the atomic `saveRecipe`
+ * (lib/recipes/save-recipe.ts, #272): form strings in, ONE `save_recipe` RPC
+ * out. Household and author are derived in SQL from the session, so the
+ * adapter never sends them. There is no partial-success state any more: the
+ * dish, its ingredients and its method land together or not at all.
+ */
+function makeSaveClient(opts: { rpcResult?: { data: unknown; error: unknown } } = {}) {
+  const rpc = vi.fn(async () => opts.rpcResult ?? { data: "d1", error: null });
+  const from = vi.fn();
   return {
-    client: { from } as unknown as Parameters<typeof saveIngestedDish>[0],
-    calls: { dishesInsert, ingredientsInsert, fromTables },
+    client: { from, rpc } as unknown as Parameters<typeof saveIngestedDish>[0],
+    rpc,
+    from,
   };
 }
 
+const FORM = {
+  title: "  Carnitas Tacos  ",
+  sourceUrl: "https://example.com/tacos",
+  imageUrl: "https://example.com/tacos.jpg",
+  prepMinutes: "20",
+  cookMinutes: "90",
+  totalMinutes: "110",
+  servings: "4",
+  ingredientsText: "2 lb pork shoulder\n## Rub\n1 tbsp ground cumin",
+  methodText: "## Start\n1. Rub [[the pork]].\n2. Braise.",
+};
+
+function sentRecipe(rpc: ReturnType<typeof makeSaveClient>["rpc"]) {
+  return (rpc.mock.calls[0] as unknown as [string, { p_recipe: Record<string, unknown> }])[1]
+    .p_recipe;
+}
+
 describe("saveIngestedDish", () => {
-  it("inserts the dish then its ingredients, in order", async () => {
-    const { client, calls } = makeSaveClient({});
+  it("creates the whole recipe (dish, grouped ingredients, method) in ONE save_recipe call", async () => {
+    const { client, rpc, from } = makeSaveClient();
 
-    const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "  Carnitas Tacos  ",
-      sourceUrl: "https://example.com/tacos",
-      imageUrl: "https://example.com/tacos.jpg",
-      prepMinutes: "20",
-      cookMinutes: "90",
-      totalMinutes: "110",
-      ingredientsText: "2 lb pork shoulder\n1 tbsp ground cumin",
-    });
+    const result = await saveIngestedDish(client, FORM);
 
-    expect(result).toEqual({
-      ok: true,
-      dishId: "d1",
-      ingredientsSaved: true,
-      sourceUrl: "https://example.com/tacos",
-    });
-    expect(calls.dishesInsert).toEqual([
-      {
-        household_id: "hh-1",
+    expect(result).toEqual({ ok: true, dishId: "d1", sourceUrl: "https://example.com/tacos" });
+    expect(from).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("save_recipe", {
+      p_recipe: {
+        id: null,
         title: "Carnitas Tacos",
         source_url: "https://example.com/tacos",
         image_url: "https://example.com/tacos.jpg",
         prep_minutes: 20,
         cook_minutes: 90,
         total_minutes: 110,
-        created_by: "m1",
+        servings: "4",
+        ingredients: [
+          { name: "pork shoulder", quantity: 2, unit: "lb", raw_text: "2 lb pork shoulder", section: null },
+          { name: "ground cumin", quantity: 1, unit: "tbsp", raw_text: "1 tbsp ground cumin", section: "Rub" },
+        ],
+        phases: [
+          {
+            title: "Start",
+            intro: [],
+            steps: [
+              { id: null, body: "Rub [[the pork]].", notes: [] },
+              { id: null, body: "Braise.", notes: [] },
+            ],
+          },
+        ],
       },
-    ]);
-    expect(calls.ingredientsInsert).toEqual([
-      [
-        {
-          household_id: "hh-1",
-          dish_id: "d1",
-          name: "pork shoulder",
-          quantity: 2,
-          unit: "lb",
-          raw_text: "2 lb pork shoulder",
-          position: 0,
-        },
-        {
-          household_id: "hh-1",
-          dish_id: "d1",
-          name: "ground cumin",
-          quantity: 1,
-          unit: "tbsp",
-          raw_text: "1 tbsp ground cumin",
-          position: 1,
-        },
-      ],
-    ]);
+    });
+  });
+
+  it("never sends a household or author: SQL derives both from the session", async () => {
+    const { client, rpc } = makeSaveClient();
+    await saveIngestedDish(client, FORM);
+    const recipe = sentRecipe(rpc);
+    expect(recipe).not.toHaveProperty("household_id");
+    expect(recipe).not.toHaveProperty("created_by");
   });
 
   it("rejects a blank title before any DB call", async () => {
-    const { client, calls } = makeSaveClient({});
-    const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "   ",
-      sourceUrl: "",
-      imageUrl: "",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
-      ingredientsText: "",
-    });
+    const { client, rpc } = makeSaveClient();
+    const result = await saveIngestedDish(client, { ...FORM, title: "   " });
     expect(result.ok).toBe(false);
-    expect(calls.fromTables).toEqual([]);
+    expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("stores null source/image URLs and null times for a by-hand add with no URL", async () => {
-    const { client, calls } = makeSaveClient({});
+  it("stores null source/image URLs, servings and times for a by-hand add with none", async () => {
+    const { client, rpc } = makeSaveClient();
     await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Skillet Chicken",
+      ...FORM,
       sourceUrl: "",
       imageUrl: "",
       prepMinutes: "",
       cookMinutes: "",
       totalMinutes: "",
-      ingredientsText: "1 lb chicken thighs",
+      servings: "",
     });
-    expect(calls.dishesInsert[0]).toMatchObject({
+    expect(sentRecipe(rpc)).toMatchObject({
       source_url: null,
       image_url: null,
       prep_minutes: null,
       cook_minutes: null,
       total_minutes: null,
+      servings: null,
     });
   });
 
   it("drops (not blocks on) a javascript: image URL — the dish still saves", async () => {
-    const { client, calls } = makeSaveClient({});
+    const { client, rpc } = makeSaveClient();
     const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Sneaky",
-      sourceUrl: "",
+      ...FORM,
       imageUrl: "javascript:alert(document.cookie)",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
-      ingredientsText: "1 egg",
     });
     expect(result.ok).toBe(true);
-    expect(calls.dishesInsert[0]).toMatchObject({ image_url: null });
+    expect(sentRecipe(rpc)).toMatchObject({ image_url: null });
   });
 
-  it("drops a mistyped/tampered source URL rather than failing the save", async () => {
-    const { client, calls } = makeSaveClient({});
-    const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Tampered",
-      sourceUrl: "javascript:alert(1)",
-      imageUrl: "",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
-      ingredientsText: "",
-    });
+  it("drops a mistyped/tampered source URL and reports the scrubbed (null) URL", async () => {
+    const { client, rpc } = makeSaveClient();
+    const result = await saveIngestedDish(client, { ...FORM, sourceUrl: "javascript:alert(1)" });
     expect(result.ok).toBe(true);
-    expect(calls.dishesInsert[0]).toMatchObject({ source_url: null });
+    expect(sentRecipe(rpc)).toMatchObject({ source_url: null });
     // The scrubbed source URL a caller gates `recipe_ingested` on is null here —
     // a tampered javascript: URL is NOT a real URL-sourced ingest.
     if (result.ok) expect(result.sourceUrl).toBeNull();
   });
 
   it("ignores unparseable/negative minutes fields rather than crashing, and rounds decimals", async () => {
-    const { client, calls } = makeSaveClient({});
+    const { client, rpc } = makeSaveClient();
     await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Weird Times",
-      sourceUrl: "",
-      imageUrl: "",
+      ...FORM,
       prepMinutes: "not-a-number",
       cookMinutes: "-5",
       totalMinutes: "12.7",
-      ingredientsText: "",
     });
-    expect(calls.dishesInsert[0]).toMatchObject({
+    expect(sentRecipe(rpc)).toMatchObject({
       prep_minutes: null,
       cook_minutes: null,
       total_minutes: 13,
     });
   });
 
-  it("does not touch the ingredients table for a title-only add (no ingredient lines)", async () => {
-    const { client, calls } = makeSaveClient({});
+  it("saves a title-only recipe with no ingredients and no method", async () => {
+    const { client, rpc } = makeSaveClient();
     const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Just a title",
+      ...FORM,
       sourceUrl: "",
-      imageUrl: "",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
       ingredientsText: "   ",
+      methodText: "",
     });
-    expect(result).toEqual({
-      ok: true,
-      dishId: "d1",
-      ingredientsSaved: true,
-      sourceUrl: null,
-    });
-    expect(calls.fromTables).toEqual(["dishes"]);
+    expect(result).toEqual({ ok: true, dishId: "d1", sourceUrl: null });
+    expect(sentRecipe(rpc)).toMatchObject({ ingredients: [], phases: [] });
   });
 
-  it("returns a benign ingredientsSaved:false when the dish saves but the ingredients insert fails", async () => {
-    const { client } = makeSaveClient({ ingredientsError: { message: "boom" } });
-    const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Half Saved",
-      sourceUrl: "",
-      imageUrl: "",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
-      ingredientsText: "1 egg",
-    });
-    expect(result).toEqual({
-      ok: true,
-      dishId: "d1",
-      ingredientsSaved: false,
-      sourceUrl: null,
-    });
-  });
-
-  it("fails closed when the dish insert itself errors", async () => {
-    const { client, calls } = makeSaveClient({
-      dish: { data: null, error: { message: "boom" } },
-    });
-    const result = await saveIngestedDish(client, {
-      householdId: "hh-1",
-      createdBy: "m1",
-      title: "Ill-Fated",
-      sourceUrl: "",
-      imageUrl: "",
-      prepMinutes: "",
-      cookMinutes: "",
-      totalMinutes: "",
-      ingredientsText: "1 egg",
-    });
-    expect(result.ok).toBe(false);
-    expect(calls.ingredientsInsert).toEqual([]);
+  it("fails closed when the save itself errors (nothing was written: it is atomic)", async () => {
+    const { client } = makeSaveClient({ rpcResult: { data: null, error: { code: "XX000", message: "boom" } } });
+    const result = await saveIngestedDish(client, FORM);
+    expect(result).toEqual({ ok: false, error: "We couldn't save that recipe. Please try again." });
   });
 });

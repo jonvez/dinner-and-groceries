@@ -1,13 +1,15 @@
 "use client";
 
 /**
- * Cook mode for a recipe's method (see `method-parse.ts` for the format).
+ * Cook mode for a recipe's method: phases and steps read from `dish_phases` /
+ * `dish_steps` (issue #272; inline syntax in `lib/recipes/method-parse.ts`).
  *
  * The outcome it serves is minimal scrolling: each step shows the ingredients it
  * uses, so the cook never scrolls up to the list and back. Tap a step to mark it
  * done; the next step glides to the middle of the screen. Progress persists per
- * dish in localStorage (survives refresh and screen lock), and an optional screen
- * wake lock keeps the display on.
+ * dish in localStorage (survives refresh and screen lock), keyed by step id so a
+ * recipe edited mid-cook keeps its done steps done (see `cook-progress.ts`). An
+ * optional screen wake lock keeps the display on.
  *
  * Stored text renders as plain React children (escaped by construction); there is
  * no HTML parsing and no `dangerouslySetInnerHTML`.
@@ -15,13 +17,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import {
-  countSteps,
-  currentStep,
-  parseMethod,
-  parseProgress,
-  parseSpans,
-} from "./method-parse";
+import { parseSpans } from "@/lib/recipes/method-parse";
+
+import { currentStepId, parseProgress, progressKey } from "./cook-progress";
+import type { MethodPhase } from "./method-types";
 
 const PROGRESS_EVENT = "cook-progress";
 
@@ -42,7 +41,7 @@ function useProgress(storageKey: string) {
   );
   const done = useMemo(() => parseProgress(raw), [raw]);
   const save = useCallback(
-    (next: Set<number> | null) => {
+    (next: Set<string> | null) => {
       if (next === null) localStorage.removeItem(storageKey);
       else localStorage.setItem(storageKey, JSON.stringify([...next]));
       window.dispatchEvent(new Event(PROGRESS_EVENT));
@@ -118,26 +117,31 @@ function Inline({ text }: { text: string }) {
   );
 }
 
-export function RecipeMethod({ method, dishId }: { method: string; dishId: string }) {
-  const phases = useMemo(() => parseMethod(method), [method]);
-  const total = countSteps(phases);
-  const { done, save } = useProgress(`cook-progress:${dishId}`);
-  const current = currentStep(total, done);
+export function RecipeMethod({ phases, dishId }: { phases: MethodPhase[]; dishId: string }) {
+  const steps = useMemo(() => phases.flatMap((p) => p.steps), [phases]);
+  const stepIds = useMemo(() => steps.map((s) => s.id), [steps]);
+  const total = steps.length;
+  const { done, save } = useProgress(progressKey(dishId));
+  const current = currentStepId(stepIds, done);
+  const currentN = steps.find((s) => s.id === current)?.n ?? null;
+  // Only ids that are still steps of this recipe count: a deleted step's id
+  // can linger in storage after an edit.
+  const anyDone = stepIds.some((id) => done.has(id));
   const wake = useWakeLock();
 
-  const stepRefs = useRef(new Map<number, HTMLLIElement>());
-  const scrollTo = (n: number | null) => {
-    if (n === null) return;
-    stepRefs.current.get(n)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const stepRefs = useRef(new Map<string, HTMLLIElement>());
+  const scrollTo = (id: string | null) => {
+    if (id === null) return;
+    stepRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
-  const toggle = (n: number) => {
+  const toggle = (id: string) => {
     const next = new Set(done);
-    if (next.has(n)) next.delete(n);
-    else next.add(n);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
     save(next);
-    if (!next.has(n)) return;
-    const upcoming = currentStep(total, next);
+    if (!next.has(id)) return;
+    const upcoming = currentStepId(stepIds, next);
     // After React paints the new highlight.
     requestAnimationFrame(() => scrollTo(upcoming));
   };
@@ -151,9 +155,9 @@ export function RecipeMethod({ method, dishId }: { method: string; dishId: strin
     <section className="space-y-6" aria-label="Method">
       <div className="bg-background/95 sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b py-2 text-sm backdrop-blur">
         <span className="font-medium">
-          {current === null ? "All done" : `Step ${current} of ${total}`}
+          {currentN === null ? "All done" : `Step ${currentN} of ${total}`}
         </span>
-        {done.size === 0 ? (
+        {!anyDone ? (
           <span className="text-muted-foreground">Tap a step when it’s done</span>
         ) : (
           <button
@@ -174,7 +178,7 @@ export function RecipeMethod({ method, dishId }: { method: string; dishId: strin
             {wake.on ? "Screen stays on ✓" : "Keep screen on"}
           </button>
         ) : null}
-        {done.size > 0 ? (
+        {anyDone ? (
           <button type="button" onClick={reset} className="text-muted-foreground px-1">
             Reset
           </button>
@@ -195,20 +199,20 @@ export function RecipeMethod({ method, dishId }: { method: string; dishId: strin
           ))}
           <ol className="space-y-2">
             {phase.steps.map((step) => {
-              const isDone = done.has(step.n);
-              const isCurrent = step.n === current;
+              const isDone = done.has(step.id);
+              const isCurrent = step.id === current;
               return (
                 <li
-                  key={step.n}
+                  key={step.id}
                   ref={(el) => {
-                    if (el) stepRefs.current.set(step.n, el);
+                    if (el) stepRefs.current.set(step.id, el);
                   }}
                   aria-current={isCurrent ? "step" : undefined}
                 >
                   <button
                     type="button"
                     aria-pressed={isDone}
-                    onClick={() => toggle(step.n)}
+                    onClick={() => toggle(step.id)}
                     className={[
                       "flex w-full gap-3 rounded-lg border p-3 text-left text-lg leading-relaxed transition-all select-none",
                       isCurrent ? "border-primary ring-primary/40 bg-primary/5 ring-2" : "",
@@ -225,7 +229,7 @@ export function RecipeMethod({ method, dishId }: { method: string; dishId: strin
                     </span>
                     <span className="space-y-1">
                       <span className="block">
-                        <Inline text={step.text} />
+                        <Inline text={step.body} />
                       </span>
                       {step.notes.map((note, i) => (
                         <span key={i} className="block text-base">

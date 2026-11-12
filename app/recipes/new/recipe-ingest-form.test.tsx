@@ -11,6 +11,8 @@ const actionMocks = vi.hoisted(() => ({
 
 vi.mock("./actions", () => actionMocks);
 
+import { INGREDIENTS_TEXT_MAX_CHARS, METHOD_TEXT_MAX_CHARS } from "@/lib/recipes/recipe-limits";
+
 import { RecipeIngestForm } from "./recipe-ingest-form";
 
 beforeEach(() => {
@@ -26,7 +28,40 @@ describe("RecipeIngestForm", () => {
     expect(screen.getByRole("button", { name: "Fetch recipe" })).toBeInTheDocument();
     expect(screen.getByLabelText("Title")).toBeRequired();
     expect(screen.getByLabelText(/ingredients/i)).toHaveValue("");
+    expect(screen.getByLabelText(/method/i)).toHaveValue("");
+    expect(screen.getByLabelText(/servings/i)).toHaveValue("");
     expect(screen.getByRole("button", { name: "Save to library" })).toBeEnabled();
+  });
+
+  it("caps the method and ingredients textareas at saveRecipe's text limits", () => {
+    render(<RecipeIngestForm />);
+
+    expect(screen.getByLabelText(/method/i)).toHaveAttribute("maxLength", String(METHOD_TEXT_MAX_CHARS));
+    expect(screen.getByLabelText(/ingredients/i)).toHaveAttribute(
+      "maxLength",
+      String(INGREDIENTS_TEXT_MAX_CHARS),
+    );
+  });
+
+  it("submits the method and servings with the rest of the recipe", async () => {
+    render(<RecipeIngestForm />);
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Rigatoni" } });
+    fireEvent.change(screen.getByLabelText(/servings/i), { target: { value: "6 to 8" } });
+    fireEvent.change(screen.getByLabelText(/method/i), {
+      target: { value: "## Soak\n1. Cover [[1 lb rigatoni]] with hot water." },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save to library" }));
+    });
+
+    const [, submitted] = actionMocks.saveIngestedDishAction.mock.calls[0] as unknown as [
+      unknown,
+      FormData,
+    ];
+    expect(submitted.get("servings")).toBe("6 to 8");
+    expect(submitted.get("method")).toBe("## Soak\n1. Cover [[1 lb rigatoni]] with hot water.");
   });
 
   it("saves by hand without ever fetching a URL", async () => {
