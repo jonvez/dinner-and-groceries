@@ -82,6 +82,9 @@ cloud — conditional PASS, 2026-07-21); bring-up in `docs/runbooks/production-b
   `raise exception` propagates and exits non-zero — so a script's own transactional guards stay real
   rather than being silently swallowed. Worth knowing before concluding a prod write is blocked on a
   credential nobody has.
+  - **In auto mode Claude cannot run the write itself.** The auto-mode permission checker denies
+    prod-modifying `db query --linked` calls as a shared-resource change (read-only selects pass). Hand
+    Jon the exact command to run as `! npx supabase db query --linked -f <file>` instead of retrying.
 - **The prod deploy build is a required check** (`Production build (Docker)`): it runs the real image
   `next build`, catching prod-only breakage the standalone typecheck misses (e.g. a `.dockerignore`-excluded
   import). A red deploy = stale prod — don't let it go silently red.
